@@ -3,8 +3,8 @@ import requests
 import tempfile
 import uuid
 
-# import boto3
-# from botocore.exceptions import NoCredentialsError
+import boto3
+import botocore
 
 from google.cloud import storage as gs_storage
 from google.auth.exceptions import DefaultCredentialsError
@@ -36,6 +36,17 @@ class FileCache:
                 of temp_dir called ".file_cache___global__". If a string is specified, the
                 file cache will be stored in a subdirectory of temp_dir called
                 ".file_cache_<shared>".
+
+        Note:
+            FileCache can be used as a context, such as::
+
+                with FileCache() as fc:
+                    ...
+
+            In this case, the cache directory is created on entry to the context, and
+            delete on exit. However, if the cached is marked as shared, the directory
+            will not be deleted on exit, and if all shared FileCache objects are created
+            in this manner, the shared cache directory will never be deleted.
         """
 
         # We try very hard here to make sure that no possible passed-in argument for
@@ -59,23 +70,31 @@ class FileCache:
         elif shared is True:
             sub_dir = Path('.file_cache___global__')
         elif isinstance(shared, str):
-            if '/' in shared or '\\':
+            if '/' in shared or '\\' in shared:
                 raise ValueError('shared argument has directory elements')
             sub_dir = Path(f'.file_cache_{shared}')
         else:
-            raise ValueError('shared argument is of improper type')
+            raise TypeError('shared argument is of improper type')
 
-        if str(sub_dir.parent) != '.':
+        if str(sub_dir.parent) != '.':  # pragma: no cover - shouldn't be possible
             raise ValueError('shared argument has directory elements')
 
         self._cache_dir = temp_dir / sub_dir
 
         try:
-            self._cache_dir.mkdir(exist_ok=False)
-        except (FileNotFoundError, FileExistsError, ValueError):
+            self._cache_dir.mkdir(exist_ok=self._is_shared)
+        except (FileNotFoundError, FileExistsError, ValueError):  # pragma: no cover
             raise
 
         self._file_cache = []
+
+    @property
+    def cache_dir(self):
+        return self._cache_dir
+
+    @property
+    def is_shared(self):
+        return self._is_shared
 
     def __enter__(self):
         return self
@@ -83,14 +102,14 @@ class FileCache:
     def __exit__(self, exc_type, exc_value, traceback):
         self.clean_up()
 
-    def new_source(self, prefix):
+    def new_source(self, prefix, **kwargs):
         """_summary_
 
         Args:
             prefix (_type_): _description_
         """
 
-        return FileCacheSource(prefix, self)
+        return FileCacheSource(prefix, self, **kwargs)
 
     def _record_cached_file(self, filename, local_path):
         print('Recording', filename, local_path)
@@ -99,34 +118,43 @@ class FileCache:
     def _is_cached(self, local_path):
         return local_path in self._file_cache
 
-    def clean_up(self, force_shared=False):
+    def clean_up(self, final=False):
         """Delete all files stored in the cache including the cache directory.
 
         Parameters:
-            force_shared (bool, optional): If False, a shared cache is left alone.
-                If True, a shared cache is deleted. Beware that this could affect
-                other processes using the same cache!
+            final (bool, optional): If False, a shared cache is left alone.
+                If True, a shared cache is deleted. Beware that this could affect other
+                processes using the same cache!
         """
 
-        if self._is_shared and not force_shared:
-            # Don't delete files from shared caches unless specifically asked to
-            return
+        if self._is_shared:
+            if not final:
+                # Don't delete files from shared caches unless specifically asked to
+                return
 
-        print('Cleaning up', self._cache_dir)
-        # Delete all of the files that we know we put into the cache
-        for file_path in self._file_cache:
-            print('Removing', str(file_path))
-            try:
-                file_path.unlink()
-            except FileNotFoundError:
-                pass
+            # Delete all of the files and subdirectories we left behind, including the
+            # file cache directory itself.
+            for root, dirs, files in self._cache_dir.walk(top_down=False):
+                for name in files:
+                    (root / name).unlink()
+                for name in dirs:
+                    (root / name).rmdir()
 
-        # Delete all of the subdirectories we left behind, including the file
-        # cache directory itself. If there are any files left in these directories
-        # that we didn't put there, this will raise an exception.
-        for root, dirs, files in self._cache_dir.walk(top_down=False):
-            for name in dirs:
-                (root / name).rmdir()
+        else:
+            # Delete all of the files that we know we put into the cache
+            for file_path in self._file_cache:
+                print('Removing', str(file_path))
+                try:
+                    file_path.unlink()
+                except FileNotFoundError:  # pragma: no cover
+                    pass
+
+            # Delete all of the subdirectories we left behind, including the file
+            # cache directory itself. If there are any files left in these directories
+            # that we didn't put there, this will raise an exception.
+            for root, dirs, files in self._cache_dir.walk(top_down=False):
+                for name in dirs:
+                    (root / name).rmdir()
 
         self._cache_dir.rmdir()
 
@@ -135,37 +163,43 @@ class FileCacheSource:
     """Base class for retrieving files to store in a FileCache.
     """
 
-    def __init__(self, prefix, filecache):
+    def __init__(self, prefix, filecache, anonymous=False):
         """
 
         Parameters:
-            prefix (str): The prefix for the storage location. If the prefix starts
-                with "gs://bucket-name" it is from Google Storage. If the prefix starts
-                with "s3://bucket-name" it is from Amazon S3. If the prefix starts with
-                "http://" or "https://" it is from a website download. Anything else
-                is considered to be in the local filesystem.
+            prefix (str or Path): The prefix for the storage location. If the prefix
+                starts with "gs://bucket-name" it is from Google Storage. If the prefix
+                starts with "s3://bucket-name" it is from Amazon S3. If the prefix starts
+                with "http://" or "https://" it is from a website download. Anything else
+                is considered to be in the local filesystem and can be a str or Path
+                object.
             file_cache (FileCache): The FileCache in which to store files retrieved
                 from this source.
+            anonymous (bool, optional): If True, access cloud resources without
+                specifying credentials.
         """
 
         self._filecache = filecache
 
-        prefix = prefix.rstrip('/')
+        if not isinstance(prefix, (str, Path)):
+            raise TypeError('prefix is not a str or Path')
+
+        prefix = str(prefix).rstrip('/') + '/'
         get_prefix = prefix
 
         if prefix.startswith('gs://'):
             self._source_type = 'gs'
-            try:
+            if anonymous:
+                self._gs_client = gs_storage.Client().create_anonymous_client()
+            else:  # pragma: no cover (must be anonymous for automated tests)
                 self._gs_client = gs_storage.Client()
-            except DefaultCredentialsError:
-                # See https://cloud.google.com/docs/authentication/
-                # provide-credentials-adc#how-to
-                raise
             self._gs_bucket_name, _, get_prefix = prefix.lstrip('gs://').partition('/')
             self._gs_bucket = self._gs_client.bucket(self._gs_bucket_name)
 
         elif prefix.startswith('s3://'):
             self._source_type = 's3'
+            self._s3_client = boto3.client('s3')
+            self._s3_bucket_name, _, get_prefix = prefix.lstrip('s3://').partition('/')
 
         elif prefix.startswith(('http://', 'https://')):
             self._source_type = 'web'
@@ -186,6 +220,21 @@ class FileCacheSource:
                                       .replace('s3://', 's3_')
                                       .replace('http://', 'http_')
                                       .replace('https://', 'http_'))
+
+    def is_cached(self, filename):
+        filename = filename.replace('\\', '/').lstrip('/')
+
+        if self._source_type == 'local':
+            if '/..' in filename:
+                raise ValueError(f'Invalid filename {filename}')
+            local_path = Path(self._prefix) / filename
+            if not local_path.exists():
+                raise FileNotFoundError(f'File does not exist: {local_path}')
+            return True
+
+        local_path = self._cache_root / filename
+
+        return self._filecache._is_cached(local_path)
 
     def retrieve(self, filename):
         """Retrieve a file(s) from the storage location and store it in the file cache.
@@ -208,19 +257,33 @@ class FileCacheSource:
             local_path = Path(self._prefix) / filename
             if not local_path.exists():
                 raise FileNotFoundError(f'File does not exist: {local_path}')
-            # Don't don't tell the file cache about local files
+            # Don't tell the file cache about local files
             return local_path
 
         local_path = self._cache_root / filename
 
+        if self._filecache.is_shared:
+            if local_path.exists():
+                # Another FileCache already downloaded it
+                return local_path
+
         if self._filecache._is_cached(local_path):
             return local_path
+
+        if local_path.exists():  # pragma: no cover
+            # Not shared or local or cached and the file exists
+            # This shouldn't be possible
+            raise FileExistsError(f'Internal error - File already exists: {filename}')
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
         if self._source_type == 'web':
-            url = f'{self._prefix}/{filename}'
-            response = requests.get(url)
+            url = f'{self._prefix}{filename}'
+            try:
+                response = requests.get(url)
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.ConnectTimeout):
+                raise FileNotFoundError(f'Failed to download file from: {url}')
             if response.status_code == 200:
                 with open(local_path, 'wb') as f:
                     f.write(response.content)
@@ -230,55 +293,34 @@ class FileCacheSource:
                 raise FileNotFoundError(f'Failed to download file from: {url}')
 
         if self._source_type == 'gs':
-            blob_name = f'{self._prefix}/{filename}'
+            blob_name = f'{self._prefix}{filename}'
             blob = self._gs_bucket.blob(blob_name)
             try:
                 blob.download_to_filename(str(local_path))
-            except google.cloud.exceptions.NotFound:
+            except (google.api_core.exceptions.BadRequest,  # bad bucket name
+                    google.resumable_media.common.InvalidResponse,  # bad bucket name
+                    google.cloud.exceptions.NotFound):  # bad filename
+                # The google API library will still create the file before noticing
+                # that it can't be downloaded, so we have to remove it here
+                local_path.unlink()
                 raise FileNotFoundError(
                     f'Failed to download file from: gs://{self._gs_bucket_name}/'
                     f'{blob_name}')
             self._filecache._record_cached_file(filename, local_path)
             return local_path
 
-    # @contextmanager
-    # def retrieve_context(self, filename):
-    #     """Context manager for retrieving a file.
+        if self._source_type == 's3':
+            s3_key = f'{self._prefix}{filename}'
+            try:
+                self._s3_client.download_file(self._s3_bucket_name,
+                                              s3_key,
+                                              str(local_path))
+            except botocore.exceptions.ClientError:
+                raise FileNotFoundError(
+                    f'Failed to download file from: s3://{self._s3_bucket_name}/'
+                    f'{s3_key}')
+            self._filecache._record_cached_file(filename, local_path)
+            return local_path
 
-    #     Args:
-    #         filename (str): The name of the file to retrieve.
-
-    #     Yields:
-    #         Path: The path to the retrieved file.
-    #     """
-    #     file_path = self.retrieve(filename)
-    #     try:
-    #         yield file_path
-    #     finally:
-    #         if file_path in self.retrieved_files:
-    #             self.clean_up()
-
-# class S3StorageManager(StorageManager):
-#     """Storage manager for Amazon S3."""
-
-#     def __init__(self, prefix, temp_dir=None, aws_access_key_id=None,
-# aws_secret_access_key=None):
-#         super().__init__(prefix, temp_dir)
-#         self.s3_client = boto3.client('s3', aws_access_key_id=aws_access_key_id,
-# aws_secret_access_key=aws_secret_access_key)
-
-#     def retrieve(self, filename):
-#         bucket_name, s3_key = self._parse_s3_path(filename)
-#         local_path = self.temp_dir / filename
-#         local_path.parent.mkdir(parents=True, exist_ok=True)
-
-#         try:
-#             self.s3_client.download_file(bucket_name, s3_key, str(local_path))
-#             self.retrieved_files.append(local_path)
-#             return local_path
-#         except NoCredentialsError:
-#             raise Exception("AWS credentials not found")
-
-#     def _parse_s3_path(self, filename):
-#         bucket_name = self.prefix.split("//")[1]
-#         return bucket_name, filename
+        assert False, \
+            f'Internal error unknown source type {self._source_type}'  #pragma: no cover
