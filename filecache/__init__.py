@@ -1,13 +1,20 @@
 from pathlib import Path
-import tempfile
 import requests
-import boto3
-from botocore.exceptions import NoCredentialsError
+import tempfile
+import uuid
+
+# import boto3
+# from botocore.exceptions import NoCredentialsError
+
 from google.cloud import storage as gs_storage
 from google.auth.exceptions import DefaultCredentialsError
 import google.api_core.exceptions
-from contextlib import contextmanager
-import uuid
+
+
+try:
+    from ._version import __version__
+except ImportError:  # pragma: no cover
+    __version__ = 'Version unspecified'
 
 
 class FileCache:
@@ -107,7 +114,7 @@ class FileCache:
 
         print('Cleaning up', self._cache_dir)
         # Delete all of the files that we know we put into the cache
-        for file_path in self._file_cache: #.values():
+        for file_path in self._file_cache:
             print('Removing', str(file_path))
             try:
                 file_path.unlink()
@@ -149,9 +156,10 @@ class FileCacheSource:
         if prefix.startswith('gs://'):
             self._source_type = 'gs'
             try:
-                self._gs_client = gs_storage.Client() #project=project)
+                self._gs_client = gs_storage.Client()
             except DefaultCredentialsError:
-                # See https://cloud.google.com/docs/authentication/provide-credentials-adc#how-to
+                # See https://cloud.google.com/docs/authentication/
+                # provide-credentials-adc#how-to
                 raise
             self._gs_bucket_name, _, get_prefix = prefix.lstrip('gs://').partition('/')
             self._gs_bucket = self._gs_client.bucket(self._gs_bucket_name)
@@ -253,9 +261,11 @@ class FileCacheSource:
 # class S3StorageManager(StorageManager):
 #     """Storage manager for Amazon S3."""
 
-#     def __init__(self, prefix, temp_dir=None, aws_access_key_id=None, aws_secret_access_key=None):
+#     def __init__(self, prefix, temp_dir=None, aws_access_key_id=None,
+# aws_secret_access_key=None):
 #         super().__init__(prefix, temp_dir)
-#         self.s3_client = boto3.client('s3', aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
+#         self.s3_client = boto3.client('s3', aws_access_key_id=aws_access_key_id,
+# aws_secret_access_key=aws_secret_access_key)
 
 #     def retrieve(self, filename):
 #         bucket_name, s3_key = self._parse_s3_path(filename)

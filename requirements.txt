@@ -1,5 +1,10 @@
 boto3
 coverage
+flake8
 google-cloud-storage
+myst-parser
 pytest
 requests
+sphinx
+sphinxcontrib-napoleon
+sphinx-rtd-theme
