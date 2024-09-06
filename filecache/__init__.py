@@ -204,7 +204,7 @@ class FileCacheSource:
                 self._s3_client = boto3.client('s3',
                                                config=botocore.client.Config(
                                                    signature_version=botocore.UNSIGNED))
-            else:
+            else:  # pragma: no cover (must be anonymous for automated tests)
                 self._s3_client = boto3.client('s3')
             self._s3_bucket_name, _, get_prefix = prefix.lstrip('s3://').partition('/')
 
