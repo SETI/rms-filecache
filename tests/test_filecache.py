@@ -35,6 +35,7 @@ def _compare_to_expected(cache_path, filename):
         local_data = fp.read()
     assert cache_data == local_data
 
+
 def test_temp_dir_good():
     fc1 = FileCache()
     fc2 = FileCache()
@@ -70,9 +71,11 @@ def test_temp_dir_good():
     assert not fc4.cache_dir.exists()
     assert not fc5.cache_dir.exists()
 
+
 def test_temp_dir_bad():
     with pytest.raises(ValueError):
         _ = FileCache(temp_dir='\000')
+
 
 def test_shared_global():
     fc1 = FileCache()
@@ -95,6 +98,7 @@ def test_shared_global():
     fc3.clean_up(final=True)
     assert not fc3.cache_dir.exists()
 
+
 def test_shared_global_ctx():
     with FileCache() as fc1:
         assert fc1.cache_dir.exists()
@@ -116,6 +120,7 @@ def test_shared_global_ctx():
     assert fc3.cache_dir.exists()
     fc3.clean_up(final=True)
     assert not fc3.cache_dir.exists()
+
 
 def test_shared_named():
     fc1 = FileCache()
@@ -143,6 +148,7 @@ def test_shared_named():
     assert not fc3.cache_dir.exists()
     assert not fc4.cache_dir.exists()
 
+
 def test_shared_bad():
     with pytest.raises(TypeError):
         _ = FileCache(shared=5)
@@ -155,10 +161,12 @@ def test_shared_bad():
     with pytest.raises(ValueError):
         _ = FileCache(shared='\\a')
 
+
 def test_source_bad():
     with FileCache() as fc:
         with pytest.raises(TypeError):
             _ = fc.new_source(5)
+
 
 @pytest.mark.parametrize('shared', (False, True, 'test'))
 def test_local_filesystem_good(shared):
@@ -177,6 +185,7 @@ def test_local_filesystem_good(shared):
             assert len(list(fc.cache_dir.iterdir())) == 0
     assert shared is not False or not fc.cache_dir.exists()
 
+
 def test_local_filesystem_bad():
     with FileCache() as fc:
         lf = fc.new_source(EXPECTED_DIR)
@@ -189,6 +198,7 @@ def test_local_filesystem_bad():
         with pytest.raises(FileNotFoundError):
             _ = lf.is_cached('nonexistent.txt')
     assert not fc.cache_dir.exists()
+
 
 @pytest.mark.parametrize('shared', (False, True, 'test'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
@@ -204,6 +214,7 @@ def test_cloud_good(shared, prefix):
             path = src.retrieve(filename)
             assert str(path).replace('\\', '/').endswith(filename)
             _compare_to_expected(path, filename)
+
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_cloud2_good(prefix):
@@ -223,6 +234,7 @@ def test_cloud2_good(prefix):
             _compare_to_expected(path2, filename)
     assert not fc.cache_dir.exists()
 
+
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_cloud3_good(prefix):
     # Multiple sources with different subdir prefixes
@@ -240,6 +252,7 @@ def test_cloud3_good(prefix):
             assert str(path1) == str(path2)
     assert not fc.cache_dir.exists()
 
+
 def test_gs_bad():
     with FileCache() as fc:
         src = fc.new_source('gs://rms-node-bogus-bucket-name-XXX', anonymous=True)
@@ -249,6 +262,7 @@ def test_gs_bad():
         with pytest.raises(FileNotFoundError):
             _ = src.retrieve('bogus-filename')
     assert not fc.cache_dir.exists()
+
 
 def test_s3_bad():
     with FileCache() as fc:
@@ -260,6 +274,7 @@ def test_s3_bad():
             _ = src.retrieve('bogus-filename')
     assert not fc.cache_dir.exists()
 
+
 def test_web_bad():
     with FileCache() as fc:
         src = fc.new_source('https://bad-domain.seti.org')
@@ -269,6 +284,7 @@ def test_web_bad():
         with pytest.raises(FileNotFoundError):
             _ = src.retrieve('bogus-filename')
     assert not fc.cache_dir.exists()
+
 
 def test_multi_sources():
     with FileCache() as fc:
@@ -290,6 +306,7 @@ def test_multi_sources():
                 _compare_to_expected(path, filename)
     assert not fc.cache_dir.exists()
 
+
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_multi_sources_shared(prefix):
     with FileCache(shared=True) as fc1:
@@ -298,7 +315,7 @@ def test_multi_sources_shared(prefix):
         for filename in EXPECTED_FILENAMES:
             paths1.append(src1.retrieve(filename))
         with FileCache(shared=True) as fc2:
-            src2 = fc1.new_source(prefix, anonymous=True)
+            src2 = fc2.new_source(prefix, anonymous=True)
             paths2 = []
             for filename in EXPECTED_FILENAMES:
                 paths2.append(src2.retrieve(filename))
