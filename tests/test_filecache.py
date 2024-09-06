@@ -265,7 +265,7 @@ def test_web_bad():
         src = fc.new_source('https://bad-domain.seti.org')
         with pytest.raises(FileNotFoundError):
             _ = src.retrieve('bogus-filename')
-        src = fc.new_source(HTTP_TEST_ROOT, anonymous=True)
+        src = fc.new_source(HTTP_TEST_ROOT)
         with pytest.raises(FileNotFoundError):
             _ = src.retrieve('bogus-filename')
     assert not fc.cache_dir.exists()

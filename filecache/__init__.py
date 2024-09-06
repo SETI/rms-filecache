@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import requests
 import tempfile
@@ -7,7 +8,6 @@ import boto3
 import botocore
 
 from google.cloud import storage as gs_storage
-from google.auth.exceptions import DefaultCredentialsError
 import google.api_core.exceptions
 
 
@@ -134,11 +134,12 @@ class FileCache:
 
             # Delete all of the files and subdirectories we left behind, including the
             # file cache directory itself.
-            for root, dirs, files in self._cache_dir.walk(top_down=False):
+            # We would like to use Path.walk() but that was only added in Python 3.12
+            for root, dirs, files in os.walk(self._cache_dir, topdown=False):
                 for name in files:
-                    (root / name).unlink()
+                    os.remove(os.path.join(root, name))
                 for name in dirs:
-                    (root / name).rmdir()
+                    os.rmdir(os.path.join(root, name))
 
         else:
             # Delete all of the files that we know we put into the cache
@@ -152,9 +153,10 @@ class FileCache:
             # Delete all of the subdirectories we left behind, including the file
             # cache directory itself. If there are any files left in these directories
             # that we didn't put there, this will raise an exception.
-            for root, dirs, files in self._cache_dir.walk(top_down=False):
+            # We would like to use Path.walk() but that was only added in Python 3.12
+            for root, dirs, files in os.walk(self._cache_dir, topdown=False):
                 for name in dirs:
-                    (root / name).rmdir()
+                    os.rmdir(os.path.join(root, name))
 
         self._cache_dir.rmdir()
 
@@ -323,4 +325,4 @@ class FileCacheSource:
             return local_path
 
         assert False, \
-            f'Internal error unknown source type {self._source_type}'  #pragma: no cover
+            f'Internal error unknown source type {self._source_type}'  # pragma: no cover
