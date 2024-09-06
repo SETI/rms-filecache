@@ -174,12 +174,13 @@ def test_local_filesystem_good(shared):
         with FileCache(shared=shared) as fc:
             lf = fc.new_source(EXPECTED_DIR)
             for filename in EXPECTED_FILENAMES:
+                os_filename = filename.replace('/', os.sep)
                 assert lf.is_cached(filename)
                 path = lf.retrieve(filename)
-                assert str(path) == f'{EXPECTED_DIR}{os.sep}{filename}'
+                assert str(path) == f'{EXPECTED_DIR}{os.sep}{os_filename}'
                 assert lf.is_cached(filename)
                 path = lf.retrieve(filename)
-                assert str(path) == f'{EXPECTED_DIR}{os.sep}{filename}'
+                assert str(path) == f'{EXPECTED_DIR}{os.sep}{os_filename}'
                 _compare_to_expected(path, filename)
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
