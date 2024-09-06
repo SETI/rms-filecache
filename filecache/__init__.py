@@ -200,7 +200,12 @@ class FileCacheSource:
 
         elif prefix.startswith('s3://'):
             self._source_type = 's3'
-            self._s3_client = boto3.client('s3')
+            if anonymous:
+                self._s3_client = boto3.client('s3',
+                                               config=botocore.client.Config(
+                                                   signature_version=botocore.UNSIGNED))
+            else:
+                self._s3_client = boto3.client('s3')
             self._s3_bucket_name, _, get_prefix = prefix.lstrip('s3://').partition('/')
 
         elif prefix.startswith(('http://', 'https://')):
