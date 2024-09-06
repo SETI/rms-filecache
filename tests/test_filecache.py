@@ -176,10 +176,10 @@ def test_local_filesystem_good(shared):
             for filename in EXPECTED_FILENAMES:
                 assert lf.is_cached(filename)
                 path = lf.retrieve(filename)
-                assert str(path) == f'{EXPECTED_DIR}/{filename}'
+                assert str(path) == f'{EXPECTED_DIR}{os.sep}{filename}'
                 assert lf.is_cached(filename)
                 path = lf.retrieve(filename)
-                assert str(path) == f'{EXPECTED_DIR}/{filename}'
+                assert str(path) == f'{EXPECTED_DIR}{os.sep}{filename}'
                 _compare_to_expected(path, filename)
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
