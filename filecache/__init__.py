@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover
 
 class FileCache:
     def __init__(self, temp_dir=None, shared=False):
-        r"""
+        r"""Initialization for the FileCache class.
 
         Parameters:
             temp_dir (str or Path, optional): The directory in which to cache files.
@@ -37,7 +37,7 @@ class FileCache:
                 file cache will be stored in a subdirectory of temp_dir called
                 ".file_cache_<shared>".
 
-        Note:
+        Notes:
             FileCache can be used as a context, such as::
 
                 with FileCache() as fc:
@@ -96,27 +96,25 @@ class FileCache:
     def is_shared(self):
         return self._is_shared
 
-    def __enter__(self):
-        return self
+    def new_source(self, prefix, anonymous=False, **kwargs):
+        """Create a new FileCacheSource with the given prefix.
 
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.clean_up()
+        Parameters:
+            prefix (Path or str): The prefix for the storage location. If the prefix
+                starts with "gs://bucket-name" it is from Google Storage. If the prefix
+                starts with "s3://bucket-name" it is from Amazon S3. If the prefix starts
+                with "http://" or "https://" it is from a website download. Anything else
+                is considered to be in the local filesystem and can be a str or Path
+                object.
+            anonymous (bool, optional): If True, access cloud resources (GS and S3)
+                without specifying credentials.
 
-    def new_source(self, prefix, **kwargs):
-        """_summary_
-
-        Args:
-            prefix (_type_): _description_
+        Notes:
+            Depending on the given source type, there may be additional keyword
+            arguments available.
         """
 
         return FileCacheSource(prefix, self, **kwargs)
-
-    def _record_cached_file(self, filename, local_path):
-        print('Recording', filename, local_path)
-        self._file_cache.append(local_path)
-
-    def _is_cached(self, local_path):
-        return local_path in self._file_cache
 
     def clean_up(self, final=False):
         """Delete all files stored in the cache including the cache directory.
@@ -142,7 +140,11 @@ class FileCache:
                     os.rmdir(os.path.join(root, name))
 
         else:
-            # Delete all of the files that we know we put into the cache
+            # Delete all of the files that we know we put into the cache.
+            # We don't delete every file in the cache like we do for the shared cache
+            # simply because doing a full "rm -rf" can be dangerous and at least in
+            # this case we should know what to delete. If something else is in the
+            # cache that we didn't put there, perhaps we shouldn't delete it!
             for file_path in self._file_cache:
                 print('Removing', str(file_path))
                 try:
@@ -160,13 +162,26 @@ class FileCache:
 
         self._cache_dir.rmdir()
 
+    def _record_cached_file(self, filename, local_path):
+        print('Recording', filename, local_path)
+        self._file_cache.append(local_path)
+
+    def _is_cached(self, local_path):
+        return local_path in self._file_cache
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.clean_up()
+
 
 class FileCacheSource:
-    """Base class for retrieving files to store in a FileCache.
+    """Class for retrieving files to store in a FileCache.
     """
 
     def __init__(self, prefix, filecache, anonymous=False):
-        """
+        """Initialization for the FileCacheSource class.
 
         Parameters:
             prefix (str or Path): The prefix for the storage location. If the prefix
@@ -177,8 +192,11 @@ class FileCacheSource:
                 object.
             file_cache (FileCache): The FileCache in which to store files retrieved
                 from this source.
-            anonymous (bool, optional): If True, access cloud resources without
-                specifying credentials.
+            anonymous (bool, optional): If True, access cloud resources (GS and S3)
+                without specifying credentials.
+
+        Raises:
+            FileNotFoundError: If a local path does not exist.
         """
 
         self._filecache = filecache
@@ -187,46 +205,46 @@ class FileCacheSource:
             raise TypeError('prefix is not a str or Path')
 
         prefix = str(prefix).rstrip('/') + '/'
-        get_prefix = prefix
 
         if prefix.startswith('gs://'):
-            self._source_type = 'gs'
-            if anonymous:
-                self._gs_client = gs_storage.Client().create_anonymous_client()
-            else:  # pragma: no cover (must be anonymous for automated tests)
-                self._gs_client = gs_storage.Client()
-            self._gs_bucket_name, _, get_prefix = prefix.lstrip('gs://').partition('/')
-            self._gs_bucket = self._gs_client.bucket(self._gs_bucket_name)
-
+            self._init_gs_source(prefix, anonymous)
         elif prefix.startswith('s3://'):
-            self._source_type = 's3'
-            if anonymous:
-                self._s3_client = boto3.client('s3',
-                                               config=botocore.client.Config(
-                                                   signature_version=botocore.UNSIGNED))
-            else:  # pragma: no cover (must be anonymous for automated tests)
-                self._s3_client = boto3.client('s3')
-            self._s3_bucket_name, _, get_prefix = prefix.lstrip('s3://').partition('/')
-
+            self._init_s3_source(prefix, anonymous)
         elif prefix.startswith(('http://', 'https://')):
-            self._source_type = 'web'
-
+            self._init_web_source(prefix)
         else:
-            self._source_type = 'local'
-            prefix = str(Path(prefix).resolve()).replace('\\', '/')
+            self._init_local_source(prefix)
 
-        # What to add to a filename when retrieving data
-        self._prefix = get_prefix
+    def _init_gs_source(self, prefix, anonymous):
+        self._source_type = 'gs'
+        self._gs_client = (gs_storage.Client().create_anonymous_client()
+                           if anonymous else gs_storage.Client())
+        self._gs_bucket_name, _, self._prefix = prefix.lstrip('gs://').partition('/')
+        self._gs_bucket = self._gs_client.bucket(self._gs_bucket_name)
+        self._cache_root = self._filecache._cache_dir / prefix.replace('gs://', 'gs_')
 
-        # What to add to a filename when storing in the file cache
-        if self._source_type == 'local':
-            self._cache_root = self._filecache._cache_dir / 'local'
-        else:
-            self._cache_root = (self._filecache._cache_dir /
-                                prefix.replace('gs://', 'gs_')
-                                      .replace('s3://', 's3_')
-                                      .replace('http://', 'http_')
-                                      .replace('https://', 'http_'))
+    def _init_s3_source(self, prefix, anonymous):
+        self._source_type = 's3'
+        self._s3_client = (boto3.client('s3',
+                                        config=botocore.client.Config(
+                                           signature_version=botocore.UNSIGNED))
+                           if anonymous else boto3.client('s3'))
+        self._s3_bucket_name, _, self._prefix = prefix.lstrip('s3://').partition('/')
+        self._cache_root = self._filecache._cache_dir / prefix.replace('s3://', 's3_')
+
+    def _init_web_source(self, prefix):
+        self._source_type = 'web'
+        self._prefix = prefix
+        self._cache_root = (self._filecache._cache_dir /
+                            prefix.replace('http://', 'http_')
+                                  .replace('https://', 'http_'))
+
+    def _init_local_source(self, prefix):
+        self._source_type = 'local'
+        # This can raise FileNotFoundError if the prefix path doesn't exist
+        prefix = str(Path(prefix).resolve(strict=True)).replace('\\', '/')
+        self._prefix = prefix
+        self._cache_root = self._filecache._cache_dir / 'local'
 
     def is_cached(self, filename):
         filename = filename.replace('\\', '/').lstrip('/')
@@ -269,10 +287,9 @@ class FileCacheSource:
 
         local_path = self._cache_root / filename
 
-        if self._filecache.is_shared:
-            if local_path.exists():
-                # Another FileCache already downloaded it
-                return local_path
+        if self._filecache.is_shared and local_path.exists():
+            # Another FileCache already downloaded it
+            return local_path
 
         if self._filecache._is_cached(local_path):
             return local_path
@@ -285,49 +302,56 @@ class FileCacheSource:
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
         if self._source_type == 'web':
-            url = f'{self._prefix}{filename}'
-            try:
-                response = requests.get(url)
-            except (requests.exceptions.ConnectionError,
-                    requests.exceptions.ConnectTimeout):
-                raise FileNotFoundError(f'Failed to download file from: {url}')
-            if response.status_code == 200:
-                with open(local_path, 'wb') as f:
-                    f.write(response.content)
-                self._filecache._record_cached_file(filename, local_path)
-                return local_path
-            else:
-                raise FileNotFoundError(f'Failed to download file from: {url}')
+            return self._retrieve_from_web(filename, local_path)
 
         if self._source_type == 'gs':
-            blob_name = f'{self._prefix}{filename}'
-            blob = self._gs_bucket.blob(blob_name)
-            try:
-                blob.download_to_filename(str(local_path))
-            except (google.api_core.exceptions.BadRequest,  # bad bucket name
-                    google.resumable_media.common.InvalidResponse,  # bad bucket name
-                    google.cloud.exceptions.NotFound):  # bad filename
-                # The google API library will still create the file before noticing
-                # that it can't be downloaded, so we have to remove it here
-                local_path.unlink()
-                raise FileNotFoundError(
-                    f'Failed to download file from: gs://{self._gs_bucket_name}/'
-                    f'{blob_name}')
-            self._filecache._record_cached_file(filename, local_path)
-            return local_path
+            return self._retrieve_from_gs(filename, local_path)
 
         if self._source_type == 's3':
-            s3_key = f'{self._prefix}{filename}'
-            try:
-                self._s3_client.download_file(self._s3_bucket_name,
-                                              s3_key,
-                                              str(local_path))
-            except botocore.exceptions.ClientError:
-                raise FileNotFoundError(
-                    f'Failed to download file from: s3://{self._s3_bucket_name}/'
-                    f'{s3_key}')
-            self._filecache._record_cached_file(filename, local_path)
-            return local_path
+            return self._retrieve_from_s3(filename, local_path)
 
-        assert False, \
-            f'Internal error unknown source type {self._source_type}'  # pragma: no cover
+        raise AssertionError(
+            f'Internal error unknown source type {self._source_type}')  # pragma: no cover
+
+    def _retrieve_from_web(self, filename, local_path):
+        url = f'{self._prefix}{filename}'
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise FileNotFoundError(f'Failed to download file from: {url}') from e
+
+        with open(local_path, 'wb') as f:
+            f.write(response.content)
+
+        self._filecache._record_cached_file(filename, local_path)
+        return local_path
+
+    def _retrieve_from_gs(self, filename, local_path):
+        blob_name = f'{self._prefix}{filename}'
+        blob = self._gs_bucket.blob(blob_name)
+        try:
+            blob.download_to_filename(str(local_path))
+        except (google.api_core.exceptions.BadRequest,  # bad bucket name
+                google.resumable_media.common.InvalidResponse,  # bad bucket name
+                google.cloud.exceptions.NotFound):  # bad filename
+            # The google API library will still create the file before noticing
+            # that it can't be downloaded, so we have to remove it here
+            local_path.unlink()
+            raise FileNotFoundError(
+                f'Failed to download file from: gs://{self._gs_bucket_name}/'
+                f'{blob_name}')
+        self._filecache._record_cached_file(filename, local_path)
+        return local_path
+
+    def _retrieve_from_s3(self, filename, local_path):
+        s3_key = f'{self._prefix}{filename}'
+        try:
+            self._s3_client.download_file(self._s3_bucket_name, s3_key, str(local_path))
+        except botocore.exceptions.ClientError:
+            raise FileNotFoundError(
+                f'Failed to download file from: s3://{self._s3_bucket_name}/'
+                f'{s3_key}')
+
+        self._filecache._record_cached_file(filename, local_path)
+        return local_path
