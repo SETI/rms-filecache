@@ -414,7 +414,7 @@ class FileCacheSource:
     def _unprotected_retrieve(self, filename, local_path):
         if local_path.exists():
             if (self._filecache.is_shared or
-                self._filecache._is_cached(local_path)):  # pragma: no cover
+                    self._filecache._is_cached(local_path)):  # pragma: no cover
                 return local_path
             raise FileExistsError(
                 f'Internal error - File already exists: {filename}')  # pragma: no cover
