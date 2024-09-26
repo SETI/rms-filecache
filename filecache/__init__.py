@@ -106,11 +106,7 @@ class FileCache:
             raise ValueError('shared argument has directory elements')
 
         self._cache_dir = temp_dir / sub_dir
-
-        try:
-            self._cache_dir.mkdir(exist_ok=self._is_shared)
-        except (FileNotFoundError, FileExistsError, ValueError):  # pragma: no cover
-            raise
+        self._cache_dir.mkdir(exist_ok=self._is_shared)
 
         self._is_cache_owner = cache_owner
         self._is_mp_safe = mp_safe if mp_safe is not None else self._is_shared
@@ -227,8 +223,8 @@ class FileCache:
                 for name in dirs:
                     os.rmdir(os.path.join(root, name))
 
+        print('Removing', str(self._cache_dir))
         try:
-            print('Removing', str(self._cache_dir))
             self._cache_dir.rmdir()
         except FileNotFoundError:  # pragma: no cover
             pass
@@ -445,8 +441,7 @@ class FileCacheSource:
         try:
             with open(temp_local_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024*1024):
-                    if chunk:  # pragma: no cover
-                        f.write(chunk)
+                    f.write(chunk)
             temp_local_path.rename(local_path)
         except Exception:  # pragma: no cover
             temp_local_path.unlink(missing_ok=True)
