@@ -197,7 +197,7 @@ def test_local_filesystem_good(shared):
                 _compare_to_expected_path(path, filename)
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
-        fc.clean_up(final=True)
+            fc.clean_up(final=True)
     assert shared is not False or not fc.cache_dir.exists()
 
 
@@ -229,7 +229,7 @@ def test_cloud_good(shared, prefix):
             path = src.retrieve(filename)
             assert str(path).replace('\\', '/').endswith(filename)
             _compare_to_expected_path(path, filename)
-    fc.clean_up(final=True)
+        fc.clean_up(final=True)
 
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
@@ -338,7 +338,7 @@ def test_multi_sources_shared(prefix):
             for path1, path2 in zip(paths1, paths2):
                 assert path1.exists()
                 assert str(path1) == str(path2)
-    fc1.clean_up(final=True)
+        fc1.clean_up(final=True)
 
 
 def test_locking():
@@ -350,14 +350,13 @@ def test_locking():
         lock_path = src._lock_path(local_path)
         lock = filelock.FileLock(lock_path, timeout=0)
         lock.acquire()
-        with pytest.raises(TimeoutError):
-            src.retrieve(EXPECTED_FILENAMES[0])
-        lock.release()
         try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
-    fc.clean_up(final=True)
+            with pytest.raises(TimeoutError):
+                src.retrieve(EXPECTED_FILENAMES[0])
+        finally:
+            lock.release()
+        lock_path.unlink(missing_ok=True)
+        fc.clean_up(final=True)
 
     with FileCache(shared=False) as fc:
         src = fc.new_source(HTTP_TEST_ROOT, lock_timeout=0)
@@ -369,10 +368,7 @@ def test_locking():
         lock.acquire()
         src.retrieve(EXPECTED_FILENAMES[0])  # shared=False doesn't lock
         lock.release()
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
+        lock_path.unlink(missing_ok=True)
 
 
 def test_bad_cache_dir():
@@ -402,6 +398,29 @@ def test_double_delete():
             path = fc.cache_dir / filename
             path.unlink()
     fc.clean_up()
+
+    with FileCache() as fc:
+        src = fc.new_source(HTTP_TEST_ROOT)
+        for filename in EXPECTED_FILENAMES:
+            src.retrieve(filename)
+        fc.clean_up()  # Test double clean_up
+        fc.clean_up()
+        for filename in EXPECTED_FILENAMES:
+            src.retrieve(filename)
+        fc.clean_up()
+        fc.clean_up()
+
+    with FileCache(shared=True) as fc:
+        src = fc.new_source(HTTP_TEST_ROOT)
+        for filename in EXPECTED_FILENAMES:
+            src.retrieve(filename)
+        fc.clean_up()  # Test double clean_up
+        fc.clean_up()
+        for filename in EXPECTED_FILENAMES:
+            src.retrieve(filename)
+        fc.clean_up()
+        fc.clean_up()
+        fc.clean_up(final=True)
 
 
 def test_open_context():

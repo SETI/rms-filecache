@@ -19,10 +19,10 @@ try:
 except ImportError:  # pragma: no cover
     __version__ = 'Version unspecified'
 
-_FILE_CACHE_PREFIX = '.file_cache_'
-
 
 class FileCache:
+    _FILE_CACHE_PREFIX = '.file_cache_'
+
     def __init__(self, temp_dir=None, shared=False, owner=False, mp_safe=None,
                  exception_if_missing=False):
         r"""Initialization for the FileCache class.
@@ -94,14 +94,14 @@ class FileCache:
         self._is_shared = True
 
         if shared is False:
-            sub_dir = Path(f'{_FILE_CACHE_PREFIX}{uuid.uuid4()}')
+            sub_dir = Path(f'{self._FILE_CACHE_PREFIX}{uuid.uuid4()}')
             self._is_shared = False
         elif shared is True:
-            sub_dir = Path(f'{_FILE_CACHE_PREFIX}__global__')
+            sub_dir = Path(f'{self._FILE_CACHE_PREFIX}__global__')
         elif isinstance(shared, str):
             if '/' in shared or '\\' in shared:
                 raise ValueError('shared argument has directory elements')
-            sub_dir = Path(f'{_FILE_CACHE_PREFIX}{shared}')
+            sub_dir = Path(f'{self._FILE_CACHE_PREFIX}{shared}')
         else:
             raise TypeError('shared argument is of improper type')
 
@@ -176,9 +176,9 @@ class FileCache:
         # Verify this is really a cache directory before walking it and deleting
         # every file. We are just being paranoid to make sure this never does a
         # "rm -rf" on a real directory like "/".
-        if not Path(self._cache_dir).name.startswith(_FILE_CACHE_PREFIX):
+        if not Path(self._cache_dir).name.startswith(self._FILE_CACHE_PREFIX):
             raise ValueError(
-                f'Cache directory does not start with {_FILE_CACHE_PREFIX}')
+                f'Cache directory does not start with {self._FILE_CACHE_PREFIX}')
 
         if self._is_shared:
             if not final and not self._owner:
@@ -216,12 +216,7 @@ class FileCache:
             # they specifically ask us to.
             for file_path in self._file_cache:
                 print('Removing', str(file_path), os.path.exists(str(file_path)))
-                try:
-                    file_path.unlink()
-                except FileNotFoundError:
-                    print('WOOHOO', exception_if_missing)
-                    if exception_if_missing:
-                        raise
+                file_path.unlink(missing_ok=not exception_if_missing)
 
             # Delete all of the subdirectories we left behind, including the file
             # cache directory itself. If there are any files left in these directories
@@ -236,6 +231,8 @@ class FileCache:
             self._cache_dir.rmdir()
         except FileNotFoundError:  # pragma: no cover
             pass
+
+        self._file_cache = []
 
     def _record_cached_file(self, filename, local_path):
         print('Recording', filename, local_path)
@@ -409,10 +406,7 @@ class FileCacheSource:
                 # to do it in this order because otherwise it won't work on Windows,
                 # where locks are not just advisory.
                 lock.release()
-                try:
-                    lock_path.unlink()
-                except FileNotFoundError:
-                    pass
+                lock_path.unlink(missing_ok=True)
 
         return self._unprotected_retrieve(filename, local_path)
 
@@ -439,13 +433,21 @@ class FileCacheSource:
     def _retrieve_from_web(self, filename, local_path):
         url = f'{self._prefix}{filename}'
         try:
-            response = requests.get(url)
+            response = requests.get(url, stream=True)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
             raise FileNotFoundError(f'Failed to download file from: {url}') from e
 
-        with open(local_path, 'wb') as f:
-            f.write(response.content)
+        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
+        try:
+            with open(temp_local_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024*1024):
+                    if chunk:
+                        f.write(chunk)
+            temp_local_path.rename(local_path)
+        except:
+            temp_local_path.unlink(missing_ok=True)
+            raise
 
         self._filecache._record_cached_file(filename, local_path)
         return local_path
@@ -453,28 +455,42 @@ class FileCacheSource:
     def _retrieve_from_gs(self, filename, local_path):
         blob_name = f'{self._prefix}{filename}'
         blob = self._gs_bucket.blob(blob_name)
+
+        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
         try:
-            blob.download_to_filename(str(local_path))
+            blob.download_to_filename(str(temp_local_path))
+            temp_local_path.rename(local_path)
         except (google.api_core.exceptions.BadRequest,  # bad bucket name
                 google.resumable_media.common.InvalidResponse,  # bad bucket name
                 google.cloud.exceptions.NotFound):  # bad filename
             # The google API library will still create the file before noticing
             # that it can't be downloaded, so we have to remove it here
-            local_path.unlink()
+            temp_local_path.unlink(missing_ok=True)
             raise FileNotFoundError(
                 f'Failed to download file from: gs://{self._gs_bucket_name}/'
                 f'{blob_name}')
+        except:
+            temp_local_path.unlink(missing_ok=True)
+            raise
+
         self._filecache._record_cached_file(filename, local_path)
         return local_path
 
     def _retrieve_from_s3(self, filename, local_path):
         s3_key = f'{self._prefix}{filename}'
+
+        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
         try:
-            self._s3_client.download_file(self._s3_bucket_name, s3_key, str(local_path))
+            self._s3_client.download_file(self._s3_bucket_name, s3_key, str(temp_local_path))
+            temp_local_path.rename(local_path)
         except botocore.exceptions.ClientError:
+            temp_local_path.unlink(missing_ok=True)
             raise FileNotFoundError(
                 f'Failed to download file from: s3://{self._s3_bucket_name}/'
                 f'{s3_key}')
+        except:
+            temp_local_path.unlink(missing_ok=True)
+            raise
 
         self._filecache._record_cached_file(filename, local_path)
         return local_path
@@ -492,10 +508,8 @@ class FileCacheSource:
         """
 
         local_path = self.retrieve(filename)
-        try:
-            yield open(local_path, *args, **kwargs)
-        finally:
-            pass
+        with open(local_path, *args, **kwargs) as fp:
+            yield fp
 
     @property
     def filecache(self):
