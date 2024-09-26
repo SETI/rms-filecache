@@ -353,7 +353,10 @@ def test_locking():
         with pytest.raises(TimeoutError):
             src.retrieve(EXPECTED_FILENAMES[0])
         lock.release()
-        lock_path.unlink()
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
     fc.clean_up(final=True)
 
     with FileCache(shared=False) as fc:
@@ -366,7 +369,10 @@ def test_locking():
         lock.acquire()
         src.retrieve(EXPECTED_FILENAMES[0])  # shared=False doesn't lock
         lock.release()
-        lock_path.unlink()
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def test_bad_cache_dir():

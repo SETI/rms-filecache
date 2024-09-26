@@ -409,7 +409,10 @@ class FileCacheSource:
                 # to do it in this order because otherwise it won't work on Windows,
                 # where locks are not just advisory.
                 lock.release()
-                lock_path.unlink()
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
 
         return self._unprotected_retrieve(filename, local_path)
 
