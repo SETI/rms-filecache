@@ -343,12 +343,12 @@ def test_multi_sources_shared(prefix):
 
 def test_locking():
     with FileCache(shared=True) as fc:
-        src = fc.new_source(HTTP_TEST_ROOT, lock_timeout=1)
+        src = fc.new_source(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
         lock_path = src._lock_path(local_path)
-        lock = filelock.FileLock(lock_path, timeout=1)
+        lock = filelock.FileLock(lock_path, timeout=0)
         lock.acquire()
         with pytest.raises(TimeoutError):
             src.retrieve(EXPECTED_FILENAMES[0])
@@ -357,12 +357,12 @@ def test_locking():
     fc.clean_up(final=True)
 
     with FileCache(shared=False) as fc:
-        src = fc.new_source(HTTP_TEST_ROOT, lock_timeout=1)
+        src = fc.new_source(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
         lock_path = src._lock_path(local_path)
-        lock = filelock.FileLock(lock_path, timeout=1)
+        lock = filelock.FileLock(lock_path, timeout=0)
         lock.acquire()
         src.retrieve(EXPECTED_FILENAMES[0])  # shared=False doesn't lock
         lock.release()

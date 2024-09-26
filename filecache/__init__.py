@@ -401,22 +401,22 @@ class FileCacheSource:
             try:
                 return self._unprotected_retrieve(filename, local_path)
             finally:
-                lock_path.unlink()
+                # Technically there is a potential race condition here, because after
+                # we release the lock, someone else could lock this file, and then we
+                # could delete it (because on Linux locks are only advisory). Then the
+                # next process to come along to try to lock this file would also succeed
+                # because it would really be a different lock file! However, we have
+                # to do it in this order because otherwise it won't work on Windows,
+                # where locks are not just advisory.
                 lock.release()
+                lock_path.unlink()
 
         return self._unprotected_retrieve(filename, local_path)
 
     def _unprotected_retrieve(self, filename, local_path):
-        if self._filecache.is_shared and local_path.exists():
-            # Another FileCache already downloaded it
-            return local_path
-
-        if self._filecache._is_cached(local_path):
-            return local_path
-
-        if local_path.exists():  # pragma: no cover
-            # Not shared or local or cached and the file exists
-            # This shouldn't be possible
+        if local_path.exists():
+            if self._filecache.is_shared or self._filecache._is_cached(local_path):
+                return local_path
             raise FileExistsError(f'Internal error - File already exists: {filename}')
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
