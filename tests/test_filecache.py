@@ -409,7 +409,7 @@ def test_open_context():
         src = fc.new_source(HTTP_TEST_ROOT)
         with src.open(EXPECTED_FILENAMES[0], 'r') as fp:
             cache_data = fp.read()
-            _compare_to_expected_data(cache_data, EXPECTED_FILENAMES[0])
+        _compare_to_expected_data(cache_data, EXPECTED_FILENAMES[0])
 
 
 def test_owner():
