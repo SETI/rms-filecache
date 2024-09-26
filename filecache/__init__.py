@@ -445,7 +445,7 @@ class FileCacheSource:
                     if chunk:
                         f.write(chunk)
             temp_local_path.rename(local_path)
-        except:
+        except Exception:
             temp_local_path.unlink(missing_ok=True)
             raise
 
@@ -469,7 +469,7 @@ class FileCacheSource:
             raise FileNotFoundError(
                 f'Failed to download file from: gs://{self._gs_bucket_name}/'
                 f'{blob_name}')
-        except:
+        except Exception:
             temp_local_path.unlink(missing_ok=True)
             raise
 
@@ -481,14 +481,15 @@ class FileCacheSource:
 
         temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
         try:
-            self._s3_client.download_file(self._s3_bucket_name, s3_key, str(temp_local_path))
+            self._s3_client.download_file(self._s3_bucket_name, s3_key,
+                                          str(temp_local_path))
             temp_local_path.rename(local_path)
         except botocore.exceptions.ClientError:
             temp_local_path.unlink(missing_ok=True)
             raise FileNotFoundError(
                 f'Failed to download file from: s3://{self._s3_bucket_name}/'
                 f'{s3_key}')
-        except:
+        except Exception:
             temp_local_path.unlink(missing_ok=True)
             raise
 
