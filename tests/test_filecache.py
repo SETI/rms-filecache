@@ -404,23 +404,34 @@ def test_double_delete():
         for filename in EXPECTED_FILENAMES:
             src.retrieve(filename)
         fc.clean_up()  # Test double clean_up
+        assert not fc.cache_dir.exists()
         fc.clean_up()
+        assert not fc.cache_dir.exists()
         for filename in EXPECTED_FILENAMES:
             src.retrieve(filename)
+        assert fc.cache_dir.exists()
         fc.clean_up()
+        assert not fc.cache_dir.exists()
         fc.clean_up()
+        assert not fc.cache_dir.exists()
 
     with FileCache(shared=True) as fc:
         src = fc.new_source(HTTP_TEST_ROOT)
         for filename in EXPECTED_FILENAMES:
             src.retrieve(filename)
         fc.clean_up()  # Test double clean_up
+        assert fc.cache_dir.exists()
         fc.clean_up()
+        assert fc.cache_dir.exists()
         for filename in EXPECTED_FILENAMES:
             src.retrieve(filename)
+        assert fc.cache_dir.exists()
         fc.clean_up()
+        assert fc.cache_dir.exists()
         fc.clean_up()
+        assert fc.cache_dir.exists()
         fc.clean_up(final=True)
+        assert not fc.cache_dir.exists()
 
 
 def test_open_context():
