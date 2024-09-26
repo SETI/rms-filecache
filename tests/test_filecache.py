@@ -9,6 +9,9 @@ import pytest
 
 from filecache import FileCache
 
+import filelock
+
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TEST_FILES_DIR = ROOT_DIR / 'test_files'
 EXPECTED_DIR = TEST_FILES_DIR / 'expected'
@@ -24,13 +27,23 @@ HTTP_TEST_ROOT = 'https://storage.googleapis.com/rms-node-filecache-test-bucket'
 CLOUD_PREFIXES = (GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT, HTTP_TEST_ROOT)
 
 
-def _compare_to_expected(cache_path, filename):
+def _compare_to_expected_path(cache_path, filename):
     local_path = EXPECTED_DIR / filename
     mode = 'r'
     if filename.endswith('.bin'):
         mode = 'rb'
     with open(cache_path, mode) as fp:
         cache_data = fp.read()
+    with open(local_path, mode) as fp:
+        local_data = fp.read()
+    assert cache_data == local_data
+
+
+def _compare_to_expected_data(cache_data, filename):
+    local_path = EXPECTED_DIR / filename
+    mode = 'r'
+    if filename.endswith('.bin'):
+        mode = 'rb'
     with open(local_path, mode) as fp:
         local_data = fp.read()
     assert cache_data == local_data
@@ -181,9 +194,10 @@ def test_local_filesystem_good(shared):
                 assert lf.is_cached(filename)
                 path = lf.retrieve(filename)
                 assert str(path) == f'{EXPECTED_DIR}{os.sep}{os_filename}'
-                _compare_to_expected(path, filename)
+                _compare_to_expected_path(path, filename)
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
+        fc.clean_up(final=True)
     assert shared is not False or not fc.cache_dir.exists()
 
 
@@ -209,12 +223,13 @@ def test_cloud_good(shared, prefix):
         for filename in EXPECTED_FILENAMES:
             path = src.retrieve(filename)
             assert str(path).replace('\\', '/').endswith(filename)
-            _compare_to_expected(path, filename)
+            _compare_to_expected_path(path, filename)
             # Retrieving the same thing a second time should do nothing
             assert src.is_cached(filename)
             path = src.retrieve(filename)
             assert str(path).replace('\\', '/').endswith(filename)
-            _compare_to_expected(path, filename)
+            _compare_to_expected_path(path, filename)
+    fc.clean_up(final=True)
 
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
@@ -226,13 +241,13 @@ def test_cloud2_good(prefix):
         for filename in EXPECTED_FILENAMES:
             path1 = src1.retrieve(filename)
             assert str(path1).replace('\\', '/').endswith(filename)
-            _compare_to_expected(path1, filename)
+            _compare_to_expected_path(path1, filename)
             assert src1.is_cached(filename)
             assert src2.is_cached(filename)
             path2 = src2.retrieve(filename)
             assert str(path2).replace('\\', '/').endswith(filename)
             assert str(path1) == str(path2)
-            _compare_to_expected(path2, filename)
+            _compare_to_expected_path(path2, filename)
     assert not fc.cache_dir.exists()
 
 
@@ -246,7 +261,7 @@ def test_cloud3_good(prefix):
             src2 = fc.new_source(f'{prefix}/{subdirs}', anonymous=True)
             path2 = src2.retrieve(name)
             assert str(path2).replace('\\', '/').endswith(filename)
-            _compare_to_expected(path2, filename)
+            _compare_to_expected_path(path2, filename)
             assert src1.is_cached(filename)
             assert src2.is_cached(name)
             path1 = src1.retrieve(filename)
@@ -304,7 +319,7 @@ def test_multi_sources():
                         continue
                     assert str(path1) != str(path2)
             for path in paths:
-                _compare_to_expected(path, filename)
+                _compare_to_expected_path(path, filename)
     assert not fc.cache_dir.exists()
 
 
@@ -324,3 +339,77 @@ def test_multi_sources_shared(prefix):
                 assert path1.exists()
                 assert str(path1) == str(path2)
     fc1.clean_up(final=True)
+
+
+def test_locking():
+    with FileCache(shared=True) as fc:
+        src = fc.new_source(HTTP_TEST_ROOT, lock_timeout=1)
+        filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
+                    EXPECTED_FILENAMES[0])
+        local_path = fc.cache_dir / filename
+        lock_path = src._lock_path(local_path)
+        lock = filelock.FileLock(lock_path, timeout=1)
+        lock.acquire()
+        with pytest.raises(TimeoutError):
+            src.retrieve(EXPECTED_FILENAMES[0])
+        lock.release()
+        lock_path.unlink()
+    fc.clean_up(final=True)
+
+    with FileCache(shared=False) as fc:
+        src = fc.new_source(HTTP_TEST_ROOT, lock_timeout=1)
+        filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
+                    EXPECTED_FILENAMES[0])
+        local_path = fc.cache_dir / filename
+        lock_path = src._lock_path(local_path)
+        lock = filelock.FileLock(lock_path, timeout=1)
+        lock.acquire()
+        src.retrieve(EXPECTED_FILENAMES[0])  # shared=False doesn't lock
+        lock.release()
+        lock_path.unlink()
+
+
+def test_bad_cache_dir():
+    with pytest.raises(ValueError):
+        with FileCache() as fc:
+            fc._cache_dir = '/bogus/path/not/a/filecache'
+
+
+def test_double_delete():
+    with FileCache() as fc:
+        src = fc.new_source(HTTP_TEST_ROOT)
+        for filename in EXPECTED_FILENAMES:
+            src.retrieve(filename)
+        filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
+                    EXPECTED_FILENAMES[0])
+        path = fc.cache_dir / filename
+        path.unlink()
+
+    with pytest.raises(FileNotFoundError):
+        with FileCache(exception_if_missing=True) as fc:
+            src = fc.new_source(HTTP_TEST_ROOT)
+            assert src.filecache == fc
+            for filename in EXPECTED_FILENAMES:
+                src.retrieve(filename)
+            filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
+                        EXPECTED_FILENAMES[0])
+            path = fc.cache_dir / filename
+            path.unlink()
+    fc.clean_up()
+
+
+def test_open_context():
+    with FileCache() as fc:
+        src = fc.new_source(HTTP_TEST_ROOT)
+        with src.open(EXPECTED_FILENAMES[0], 'r') as fp:
+            cache_data = fp.read()
+            _compare_to_expected_data(cache_data, EXPECTED_FILENAMES[0])
+
+
+def test_owner():
+    with FileCache(shared=True, owner=True) as fc1:
+        with FileCache(shared=True) as fc2:
+            pass
+        assert fc1.cache_dir == fc2.cache_dir
+        assert os.path.exists(fc1.cache_dir)
+    assert not os.path.exists(fc1.cache_dir)
