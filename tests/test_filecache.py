@@ -442,8 +442,8 @@ def test_open_context():
         _compare_to_expected_data(cache_data, EXPECTED_FILENAMES[0])
 
 
-def test_owner():
-    with FileCache(shared=True, owner=True) as fc1:
+def test_cache_owner():
+    with FileCache(shared=True, cache_owner=True) as fc1:
         with FileCache(shared=True) as fc2:
             pass
         assert fc1.cache_dir == fc2.cache_dir

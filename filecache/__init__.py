@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover
 class FileCache:
     _FILE_CACHE_PREFIX = '.file_cache_'
 
-    def __init__(self, temp_dir=None, shared=False, owner=False, mp_safe=None,
+    def __init__(self, temp_dir=None, shared=False, cache_owner=False, mp_safe=None,
                  exception_if_missing=False):
         r"""Initialization for the FileCache class.
 
@@ -35,36 +35,33 @@ class FileCache:
                 /var/tmp, or /usr/tmp on other platforms. The file cache will be stored in
                 a sub-directory within this temporary directory. To prevent security
                 issues, the temporary directory must already exist and be writeable.
-
             shared (bool or str, optional): If False, the file cache will be
                 stored in a unique subdirectory of temp_dir with the prefix
                 ".file_cache_". If True, the file cache will be stored in a subdirectory
                 of temp_dir called ".file_cache___global__". If a string is specified, the
                 file cache will be stored in a subdirectory of temp_dir called
                 ".file_cache_<shared>".
-
-            owner (bool, optional): This option is only relevant if shared is not False.
-                If owner is True, this FileCache is considered the owner of the shared
-                cache, and if it is created as a context manager then on exit the shared
-                cache will be deleted. If it is not created as a context manager then
-                the clean_up method needs to be called. This option should only be set
-                to true if this FileCache is going to be the sole user of the cache,
-                or if the process creating this file cache owns the cache contents and
-                has control over all other processes that might be accessing it.
-
+            cache_owner (bool, optional): This option is only relevant if shared is not
+                False. If cache_owner is True, this FileCache is considered the
+                cache_owner of the shared cache, and if it is created as a context manager
+                then on exit the shared cache will be deleted. If it is not created as a
+                context manager then the clean_up method needs to be called. This option
+                should only be set to true if this FileCache is going to be the sole user
+                of the cache, or if the process creating this file cache owns the cache
+                contents and has control over all other processes that might be accessing
+                it.
             mp_safe (bool or None, optional): If false, never create new sources without
                 multiprocessor-safety locking. If true, always create new sources with
                 multiprocessor-safety locking. If None, safety locking is used if shared
                 is not False, as it is assumed that multiple programs will be using the
                 shared cache simultaneously.
-
             exception_if_missing (bool, optional): If False, ignore files that should
                 be present but are missing during cleanup. If True, raise an exception
                 when a file is missing. This argument is ignored for shared cache
                 directories, since it is always possible that two processes are cleaning
-                up the cache at the same time. Setting this argument to True should
-                rarely be used except for extreme paranoia about testing the contents of
-                the cache.
+                up the cache at the same time. Setting this argument to True should rarely
+                be used except for extreme paranoia about testing the contents of the
+                cache.
 
         Notes:
             FileCache can be used as a context, such as::
@@ -115,7 +112,7 @@ class FileCache:
         except (FileNotFoundError, FileExistsError, ValueError):  # pragma: no cover
             raise
 
-        self._owner = owner
+        self._is_cache_owner = cache_owner
         self._is_mp_safe = mp_safe if mp_safe is not None else self._is_shared
         self._exception_if_missing = exception_if_missing
         self._file_cache = []
@@ -127,6 +124,10 @@ class FileCache:
     @property
     def is_shared(self):
         return self._is_shared
+
+    @property
+    def is_cache_owner(self):
+        return self._is_cache_owner
 
     @property
     def is_mp_safe(self):
@@ -160,17 +161,17 @@ class FileCache:
 
         Parameters:
             final (bool, optional): If False and this FileCache is not marked as the
-                owner of the cache, a shared cache is left alone. If False and this
-                FileCache is marked as the owner of the cache, or if True, a shared cache
-                is deleted. Beware that this could affect other processes using the same
-                cache!
+                cache_owner of the cache, a shared cache is left alone. If False and this
+                FileCache is marked as the cache_owner of the cache, or if True, a shared
+                cache is deleted. Beware that this could affect other processes using the
+                same cache!
             exception_if_missing (bool, optional): If False, ignore files that should
                 be present but are missing during cleanup. If True, raise an exception
                 when a file is missing. This argument is ignored for shared cache
                 directories, since it is always possible that two processes are cleaning
-                up the cache at the same time. Setting this argument to True should
-                rarely be used except for extreme paranoia about testing the contents of
-                the cache.
+                up the cache at the same time. Setting this argument to True should rarely
+                be used except for extreme paranoia about testing the contents of the
+                cache.
         """
 
         # Verify this is really a cache directory before walking it and deleting
@@ -181,7 +182,7 @@ class FileCache:
                 f'Cache directory does not start with {self._FILE_CACHE_PREFIX}')
 
         if self._is_shared:
-            if not final and not self._owner:
+            if not final and not self.is_cache_owner:
                 # Don't delete files from shared caches unless specifically asked to
                 return
 
@@ -273,10 +274,10 @@ class FileCacheSource:
             FileNotFoundError: If a local path does not exist.
 
         Notes:
-            If the specified FileCache is marked as being multiprocessor-safe, then
-            file locking will be used to protect against multiple instances of
-            FileCacheSource downloading the same file into the same cache. Note that this
-            will likely only work properly on a local filesystem.
+            If the specified FileCache is marked as being multiprocessor-safe, then file
+            locking will be used to protect against multiple instances of FileCacheSource
+            downloading the same file into the same cache. Note that this will likely only
+            work properly on a local filesystem.
         """
 
         self._filecache = filecache
@@ -412,9 +413,11 @@ class FileCacheSource:
 
     def _unprotected_retrieve(self, filename, local_path):
         if local_path.exists():
-            if self._filecache.is_shared or self._filecache._is_cached(local_path):
+            if (self._filecache.is_shared or
+                self._filecache._is_cached(local_path)):  # pragma: no cover
                 return local_path
-            raise FileExistsError(f'Internal error - File already exists: {filename}')
+            raise FileExistsError(
+                f'Internal error - File already exists: {filename}')  # pragma: no cover
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -442,10 +445,10 @@ class FileCacheSource:
         try:
             with open(temp_local_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024*1024):
-                    if chunk:
+                    if chunk:  # pragma: no cover
                         f.write(chunk)
             temp_local_path.rename(local_path)
-        except Exception:
+        except Exception:  # pragma: no cover
             temp_local_path.unlink(missing_ok=True)
             raise
 
@@ -469,7 +472,7 @@ class FileCacheSource:
             raise FileNotFoundError(
                 f'Failed to download file from: gs://{self._gs_bucket_name}/'
                 f'{blob_name}')
-        except Exception:
+        except Exception:  # pragma: no cover
             temp_local_path.unlink(missing_ok=True)
             raise
 
@@ -489,7 +492,7 @@ class FileCacheSource:
             raise FileNotFoundError(
                 f'Failed to download file from: s3://{self._s3_bucket_name}/'
                 f'{s3_key}')
-        except Exception:
+        except Exception:  # pragma: no cover
             temp_local_path.unlink(missing_ok=True)
             raise
 
