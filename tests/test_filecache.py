@@ -141,12 +141,6 @@ def test_logger():
     logger.has_prefix_list(['Creating', 'Initializing', 'Accessing', 'Cleaning',
                             'Removing'])
 
-    # print(filecache._GLOBAL_LOGGER)
-    # with FileCache() as fc:
-    #     print(fc._logger)
-    #     src = fc.new_source(HTTP_TEST_ROOT)
-    #     src.retrieve(EXPECTED_FILENAMES[0])
-
 
 def test_temp_dir_good():
     fc1 = FileCache()
