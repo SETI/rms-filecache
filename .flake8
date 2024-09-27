@@ -1,3 +1,5 @@
 [flake8]
 max-line-length: 90
-extend-ignore =
+per-file-ignores =
+    # E501 line too long
+    test_filecache.py: E501
