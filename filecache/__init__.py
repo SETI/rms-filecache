@@ -1,3 +1,4 @@
+import atexit
 import contextlib
 import os
 from pathlib import Path
@@ -13,18 +14,26 @@ import botocore
 from google.cloud import storage as gs_storage
 import google.api_core.exceptions
 
-
 try:
     from ._version import __version__
 except ImportError:  # pragma: no cover
     __version__ = 'Version unspecified'
 
 
+_GLOBAL_LOGGER = False
+
+
+def set_global_logger(logger):
+    global _GLOBAL_LOGGER
+    logger = logger if logger else False  # Turn None into False
+    _GLOBAL_LOGGER = logger
+
+
 class FileCache:
     _FILE_CACHE_PREFIX = '.file_cache_'
 
     def __init__(self, temp_dir=None, shared=False, cache_owner=False, mp_safe=None,
-                 exception_if_missing=False):
+                 exception_if_missing=False, atexit_cleanup=True, logger=None):
         r"""Initialization for the FileCache class.
 
         Parameters:
@@ -62,6 +71,14 @@ class FileCache:
                 up the cache at the same time. Setting this argument to True should rarely
                 be used except for extreme paranoia about testing the contents of the
                 cache.
+            atexit_cleanup (bool, optional): If True, at program exit automatically call
+                the clean_up method. Note that this will keep this class instance around
+                for the entire duration of the program, potentially wasting memory.
+                To be more memory conscious, but also be solely responsible for calling
+                clean_up, set this parameter to False.
+            logger (logger, optional): If False, do not do any logging. If None, use the
+                global logger set with set_global_logger. Otherwise use the specified
+                logger.
 
         Notes:
             FileCache can be used as a context, such as::
@@ -105,13 +122,23 @@ class FileCache:
         if str(sub_dir.parent) != '.':  # pragma: no cover - shouldn't be possible
             raise ValueError('shared argument has directory elements')
 
+        self._logger = _GLOBAL_LOGGER if logger is None else logger
+
         self._cache_dir = temp_dir / sub_dir
+        if self._logger:
+            if self._is_shared:
+                self._logger.debug(f'Creating shared cache {self._cache_dir}')
+            else:
+                self._logger.debug(f'Creating cache {self._cache_dir}')
         self._cache_dir.mkdir(exist_ok=self._is_shared)
 
         self._is_cache_owner = cache_owner
         self._is_mp_safe = mp_safe if mp_safe is not None else self._is_shared
         self._exception_if_missing = exception_if_missing
         self._file_cache = []
+
+        if atexit_cleanup:
+            atexit.register(self.clean_up)
 
     @property
     def cache_dir(self):
@@ -150,7 +177,8 @@ class FileCache:
         """
 
         return FileCacheSource(prefix, self, anonymous=anonymous,
-                               lock_timeout=lock_timeout, **kwargs)
+                               lock_timeout=lock_timeout, logger=self._logger,
+                               **kwargs)
 
     def clean_up(self, final=False, exception_if_missing=False):
         """Delete all files stored in the cache including the cache directory.
@@ -169,6 +197,9 @@ class FileCache:
                 be used except for extreme paranoia about testing the contents of the
                 cache.
         """
+
+        if self._logger:
+            self._logger.debug(f'Cleaning up cache {self._cache_dir}')
 
         # Verify this is really a cache directory before walking it and deleting
         # every file. We are just being paranoid to make sure this never does a
@@ -190,13 +221,15 @@ class FileCache:
             # each other.
             for root, dirs, files in os.walk(self._cache_dir, topdown=False):
                 for name in files:
-                    print('Removing', name)
+                    if self._logger:
+                        self._logger.debug(f'  Removing {name}')
                     try:
                         os.remove(os.path.join(root, name))
                     except FileNotFoundError:  # pragma: no cover
                         pass
                 for name in dirs:
-                    print('Removing', name)
+                    if self._logger:
+                        self._logger.debug(f'  Removing {name}')
                     try:
                         os.rmdir(os.path.join(root, name))
                     except FileNotFoundError:  # pragma: no cover
@@ -212,7 +245,8 @@ class FileCache:
             # compelling reason to complain about the user deleting a file...unless
             # they specifically ask us to.
             for file_path in self._file_cache:
-                print('Removing', str(file_path), os.path.exists(str(file_path)))
+                if self._logger:
+                    self._logger.debug(f'  Removing {file_path}')
                 file_path.unlink(missing_ok=not exception_if_missing)
 
             # Delete all of the subdirectories we left behind, including the file
@@ -221,9 +255,13 @@ class FileCache:
             # We would like to use Path.walk() but that was only added in Python 3.12
             for root, dirs, files in os.walk(self._cache_dir, topdown=False):
                 for name in dirs:
-                    os.rmdir(os.path.join(root, name))
+                    file_path = os.path.join(root, name)
+                    if self._logger:
+                        self._logger.debug(f'  Removing {file_path}')
+                    os.rmdir(file_path)
 
-        print('Removing', str(self._cache_dir))
+        if self._logger:
+            self._logger.debug(f'  Removing {self._cache_dir}')
         try:
             self._cache_dir.rmdir()
         except FileNotFoundError:  # pragma: no cover
@@ -232,7 +270,6 @@ class FileCache:
         self._file_cache = []
 
     def _record_cached_file(self, filename, local_path):
-        print('Recording', filename, local_path)
         self._file_cache.append(local_path)
 
     def _is_cached(self, local_path):
@@ -249,7 +286,7 @@ class FileCacheSource:
     """Class for retrieving files to store in a FileCache.
     """
 
-    def __init__(self, prefix, filecache, anonymous=False, lock_timeout=60):
+    def __init__(self, prefix, filecache, anonymous=False, lock_timeout=60, logger=None):
         """Initialization for the FileCacheSource class.
 
         Parameters:
@@ -265,6 +302,9 @@ class FileCacheSource:
                 without specifying credentials.
             lock_timeout(int, optional): How long to wait if another process is marked
                 as retrieving the file before raising an exception.
+            logger (logger, optional): If False, do not do any logging. If None, use the
+                global logger set with set_global_logger. Otherwise use the specified
+                logger.
 
         Raises:
             FileNotFoundError: If a local path does not exist.
@@ -278,11 +318,15 @@ class FileCacheSource:
 
         self._filecache = filecache
         self._lock_timeout = lock_timeout
+        self._logger = _GLOBAL_LOGGER if logger is None else logger
 
         if not isinstance(prefix, (str, Path)):
             raise TypeError('prefix is not a str or Path')
 
         prefix = str(prefix).rstrip('/') + '/'
+
+        if self._logger:
+            self._logger.debug(f'Initializing source {prefix}')
 
         if prefix.startswith('gs://'):
             self._init_gs_source(prefix, anonymous)
@@ -375,9 +419,11 @@ class FileCacheSource:
         filename = filename.replace('\\', '/').lstrip('/')
 
         if self._source_type == 'local':
+            local_path = Path(self._prefix) / filename
+            if self._logger:
+                self._logger.debug(f'Accessing local file {filename}')
             if '/..' in filename:
                 raise ValueError(f'Invalid filename {filename}')
-            local_path = Path(self._prefix) / filename
             if not local_path.exists():
                 raise FileNotFoundError(f'File does not exist: {local_path}')
             # Don't tell the file cache about local files
@@ -409,6 +455,9 @@ class FileCacheSource:
 
     def _unprotected_retrieve(self, filename, local_path):
         if local_path.exists():
+            if self._logger:
+                self._logger.debug(
+                    f'Accessing existing {self._prefix}/{filename} at {local_path}')
             if (self._filecache.is_shared or
                     self._filecache._is_cached(local_path)):  # pragma: no cover
                 return local_path
@@ -416,6 +465,9 @@ class FileCacheSource:
                 f'Internal error - File already exists: {filename}')  # pragma: no cover
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._logger:
+            self._logger.debug(f'Downloading {self._prefix}/{filename} to {local_path}')
 
         if self._source_type == 'web':
             return self._retrieve_from_web(filename, local_path)

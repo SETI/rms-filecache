@@ -2,11 +2,13 @@
 # tests/test_filecache.py
 ################################################################################
 
+import atexit
 import os
 from pathlib import Path
 
 import pytest
 
+import filecache
 from filecache import FileCache
 
 import filelock
@@ -47,6 +49,97 @@ def _compare_to_expected_data(cache_data, filename):
     with open(local_path, mode) as fp:
         local_data = fp.read()
     assert cache_data == local_data
+
+
+class MyLogger:
+    def __init__(self):
+        self.messages = []
+
+    def debug(self, msg, *args, **kwargs):
+        self.messages.append(msg)
+
+    def has_prefix_list(self, prefixes):
+        for msg, prefix in zip(self.messages, prefixes):
+            assert msg.strip(' ').startswith(prefix), (msg, prefix)
+
+
+# I don't know why, but this function has to be first. Otherwise code coverage
+# doesn't see the logger usage properly.
+def test_logger():
+    # Global logger
+    logger = MyLogger()
+    filecache.set_global_logger(logger)
+    with FileCache() as fc:
+        src = fc.new_source(HTTP_TEST_ROOT)
+        src.retrieve(EXPECTED_FILENAMES[0])
+# Creating cache /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
+# Initializing source https://storage.googleapis.com/rms-node-filecache-test-bucket/
+# Downloading https://storage.googleapis.com/rms-node-filecache-test-bucket//lorem1.txt to /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt
+# Cleaning up cache /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
+#   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt
+#   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket
+#   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com
+#   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
+    logger.has_prefix_list(['Creating', 'Initializing', 'Downloading', 'Cleaning',
+                            'Removing', 'Removing', 'Removing', 'Removing'])
+
+    logger = MyLogger()
+    filecache.set_global_logger(logger)
+    with FileCache(shared=True) as fc:
+        src = fc.new_source(HTTP_TEST_ROOT)
+        src.retrieve(EXPECTED_FILENAMES[0])
+        fc.clean_up(final=True)
+# Creating shared cache /tmp/.file_cache___global__
+# Initializing source https://storage.googleapis.com/rms-node-filecache-test-bucket/
+# Downloading https://storage.googleapis.com/rms-node-filecache-test-bucket//lorem1.txt to /tmp/.file_cache___global__/http_storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt
+# Cleaning up cache /tmp/.file_cache___global__
+#   Removing lorem1.txt
+#   Removing rms-node-filecache-test-bucket
+#   Removing http_storage.googleapis.com
+#   Removing /tmp/.file_cache___global__
+# Cleaning up cache /tmp/.file_cache___global__
+    logger.has_prefix_list(['Creating', 'Initializing', 'Downloading', 'Cleaning',
+                            'Removing', 'Removing', 'Removing', 'Removing',
+                            'Cleaning'])
+    logger.messages = []
+
+    # Remove global logger
+    filecache.set_global_logger(False)
+    with FileCache() as fc:
+        src = fc.new_source(HTTP_TEST_ROOT)
+        src.retrieve(EXPECTED_FILENAMES[0])
+    assert len(logger.messages) == 0
+
+    # Specified logger
+    logger = MyLogger()
+    with FileCache(logger=logger) as fc:
+        src = fc.new_source(HTTP_TEST_ROOT)
+        src.retrieve(EXPECTED_FILENAMES[0])
+        src.retrieve(EXPECTED_FILENAMES[0])
+# Creating cache /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
+# Initializing source https://storage.googleapis.com/rms-node-filecache-test-bucket/
+# Downloading https://storage.googleapis.com/rms-node-filecache-test-bucket//lorem1.txt to /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt
+# Accessing existing https://storage.googleapis.com/rms-node-filecache-test-bucket//lorem1.txt at /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt
+# Cleaning up cache /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
+#   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt
+#   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket
+#   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com
+#   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
+    logger.has_prefix_list(['Creating', 'Initializing', 'Downloading', 'Accessing',
+                            'Cleaning', 'Removing', 'Removing', 'Removing', 'Removing'])
+
+    # Specified logger
+    logger = MyLogger()
+    with FileCache(logger=logger) as fc:
+        src = fc.new_source(EXPECTED_DIR)
+        src.retrieve(EXPECTED_FILENAMES[0])
+# Creating cache /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
+# Initializing source /seti/all_repos/rms-filecache/test_files/expected/
+# Accessing local file lorem1.txt
+# Cleaning up cache /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
+#   Removing /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
+    logger.has_prefix_list(['Creating', 'Initializing', 'Accessing', 'Cleaning',
+                            'Removing'])
 
 
 def test_temp_dir_good():
@@ -132,6 +225,7 @@ def test_shared_global_ctx():
     assert not fc1.cache_dir.exists()
     assert fc3.cache_dir.exists()
     fc3.clean_up(final=True)
+    assert not fc2.cache_dir.exists()
     assert not fc3.cache_dir.exists()
 
 
@@ -179,6 +273,7 @@ def test_source_bad():
     with FileCache() as fc:
         with pytest.raises(TypeError):
             _ = fc.new_source(5)
+    assert not fc.cache_dir.exists()
 
 
 @pytest.mark.parametrize('shared', (False, True, 'test'))
@@ -198,7 +293,7 @@ def test_local_filesystem_good(shared):
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
             fc.clean_up(final=True)
-    assert shared is not False or not fc.cache_dir.exists()
+            assert not fc.cache_dir.exists()
 
 
 def test_local_filesystem_bad():
@@ -230,6 +325,7 @@ def test_cloud_good(shared, prefix):
             assert str(path).replace('\\', '/').endswith(filename)
             _compare_to_expected_path(path, filename)
         fc.clean_up(final=True)
+    assert not fc.cache_dir.exists()
 
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
@@ -339,6 +435,8 @@ def test_multi_sources_shared(prefix):
                 assert path1.exists()
                 assert str(path1) == str(path2)
         fc1.clean_up(final=True)
+    assert not fc1.cache_dir.exists()
+    assert not fc2.cache_dir.exists()
 
 
 def test_locking():
@@ -357,6 +455,7 @@ def test_locking():
             lock.release()
         lock_path.unlink(missing_ok=True)
         fc.clean_up(final=True)
+    assert not fc.cache_dir.exists()
 
     with FileCache(shared=False) as fc:
         src = fc.new_source(HTTP_TEST_ROOT, lock_timeout=0)
@@ -369,12 +468,17 @@ def test_locking():
         src.retrieve(EXPECTED_FILENAMES[0])  # shared=False doesn't lock
         lock.release()
         lock_path.unlink(missing_ok=True)
+    assert not fc.cache_dir.exists()
 
 
 def test_bad_cache_dir():
     with pytest.raises(ValueError):
         with FileCache() as fc:
+            orig_cache_dir = fc._cache_dir
             fc._cache_dir = '/bogus/path/not/a/filecache'
+    fc._cache_dir = orig_cache_dir
+    fc.clean_up()
+    assert not fc.cache_dir.exists()
 
 
 def test_double_delete():
@@ -386,6 +490,7 @@ def test_double_delete():
                     EXPECTED_FILENAMES[0])
         path = fc.cache_dir / filename
         path.unlink()
+    assert not fc.cache_dir.exists()
 
     with pytest.raises(FileNotFoundError):
         with FileCache(exception_if_missing=True) as fc:
@@ -398,6 +503,7 @@ def test_double_delete():
             path = fc.cache_dir / filename
             path.unlink()
     fc.clean_up()
+    assert not fc.cache_dir.exists()
 
     with FileCache() as fc:
         src = fc.new_source(HTTP_TEST_ROOT)
@@ -440,6 +546,7 @@ def test_open_context():
         with src.open(EXPECTED_FILENAMES[0], 'r') as fp:
             cache_data = fp.read()
         _compare_to_expected_data(cache_data, EXPECTED_FILENAMES[0])
+    assert not fc.cache_dir.exists()
 
 
 def test_cache_owner():
@@ -449,3 +556,17 @@ def test_cache_owner():
         assert fc1.cache_dir == fc2.cache_dir
         assert os.path.exists(fc1.cache_dir)
     assert not os.path.exists(fc1.cache_dir)
+    assert not os.path.exists(fc2.cache_dir)
+
+
+def test_atexit():
+    fc = FileCache(atexit_cleanup=False)
+    assert os.path.exists(fc.cache_dir)
+    atexit._run_exitfuncs()
+    assert os.path.exists(fc.cache_dir)
+    fc.clean_up()
+
+    fc = FileCache(atexit_cleanup=True)
+    assert os.path.exists(fc.cache_dir)
+    atexit._run_exitfuncs()
+    assert not os.path.exists(fc.cache_dir)
