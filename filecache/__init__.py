@@ -134,6 +134,9 @@ class FileCache:
         if atexit_cleanup:
             atexit.register(self.clean_up)
 
+        if atexit_cleanup:
+            atexit.register(self.clean_up)
+
     @property
     def cache_dir(self):
         """Return the top-level directory of the cache."""

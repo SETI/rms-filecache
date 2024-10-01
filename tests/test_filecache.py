@@ -3,6 +3,7 @@
 ################################################################################
 
 import atexit
+import atexit
 import os
 from pathlib import Path
 import tempfile
@@ -10,6 +11,7 @@ import uuid
 
 import pytest
 
+import filecache
 import filecache
 from filecache import FileCache
 
