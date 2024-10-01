@@ -30,6 +30,11 @@ def set_global_logger(logger):
     _GLOBAL_LOGGER = logger
 
 
+def get_global_logger():
+    """Return the current global logger."""
+    return _GLOBAL_LOGGER
+
+
 class FileCache:
     _FILE_CACHE_PREFIX = '.file_cache_'
 
@@ -488,7 +493,6 @@ class FileCachePrefix:
             raise
 
         return local_path
-
 
     def upload(self, filename):
         """Send a file from the file cache to the storage location.

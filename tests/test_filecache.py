@@ -3,7 +3,6 @@
 ################################################################################
 
 import atexit
-import atexit
 import os
 from pathlib import Path
 import tempfile
@@ -11,7 +10,6 @@ import uuid
 
 import pytest
 
-import filecache
 import filecache
 from filecache import FileCache
 
@@ -76,9 +74,11 @@ class MyLogger:
 # I don't know why, but this function has to be first. Otherwise code coverage
 # doesn't see the logger usage properly.
 def test_logger():
+    assert filecache.get_global_logger() is False
     # Global logger
     logger = MyLogger()
     filecache.set_global_logger(logger)
+    assert filecache.get_global_logger() is logger
     with FileCache() as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         pfx.retrieve(EXPECTED_FILENAMES[0])
@@ -564,7 +564,7 @@ def test_local_upl_good():
         with FileCache() as fc:
             pfx = fc.new_prefix(temp_dir)
             local_path = pfx.get_local_path('dir1/test_file.txt')
-            assert str(local_path) == str(temp_dir / 'dir1/test_file.txt')
+            assert local_path.resolve() == (temp_dir / 'dir1/test_file.txt').resolve()
             with open(EXPECTED_DIR / EXPECTED_FILENAMES[0], 'rb') as fp1:
                 with open(local_path, 'wb') as fp2:
                     fp2.write(fp1.read())
@@ -600,7 +600,7 @@ def test_local_upl_bad():
 def test_cloud_upl_good(prefix):
     with FileCache() as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
-        pfx = fc.new_prefix(new_prefix, anonymous=False)
+        pfx = fc.new_prefix(new_prefix, anonymous=True)
         local_path = pfx.get_local_path('test_file.txt')
         with open(EXPECTED_DIR / EXPECTED_FILENAMES[0], 'rb') as fp1:
             with open(local_path, 'wb') as fp2:
