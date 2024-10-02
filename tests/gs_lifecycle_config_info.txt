@@ -1,0 +1,9 @@
+This JSON file is used to set the lifecycle on the rms-filecache-tests-writable
+bucket so that all files are deleted after 1 day. To set this mode:
+
+$ gsutil lifecycle set tests/gs_lifecycle_config.json gs://rms-filecache-tests-writable
+
+To see the current lifecycle:
+
+$ gsutil lifecycle get gs://rms-filecache-tests-writable
+{"rule": [{"action": {"type": "Delete"}, "condition": {"age": 1}}]}

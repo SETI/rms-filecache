@@ -1,0 +1,8 @@
+Open the Amazon S3 console
+Select the bucket you want to manage
+Go to Management and select Create lifecycle rule
+Name the rule
+Select the option to apply the rule to all objects
+Choose the Expire current versions of objects option
+Enter the number of days after which the files should be deleted
+Click Create rule
