@@ -5,8 +5,8 @@ are on the local file system, they are simply accessed in-place. Otherwise, they
 downloaded from the remote source to a local temporary directory. When files to be written
 are on the local file system, they are simply written in-place. Otherwise, they are
 written to a local temporary directory and then uploaded to the remote location (it is not
-possible to upload to a webserver). When a cache is no longer needed, it is deleted
-from the local disk.
+possible to upload to a webserver). When a cache is no longer needed, it is deleted from
+the local disk.
 
 The top-level file organization is provided by the :class:`FileCache` class. A
 :class:`FileCache` instance is used to specify a particular **sharing policy** and
@@ -21,6 +21,13 @@ A :class:`FileCache` contains one or more :class:`FileCachePrefix` instances tha
 define access to a **local or remote source/destination** for files. For example, one
 instance could be used to access the local filesystem, while another could be used to
 access a particular AWS S3 bucket.
+
+A :class:`FileCache` can be instantiated either directly or as a context manager. When
+instantiated directly, the programmer is responsible for calling
+:meth:`FileCache.clean_up` directly to delete the cache when finished. In addition, a
+non-shared cache will be deleted on program exit. When instantiated as a context manager,
+a non-shared cache is deleted on exit from the context. See the particular class
+documentation for full details.
 
 Usage examples::
 
@@ -50,7 +57,6 @@ Usage examples::
         pfx = fc.new_prefix('gs://my-writable-bucket')
         with pfx.open('output.txt', 'w') as fp:
             fp.write('A')
-    # The cache will be deleted here so the file will have to be downloaded
     with FileCache() as fc:
         pfx = fc.new_prefix('gs://my-writable-bucket')
         with pfx.open('output.txt', 'r') as fp:
@@ -138,6 +144,14 @@ class FileCache:
                  atexit_cleanup=True, logger=None):
         r"""Initialization for the FileCache class.
 
+        Note:
+            A shared cache will not be automatically deleted unless the `cache_owner`
+            option is specified or :meth:`clean_up` is called with the `final` option. If
+            neither of these is done, the shared cache will persist after program exit,
+            potentially forever, if the operating system does not purge the temporary
+            directory (this is, of course, also the advantage of a shared cache). Thus you
+            should be careful with shared caches to prevent unduly filling up your disk.
+
         Parameters:
             temp_dir (str or Path, optional): The directory in which to cache files.
                 In None, the system temporary directory is used, which involves checking
@@ -152,16 +166,18 @@ class FileCache:
                 ``.file_cache_``. If True, the file cache will be stored in a subdirectory
                 of `temp_dir` called ``.file_cache___global__``. If a string is specified,
                 the file cache will be stored in a subdirectory of `temp_dir` called
-                ``.file_cache_<shared>``.
+                ``.file_cache_<shared>``. Shared caches will be available to all programs
+                creating a :class:`FileCache` with the same name, and may persist after
+                program exit and be available to programs running in the future.
             cache_owner (bool, optional): This option is only relevant if `shared` is not
-                False. If `cache_owner` is True, this :class:`FileCache` is considered the
-                owner of the shared cache, and if it is created as a context manager then
-                on exit the shared cache will be deleted. If it is not created as a
-                context manager then the :meth:`clean_up` method needs to be called. This
-                option should only be set to True if this :class:`FileCache` is going to
-                be the sole user of the cache, or if the process creating this cache owns
-                the cache contents and has control over all other processes that might be
-                accessing it.
+                False. If `cache_owner` is True, this :class:`FileCache` instance is
+                considered the owner of the shared cache directory, and the cache will be
+                deleted on exit from a context manager, manual call to :meth:`clean_up`,
+                or on program exit just as if this were a non-shared cache. This option
+                should only be set to True if the thread/process creating this cache has
+                control over all other threads/processes that might be accessing it to
+                guarantee that the cache is not deleted until all potential users have
+                finished executing.
             mp_safe (bool or None, optional): If False, never create new prefixes with
                 multiprocessor-safety locking. If True, always create new prefixes with
                 multiprocessor-safety locking. If None, safety locking is used if shared
@@ -229,9 +245,6 @@ class FileCache:
 
         self._is_cache_owner = cache_owner
         self._is_mp_safe = mp_safe if mp_safe is not None else self._is_shared
-
-        if atexit_cleanup:
-            atexit.register(self.clean_up)
 
         if atexit_cleanup:
             atexit.register(self.clean_up)

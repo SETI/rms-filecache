@@ -64,7 +64,7 @@ Usage examples:
 
 ```python
 from filecache import FileCache
-with FileCache() as fc:
+with FileCache() as fc:  # Context manager
     # Use GS by specifying the bucket name and one directory level
     pfx1 = fc.new_prefix('gs://rms-filecache-tests/subdir1')
     # Use S3 by specifying the bucket namd and two directory levels
@@ -78,6 +78,7 @@ with FileCache() as fc:
     with pfx2.open('binary1.bin', 'rb') as fp:
         bin2 = fp.read()
     assert bin1 == bin2
+# Cache automatically deleted here
 
 # Same as above example but not using context managers for FileCache
 fc = FileCache()
@@ -89,7 +90,7 @@ with open(path1, 'rb') as fp:
 path2 = pfx2.retrieve('binary1.bin')
 with open(path2, 'rb') as fp:
     bin2 = fp.read()
-fc.clean_up()
+fc.clean_up()  # Cache manually deleted here
 assert bin1 == bin2
 
 # Write a file to a bucket and read it back
@@ -131,6 +132,7 @@ with FileCache() as fc:
     pfx = fc.new_prefix(os.getenv('PDS3_HOLDINGS_DIR'))
     with pfx.open('volumes/COISS_2xxx/COISS_2001/voldesc.cat', 'r') as fp:
         contents = fp.read()
+# Cache automatically deleted here
 ```
 
 If the program was going to be run multiple times in a row, or multiple copies were going
@@ -145,6 +147,9 @@ with FileCache(shared=True) as fc:
     pfx = fc.new_prefix(os.getenv('PDS3_HOLDINGS_DIR'))
     with pfx.open('volumes/COISS_2xxx/COISS_2001/voldesc.cat', 'r') as fp:
         contents = fp.read()
+# Cache not deleted here; must be deleted manually using fc.clean_up(final=True)
+# If not deleted manually, the shared cache will persist until the temporary
+# directory is purged by the operating system (which may be never)
 ```
 
 Details of each class are available in the [module documentation](https://rms-filecache.readthedocs.io/en/latest/module.html).
