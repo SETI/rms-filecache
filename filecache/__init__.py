@@ -5,7 +5,8 @@ are on the local file system, they are simply accessed in-place. Otherwise, they
 downloaded from the remote source to a local temporary directory. When files to be written
 are on the local file system, they are simply written in-place. Otherwise, they are
 written to a local temporary directory and then uploaded to the remote location (it is not
-possible to upload to a webserver).
+possible to upload to a webserver). When a cache is no longer needed, it is deleted
+from the local disk.
 
 The top-level file organization is provided by the :class:`FileCache` class. A
 :class:`FileCache` instance is used to specify a particular **sharing policy** and
@@ -49,7 +50,7 @@ Usage examples::
         pfx = fc.new_prefix('gs://my-writable-bucket')
         with pfx.open('output.txt', 'w') as fp:
             fp.write('A')
-    # The cache will be deleted here
+    # The cache will be deleted here so the file will have to be downloaded
     with FileCache() as fc:
         pfx = fc.new_prefix('gs://my-writable-bucket')
         with pfx.open('output.txt', 'r') as fp:
@@ -80,7 +81,7 @@ Then the program could be written as::
         with pfx.open('volumes/COISS_2xxx/COISS_2001/voldesc.cat', 'r') as fp:
             contents = fp.read()
 
-if the program was going to be run multiple times in a row, or multiple copies were going
+If the program was going to be run multiple times in a row, or multiple copies were going
 to be run simultaneously, marking the cache as shared would allow all of the processes to
 share the same copy, thus requiring only a single download no matter how many times the
 program was run::
