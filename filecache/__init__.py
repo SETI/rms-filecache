@@ -770,7 +770,7 @@ class FileCacheSourceGS(FileCacheSource):
         super().__init__(src_prefix, **kwargs)
 
         self._src_type = 'gs'
-        self._client = (gs_storage.Client().create_anonymous_client()
+        self._client = (gs_storage.Client.create_anonymous_client()
                         if anonymous else gs_storage.Client())
         self._bucket_name = src_prefix.lstrip('gs://')
         self._bucket = self._client.bucket(self._bucket_name)
