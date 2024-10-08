@@ -315,13 +315,13 @@ class FileCache:
         key = (src_str, anonymous)
         if key not in _SOURCE_CACHE:
             if src_str.startswith(('http://', 'https://')):
-                _SOURCE_CACHE[key] = FileCacheSourceHTTP(src_str, logger=self._logger)
+                _SOURCE_CACHE[key] = FileCacheSourceHTTP(src_str, anonymous=anonymous)
             elif src_str.startswith('gs://'):
-                _SOURCE_CACHE[key] = FileCacheSourceGS(src_str, logger=self._logger)
+                _SOURCE_CACHE[key] = FileCacheSourceGS(src_str, anonymous=anonymous)
             elif src_str.startswith('s3://'):
-                _SOURCE_CACHE[key] = FileCacheSourceS3(src_str, logger=self._logger)
+                _SOURCE_CACHE[key] = FileCacheSourceS3(src_str, anonymous=anonymous)
             else:
-                _SOURCE_CACHE[key] = FileCacheSourceLocal(src_str, logger=self._logger)
+                _SOURCE_CACHE[key] = FileCacheSourceLocal(src_str, anonymous=anonymous)
 
         source = _SOURCE_CACHE[key]
         local_path = self._cache_dir / source._cache_subdir / sub_path
@@ -525,11 +525,9 @@ class FileCache:
 
         key = (prefix, anonymous, lock_timeout)
         if key not in self._filecacheprefixes:
-            print('new prefix', self._logger)
             self._filecacheprefixes[key] = FileCachePrefix(
                 prefix, self, anonymous=anonymous, lock_timeout=lock_timeout,
                 **kwargs)
-        print('old prefix')
         return self._filecacheprefixes[key]
 
     def clean_up(self, final=False):
