@@ -9,6 +9,10 @@ description = "File cache for files retrieved from the cloud"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+  "boto3",
+  "filelock",
+  "google-cloud-storage",
+  "requests"
 ]
 license = {text = "Apache-2.0"}
 maintainers = [

@@ -123,7 +123,7 @@ $ export PDS3_HOLDINGS_DIR="https://pds-rings.seti.org/holdings"
 $ export PDS3_HOLDINGS_DIR="gs://rms-node-holdings/pds3-holdings"
 ```
 
-Then the program could be written as::
+Then the program could be written as:
 
 ```python
 from filecache import FileCache

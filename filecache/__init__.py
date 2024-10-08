@@ -102,6 +102,7 @@ program was run::
 
 import atexit
 import contextlib
+import logging
 import os
 from pathlib import Path
 import requests
@@ -123,7 +124,11 @@ except ImportError:  # pragma: no cover
 
 
 _GLOBAL_LOGGER = False
+_SOURCE_CACHE = {}
 
+logging.basicConfig()
+_GLOBAL_LOGGER = logging.getLogger(__name__)
+_GLOBAL_LOGGER.setLevel(logging.DEBUG)
 
 def set_global_logger(logger):
     """Set the global logger for all FileCache instances created in the future."""
@@ -141,7 +146,7 @@ class FileCache:
     _FILE_CACHE_PREFIX = '.file_cache_'
 
     def __init__(self, temp_dir=None, shared=False, cache_owner=False, mp_safe=None,
-                 atexit_cleanup=True, logger=None):
+                 atexit_cleanup=True, all_anonymous=False, lock_timeout=60, logger=None):
         r"""Initialization for the FileCache class.
 
         Note:
@@ -188,6 +193,9 @@ class FileCache:
                 instance around for the entire duration of the program, potentially
                 wasting memory. To be more memory conscious, but also be solely
                 responsible for calling clean_up, set this parameter to False.
+            all_anonymous (bool, optional): If True, all access to cloud resources will
+                be anonymous; it is not necessary to pass in the `anonymous` option to
+                each method.
             logger (logger, optional): If False, do not do any logging. If None, use the
                 global logger set with :func:`set_global_logger`. Otherwise use the
                 specified logger. All messages are logged at the DEBUG level.
@@ -233,6 +241,9 @@ class FileCache:
         if str(sub_dir.parent) != '.':  # pragma: no cover - shouldn't be possible
             raise ValueError('shared argument has directory elements')
 
+        self._anonymous = all_anonymous
+        self._lock_timeout = lock_timeout
+
         self._logger = _GLOBAL_LOGGER if logger is None else logger
 
         self._cache_dir = temp_dir / sub_dir
@@ -246,29 +257,184 @@ class FileCache:
         self._is_cache_owner = cache_owner
         self._is_mp_safe = mp_safe if mp_safe is not None else self._is_shared
 
+        self._filecacheprefixes = {}
+
+        self._upload_counter = 0
+        self._download_counter = 0
+
         if atexit_cleanup:
             atexit.register(self.clean_up)
 
     @property
     def cache_dir(self):
-        """Return the top-level directory of the cache as a Path object."""
+        """The top-level directory of the cache as a Path object."""
         return self._cache_dir
 
     @property
     def is_shared(self):
-        """Return a bool indicating whether or not this cache is shared."""
+        """A bool indicating whether or not this cache is shared."""
         return self._is_shared
 
     @property
     def is_cache_owner(self):
-        """Return a bool indicating whether or not this FileCache owns a shared cache."""
+        """A bool indicating whether or not this FileCache owns a shared cache."""
         return self._is_cache_owner
 
     @property
     def is_mp_safe(self):
-        """Return a bool indicating whether or not this FileCache is multi-processor safe.
-        """
+        """A bool indicating whether or not this FileCache is multi-processor safe."""
         return self._is_mp_safe
+
+    @property
+    def download_counter(self):
+        """Return the number of actual file downloads that have taken place."""
+        return self._download_counter
+
+    @property
+    def upload_counter(self):
+        """Return the number of actual file uploads that have taken place."""
+        return self._upload_counter
+
+    def _get_source_and_paths(self, full_path, anonymous):
+        if self._anonymous:
+            anonymous = True
+
+        src_str = ''  # Local is the default
+        full_path = full_path.replace('\\', '/')
+        if full_path.startswith(('http://', 'https://', 'gs://', 's3://')):
+            idx = full_path.index('//')
+            try:
+                idx = full_path.index('/', idx+2)
+            except ValueError:  # No /!
+                raise ValueError(f'Invalid path: {full_path}')
+            src_str = full_path[:idx]
+            sub_path = full_path[idx+1:]
+        else:
+            # Local
+            sub_path = full_path
+        if not src_str.startswith(('gs://', 's3://')):
+            # No such thing as needing credentials for a local file or HTTP
+            anonymous = False
+
+        key = (src_str, anonymous)
+        if key not in _SOURCE_CACHE:
+            if src_str.startswith(('http://', 'https://')):
+                _SOURCE_CACHE[key] = FileCacheSourceHTTP(src_str, logger=self._logger)
+            elif src_str.startswith('gs://'):
+                _SOURCE_CACHE[key] = FileCacheSourceGS(src_str, logger=self._logger)
+            elif src_str.startswith('s3://'):
+                _SOURCE_CACHE[key] = FileCacheSourceS3(src_str, logger=self._logger)
+            else:
+                _SOURCE_CACHE[key] = FileCacheSourceLocal(src_str, logger=self._logger)
+
+        source = _SOURCE_CACHE[key]
+        local_path = self._cache_dir / source._cache_subdir / sub_path
+
+        return source, sub_path, local_path
+
+    def _lock_path(self, path):
+        path = Path(path)
+        return path.parent / f'.__lock__{path.name}'
+
+    def exists(self, full_path, anonymous=False):
+        """Check if a file exists without downloading it.
+
+        Parameters:
+            full_path (str): The full path of the file (including any source prefixes).
+            anonymous (bool, optional): If True, access cloud resources (GS and S3)
+                without specifying credentials. Otherwise, credentials must be initialized
+                in the program's environment.
+
+        Returns:
+            bool: True of the file exists. Note that it is possible that a file could
+            exist and still not be downloadable due to permissions.
+        """
+
+        if '/..' in full_path:
+            raise ValueError(f'Invalid full_path {full_path}')
+
+        source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
+        if local_path.is_file():
+            return True
+        return source.exists(sub_path)
+
+    def get_local_path(self, full_path, anonymous=False):
+        """Return the local path for the given full_path.
+
+        Parameters:
+            full_path (str): The full path of the file (including any source prefixes).
+            anonymous (bool, optional): If True, access cloud resources (GS and S3)
+                without specifying credentials. Otherwise, credentials must be initialized
+                in the program's environment.
+
+        Returns:
+            Path: The Path of the filename in the temporary directory. The file does not
+            have to exist because this path could be used for writing a file to upload.
+            Because of this, the complete parent directory structure will be created by
+            this function as necessary.
+        """
+
+        source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._logger:
+            self._logger.debug(f'Returning local path for {full_path} as {local_path}')
+
+        return local_path
+
+    def retrieve(self, full_path, anonymous=False, lock_timeout=None, **kwargs):
+        """Retrieve a file from the given location and store it in the file cache.
+
+        Parameters:
+            full_path (str): The full path of the file to retrieve, including any
+                prefixes.
+
+        Returns:
+            Path: The Path of the filename in the temporary directory.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            TimeoutError: If we could not acquire the lock to allow downloading of the
+                file within the given timeout.
+        """
+
+        source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
+
+        if source._src_type == 'local':
+            return source.retrieve(sub_path, local_path)
+
+        # If the file actually exists, it's always safe to return it
+        if local_path.is_file():
+            return local_path
+
+        if self.is_mp_safe:
+            lock_path = self._lock_path(local_path)
+            if lock_timeout is None:
+                lock_timeout = self._lock_timeout
+            lock = filelock.FileLock(lock_path, timeout=lock_timeout)
+            try:
+                lock.acquire()
+            except filelock._error.Timeout:
+                raise TimeoutError(f'Could not acquire lock on {lock_path}')
+            try:
+                ret = source.retrieve(sub_path, local_path)
+            finally:
+                # Technically there is a potential race condition here, because after
+                # we release the lock, someone else could lock this file, and then we
+                # could delete it (because on Linux locks are only advisory). Then the
+                # next process to come along to try to lock this file would also succeed
+                # because it would really be a different lock file! However, we have
+                # to do it in this order because otherwise it won't work on Windows,
+                # where locks are not just advisory.
+                lock.release()
+                lock_path.unlink(missing_ok=True)
+
+        else:
+            ret = source.retrieve(sub_path, local_path)
+
+        self._download_counter += 1
+
+        return ret
 
     def new_prefix(self, prefix, anonymous=False, lock_timeout=60, **kwargs):
         """Create a new FileCachePrefix with the given prefix.
@@ -288,9 +454,13 @@ class FileCache:
                 to not wait at all. A negative value means to never time out.
         """
 
-        return FileCachePrefix(prefix, self, anonymous=anonymous,
-                               lock_timeout=lock_timeout, logger=self._logger,
-                               **kwargs)
+        key = (prefix, anonymous, lock_timeout)
+        if key not in self._filecacheprefixes:
+            self._filecacheprefixes[key] = FileCachePrefix(
+                prefix, self, anonymous=anonymous,
+                lock_timeout=lock_timeout, logger=self._logger,
+                **kwargs)
+        return self._filecacheprefixes[key]
 
     def clean_up(self, final=False):
         """Delete all files stored in the cache including the cache directory.
@@ -351,8 +521,400 @@ class FileCache:
         self.clean_up()
 
 
+################################################################################
+
+class FileCacheSource:
+    def __init__(self, src_prefix=None, logger=None, **kwargs):
+        self._src_type = None
+        self._src_prefix_ = src_prefix.rstrip('/') + '/'
+        self._logger = logger
+        self._cache_subdir = None
+
+        pass
+
+    def exists(self):
+        """Check if a file exists without downloading it.
+
+        Parameters:
+            sub_path (str): The full path of the local file to check for existence.
+
+        Returns:
+            bool: True of the file exists. Note that it is possible that a file could
+            exist and still not be accessible due to permissions.
+        """
+
+        raise NotImplementedError
+
+    def retrieve(self, sub_path, local_path):
+        raise NotImplementedError
+
+
+class FileCacheSourceLocal(FileCacheSource):
+    def __init__(self, **kwargs):
+        super().__init__(src_prefix='', **kwargs)
+
+        self._src_type = 'local'
+        self._cache_subdir = ''
+
+    def exists(self, sub_path):
+        """Check if a file exists without downloading it.
+
+        Parameters:
+            sub_path (str): The full path of the local file to check for existence.
+
+        Returns:
+            bool: True of the file exists. Note that it is possible that a file could
+            exist and still not be accessible due to permissions.
+        """
+
+        if self._logger:
+            self._logger.debug(f'Checking local file for existence: {sub_path}')
+
+        if '/..' in sub_path:
+            raise ValueError(f'Invalid path {sub_path}')
+
+        ret = Path(sub_path).is_file()
+        if self._logger:
+            if ret:
+                self._logger.debug(f'  File exists')
+            else:
+                self._logger.debug(f'  File does not exist')
+        return ret
+
+    def retrieve(self, sub_path, local_path):
+        """Retrieve a file from the storage location and store it in the file cache.
+
+        Parameters:
+            filename (str): The name of the file to retrieve relative to the prefix.
+
+        Returns:
+            Path: The Path of the filename in the temporary directory.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            TimeoutError: If we could not acquire the lock to allow downloading of the
+                file within the given timeout.
+        """
+
+        if self._logger:
+            self._logger.debug(f'Accessing local file {sub_path}')
+
+        if '/..' in sub_path:
+            raise ValueError(f'Invalid filename {sub_path}')
+
+        if not Path(sub_path).is_file():
+            raise FileNotFoundError(f'File does not exist: {sub_path}')
+
+        return sub_path
+
+    def upload(self, filename):
+        """Send a file from the file cache to the storage location.
+
+        Parameters:
+            filename (str): The name of the file to upload relative to the prefix.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+        """
+        # We don't do anything for local paths since the file is already in the
+        # correct location.
+        return
+
+
+class FileCacheSourceHTTP(FileCacheSource):
+    def __init__(self, src_prefix, **kwargs):
+        src_prefix = src_prefix.rstrip('/')
+        if (not src_prefix.startswith(('http://', 'https://')) or
+            src_prefix.count('/') != 2):
+            raise ValueError(f'Invalid prefix: {src_prefix}')
+
+        super().__init__(src_prefix, **kwargs)
+
+        self._prefix_type = 'web'
+        self._cache_subdir = (src_prefix
+                              .replace('http://', 'http_')
+                              .replace('https://', 'http_'))
+
+    def exists(self, sub_path):
+        """Check if a file exists without downloading it.
+
+        Parameters:
+            sub_path (str): The path of the file in the bucket.
+
+        Returns:
+            bool: True of the file (including the bucket) exists. Note that it is possible
+            that a file could exist and still not be downloadable due to permissions.
+        """
+
+        if self._logger:
+            self._logger.debug(f'Checking for existence: {self._src_prefix_}{sub_path}')
+
+        ret = True
+        try:
+            response = requests.head(f'{self._src_prefix_}{sub_path}')
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            ret = False
+
+        if self._logger:
+            if ret:
+                self._logger.debug(f'  File exists')
+            else:
+                self._logger.debug(f'  File does not exist')
+        return ret
+
+    def retrieve(self, sub_path, local_path):
+        """Retrieve a file from the storage location and store it in the file cache.
+
+        Parameters:
+            filename (str): The name of the file to retrieve relative to the prefix.
+
+        Returns:
+            Path: The Path of the filename in the temporary directory.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            TimeoutError: If we could not acquire the lock to allow downloading of the
+                file within the given timeout.
+        """
+
+        url = f'{self._src_prefix_}{sub_path}'
+
+        if self._logger:
+            self._logger.debug(f'Downloading {url} into {local_path}')
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise FileNotFoundError(f'Failed to download file from: {url}') from e
+
+        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
+        try:
+            with open(temp_local_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024*1024):
+                    f.write(chunk)
+            temp_local_path.rename(local_path)
+        except Exception:  # pragma: no cover
+            temp_local_path.unlink(missing_ok=True)
+            raise
+
+        return local_path
+
+    def upload(self, filename):
+        """Send a file from the file cache to the storage location.
+
+        Parameters:
+            filename (str): The name of the file to upload relative to the prefix.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+        """
+
+        raise NotImplementedError
+
+
+class FileCacheSourceGS(FileCacheSource):
+    def __init__(self, src_prefix, anonymous=False, **kwargs):
+        src_prefix = src_prefix.rstrip('/')
+        if (not src_prefix.startswith('gs://') or
+            src_prefix.count('/') != 2):
+            raise ValueError(f'Invalid prefix: {src_prefix}')
+
+        super().__init__(src_prefix, **kwargs)
+
+        self._src_type = 'gs'
+        self._anonymous = anonymous
+        self._client = (gs_storage.Client().create_anonymous_client()
+                        if anonymous else gs_storage.Client())
+        self._bucket_name = src_prefix.lstrip('gs://')
+        self._bucket = self._client.bucket(self._bucket_name)
+        self._cache_subdir = src_prefix.replace('gs://', 'gs_')
+
+    def exists(self, sub_path):
+        """Check if a file exists without downloading it.
+
+        Parameters:
+            sub_path (str): The path of the file in the bucket.
+
+        Returns:
+            bool: True of the file (including the bucket) exists. Note that it is possible
+            that a file could exist and still not be downloadable due to permissions.
+        """
+
+        if self._logger:
+            self._logger.debug(f'Checking for existence: {self._src_prefix_}{sub_path}')
+
+        blob = self._bucket.blob(sub_path)
+        ret = blob.exists()
+        if self._logger:
+            if ret:
+                self._logger.debug(f'  File exists')
+            else:
+                self._logger.debug(f'  File does not exist')
+        return ret
+
+    def retrieve(self, sub_path, local_path):
+        """Retrieve a file from the storage location and store it in the file cache.
+
+        Parameters:
+            filename (str): The name of the file to retrieve relative to the prefix.
+
+        Returns:
+            Path: The Path of the filename in the temporary directory.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            TimeoutError: If we could not acquire the lock to allow downloading of the
+                file within the given timeout.
+        """
+
+        if self._logger:
+            self._logger.debug(
+                f'Downloading {self._src_prefix_}{sub_path} into {local_path}')
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        blob = self._bucket.blob(sub_path)
+
+        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
+        try:
+            blob.download_to_filename(str(temp_local_path))
+            temp_local_path.rename(local_path)
+        except (google.api_core.exceptions.BadRequest,  # bad bucket name
+                google.resumable_media.common.InvalidResponse,  # bad bucket name
+                google.cloud.exceptions.NotFound):  # bad filename
+            # The google API library will still create the file before noticing
+            # that it can't be downloaded, so we have to remove it here
+            temp_local_path.unlink(missing_ok=True)
+            raise FileNotFoundError(
+                f'Failed to download file from: gs://{self._bucket_name}/'
+                f'{blob_name}')
+        except Exception:  # pragma: no cover
+            temp_local_path.unlink(missing_ok=True)
+            raise
+
+        return local_path
+
+    def upload(self, sub_path, local_path):
+        """Send a file from the file cache to the storage location.
+
+        Parameters:
+            filename (str): The name of the file to upload relative to the prefix.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+        """
+
+        blob_name = f'{self._src_prefix_}{sub_path}'
+        blob = self._bucket.blob(blob_name)
+
+        blob.upload_from_filename(str(local_path))
+
+
+class FileCacheSourceS3(FileCacheSource):
+    def __init__(self, src_prefix, anonymous=False, **kwargs):
+        src_prefix = src_prefix.rstrip('/')
+        if (not src_prefix.startswith('s3://') or
+            src_prefix.count('/') != 2):
+            raise ValueError(f'Invalid prefix: {src_prefix}')
+
+        super().__init__(src_prefix, anonymous)
+
+        self._prefix_type = 's3'
+        self._client = (boto3.client('s3',
+                                     config=botocore.client.Config(
+                                         ignature_version=botocore.UNSIGNED))
+                           if anonymous else boto3.client('s3'))
+        self._bucket_name = src_prefix.lstrip('s3://')
+        self._cache_subdir = src_prefix.replace('s3://', 's3_')
+
+    def exists(self, sub_path):
+        """Check if a file exists without downloading it.
+
+        Parameters:
+            sub_path (str): The path of the file in the bucket.
+
+        Returns:
+            bool: True of the file (including the bucket) exists. Note that it is possible
+            that a file could exist and still not be downloadable due to permissions.
+        """
+
+        if self._logger:
+            self._logger.debug(f'Checking for existence: {self._src_prefix_}{sub_path}')
+
+        ret = True
+        try:
+            self._client.head_object(Bucket=self._bucket_name, Key=sub_path)
+        except botocore.exceptions.ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                ret = False
+            else:
+                raise
+
+        if self._logger:
+            if ret:
+                self._logger.debug(f'  File exists')
+            else:
+                self._logger.debug(f'  File does not exist')
+        return ret
+
+    def retrieve(self, sub_path, local_path):
+        """Retrieve a file from the storage location and store it in the file cache.
+
+        Parameters:
+            filename (str): The name of the file to retrieve relative to the prefix.
+
+        Returns:
+            Path: The Path of the filename in the temporary directory.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            TimeoutError: If we could not acquire the lock to allow downloading of the
+                file within the given timeout.
+        """
+
+        if self._logger:
+            self._logger.debug(
+                f'Downloading {self._src_prefix_}{sub_path} into {local_path}')
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
+        try:
+            self._client.download_file(self._bucket_name, sub_path,
+                                          str(temp_local_path))
+            temp_local_path.rename(local_path)
+        except botocore.exceptions.ClientError:
+            temp_local_path.unlink(missing_ok=True)
+            raise FileNotFoundError(
+                f'Failed to download file from: s3://{self._bucket_name}/'
+                f'{sub_path}')
+        except Exception:  # pragma: no cover
+            temp_local_path.unlink(missing_ok=True)
+            raise
+
+        return local_path
+
+    def upload(self, sub_path, local_path):
+        """Send a file from the file cache to the storage location.
+
+        Parameters:
+            filename (str): The name of the file to upload relative to the prefix.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+        """
+
+        s3_key = f'{self._src_prefix_}{sub_path}'
+
+        self._client.upload_file(str(local_path), self._bucket_name, s3_key)
+
+
 class FileCachePrefix:
-    """Class for retrieving and uploading files in a FileCache."""
+    """Class for interfacing to a FileCache using a path prefix."""
 
     def __init__(self, prefix, filecache, anonymous=False, lock_timeout=60, logger=None):
         """Initialization for the FileCachePrefix class.
@@ -411,41 +973,6 @@ class FileCachePrefix:
         else:
             self._init_local_prefix(prefix)
 
-    def _init_gs_prefix(self, prefix, anonymous):
-        self._prefix_type = 'gs'
-        self._full_prefix = prefix
-        self._gs_client = (gs_storage.Client().create_anonymous_client()
-                           if anonymous else gs_storage.Client())
-        self._gs_bucket_name, _, self._prefix = prefix.lstrip('gs://').partition('/')
-        self._gs_bucket = self._gs_client.bucket(self._gs_bucket_name)
-        self._cache_root = self._filecache._cache_dir / prefix.replace('gs://', 'gs_')
-
-    def _init_s3_prefix(self, prefix, anonymous):
-        self._prefix_type = 's3'
-        self._full_prefix = prefix
-        self._s3_client = (boto3.client('s3',
-                                        config=botocore.client.Config(
-                                           signature_version=botocore.UNSIGNED))
-                           if anonymous else boto3.client('s3'))
-        self._s3_bucket_name, _, self._prefix = prefix.lstrip('s3://').partition('/')
-        self._cache_root = self._filecache._cache_dir / prefix.replace('s3://', 's3_')
-
-    def _init_web_prefix(self, prefix):
-        self._prefix_type = 'web'
-        self._full_prefix = prefix
-        self._prefix = prefix
-        self._cache_root = (self._filecache._cache_dir /
-                            prefix.replace('http://', 'http_')
-                                  .replace('https://', 'http_'))
-
-    def _init_local_prefix(self, prefix):
-        self._prefix_type = 'local'
-        self._full_prefix = prefix
-        # This can raise FileNotFoundError if the prefix path doesn't exist
-        prefix = str(Path(prefix).expanduser().resolve(strict=True)).replace('\\', '/')
-        self._prefix = prefix
-        self._cache_root = Path(prefix)
-
     def get_local_path(self, filename):
         """Return the local path for the given filename using this prefix.
 
@@ -468,9 +995,7 @@ class FileCachePrefix:
 
         return local_path
 
-    def _lock_path(self, path):
-        path = Path(path)
-        return path.parent / f'.__lock__{path.name}'
+
 
     def retrieve(self, filename):
         """Retrieve a file from the storage location and store it in the file cache.
@@ -487,42 +1012,6 @@ class FileCachePrefix:
                 file within the given timeout.
         """
 
-        filename = filename.replace('\\', '/').lstrip('/')
-
-        if self._prefix_type == 'local':
-            local_path = Path(self._cache_root) / filename
-            if self._logger:
-                self._logger.debug(f'Accessing local file {filename}')
-            if '/..' in filename:
-                raise ValueError(f'Invalid filename {filename}')
-            if not local_path.exists():
-                raise FileNotFoundError(f'File does not exist: {local_path}')
-            # Don't tell the file cache about local files
-            return local_path
-
-        local_path = self._cache_root / filename
-
-        if self._filecache.is_mp_safe:
-            lock_path = self._lock_path(local_path)
-            lock = filelock.FileLock(lock_path, timeout=self._lock_timeout)
-            try:
-                lock.acquire()
-            except filelock._error.Timeout:
-                raise TimeoutError(f'Could not acquire lock on {lock_path}')
-            try:
-                return self._unprotected_retrieve(filename, local_path)
-            finally:
-                # Technically there is a potential race condition here, because after
-                # we release the lock, someone else could lock this file, and then we
-                # could delete it (because on Linux locks are only advisory). Then the
-                # next process to come along to try to lock this file would also succeed
-                # because it would really be a different lock file! However, we have
-                # to do it in this order because otherwise it won't work on Windows,
-                # where locks are not just advisory.
-                lock.release()
-                lock_path.unlink(missing_ok=True)
-
-        return self._unprotected_retrieve(filename, local_path)
 
     def _unprotected_retrieve(self, filename, local_path):
         if local_path.exists():
@@ -551,67 +1040,7 @@ class FileCachePrefix:
 
         return ret
 
-    def _retrieve_from_web(self, filename, local_path):
-        url = f'{self._prefix}{filename}'
-        try:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            raise FileNotFoundError(f'Failed to download file from: {url}') from e
 
-        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
-        try:
-            with open(temp_local_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024*1024):
-                    f.write(chunk)
-            temp_local_path.rename(local_path)
-        except Exception:  # pragma: no cover
-            temp_local_path.unlink(missing_ok=True)
-            raise
-
-        return local_path
-
-    def _retrieve_from_gs(self, filename, local_path):
-        blob_name = f'{self._prefix}{filename}'
-        blob = self._gs_bucket.blob(blob_name)
-
-        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
-        try:
-            blob.download_to_filename(str(temp_local_path))
-            temp_local_path.rename(local_path)
-        except (google.api_core.exceptions.BadRequest,  # bad bucket name
-                google.resumable_media.common.InvalidResponse,  # bad bucket name
-                google.cloud.exceptions.NotFound):  # bad filename
-            # The google API library will still create the file before noticing
-            # that it can't be downloaded, so we have to remove it here
-            temp_local_path.unlink(missing_ok=True)
-            raise FileNotFoundError(
-                f'Failed to download file from: gs://{self._gs_bucket_name}/'
-                f'{blob_name}')
-        except Exception:  # pragma: no cover
-            temp_local_path.unlink(missing_ok=True)
-            raise
-
-        return local_path
-
-    def _retrieve_from_s3(self, filename, local_path):
-        s3_key = f'{self._prefix}{filename}'
-
-        temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
-        try:
-            self._s3_client.download_file(self._s3_bucket_name, s3_key,
-                                          str(temp_local_path))
-            temp_local_path.rename(local_path)
-        except botocore.exceptions.ClientError:
-            temp_local_path.unlink(missing_ok=True)
-            raise FileNotFoundError(
-                f'Failed to download file from: s3://{self._s3_bucket_name}/'
-                f'{s3_key}')
-        except Exception:  # pragma: no cover
-            temp_local_path.unlink(missing_ok=True)
-            raise
-
-        return local_path
 
     def upload(self, filename):
         """Send a file from the file cache to the storage location.
@@ -630,9 +1059,7 @@ class FileCachePrefix:
             raise FileNotFoundError(f'File {local_path} does not exist')
 
         if self._prefix_type == 'local':
-            # We don't do anything for local paths since the file is already in the
-            # correct location.
-            return
+            pass
 
         if self._logger:
             self._logger.debug(
@@ -640,25 +1067,9 @@ class FileCachePrefix:
 
         self._upload_counter += 1
 
-        if self._prefix_type == 'gs':
-            return self._upload_to_gs(filename, local_path)
 
-        if self._prefix_type == 's3':
-            return self._upload_to_s3(filename, local_path)
 
-        raise AssertionError(
-            f'Internal error unknown prefix type {self._prefix_type}')  # pragma: no cover
 
-    def _upload_to_gs(self, filename, local_path):
-        blob_name = f'{self._prefix}{filename}'
-        blob = self._gs_bucket.blob(blob_name)
-
-        blob.upload_from_filename(str(local_path))
-
-    def _upload_to_s3(self, filename, local_path):
-        s3_key = f'{self._prefix}{filename}'
-
-        self._s3_client.upload_file(str(local_path), self._s3_bucket_name, s3_key)
 
     @contextlib.contextmanager
     def open(self, filename, mode='r', *args, **kwargs):
