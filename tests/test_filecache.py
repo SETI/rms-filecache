@@ -336,14 +336,14 @@ def test_exists_local_bad():
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_exists_cloud_good(prefix):
-    with FileCache() as fc:
+    with FileCache(all_anonymous=True) as fc:
         for filename in EXPECTED_FILENAMES:
             assert fc.exists(f'{prefix}/{filename}')
 
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_exists_cloud_bad(prefix):
-    with FileCache() as fc:
+    with FileCache(all_anonymous=True) as fc:
         assert not fc.exists(f'{prefix}/nonexistent.txt')
         assert not fc.exists(f'{prefix}/a/b/c.txt')
         assert not fc.exists(f'{prefix}-bad/{EXPECTED_FILENAMES[0]}')
@@ -906,8 +906,8 @@ def test_source_bad():
     with pytest.raises(ValueError):
         FileCacheSourceS3('s3://')
 
-# THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
 
+# THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
 def test_atexit():
     fc = FileCache(atexit_cleanup=False)
     assert os.path.exists(fc.cache_dir)

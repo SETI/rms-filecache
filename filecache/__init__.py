@@ -102,7 +102,6 @@ program was run::
 
 import atexit
 import contextlib
-import logging
 import os
 from pathlib import Path
 import requests
@@ -126,9 +125,6 @@ except ImportError:  # pragma: no cover
 _GLOBAL_LOGGER = False
 _SOURCE_CACHE = {}
 
-# logging.basicConfig()
-# _GLOBAL_LOGGER = logging.getLogger(__name__)
-# _GLOBAL_LOGGER.setLevel(logging.DEBUG)
 
 def set_global_logger(logger):
     """Set the global logger for all FileCache instances created in the future."""
@@ -296,7 +292,7 @@ class FileCache:
         return self._upload_counter
 
     def _get_source_and_paths(self, full_path, anonymous):
-        if self._anonymous:
+        if self._anonymous:  # Override if all_anonymous was specified
             anonymous = True
 
         src_str = ''  # Local is the default
@@ -365,9 +361,9 @@ class FileCache:
 
         if self._logger:
             if ret:
-                self._logger.debug(f'  File exists')
+                self._logger.debug('  File exists')
             else:
-                self._logger.debug(f'  File does not exist')
+                self._logger.debug('  File does not exist')
 
         return ret
 
@@ -481,7 +477,6 @@ class FileCache:
         source.upload(sub_path, local_path)
 
         self._upload_counter += 1
-
 
     @contextlib.contextmanager
     def open(self, full_path, mode='r', *args, **kwargs):
@@ -687,7 +682,7 @@ class FileCacheSourceHTTP(FileCacheSource):
     def __init__(self, src_prefix, **kwargs):
         src_prefix = src_prefix.rstrip('/')
         if (not src_prefix.startswith(('http://', 'https://')) or
-            src_prefix.count('/') != 2):
+                src_prefix.count('/') != 2):
             raise ValueError(f'Invalid prefix: {src_prefix}')
 
         super().__init__(src_prefix, **kwargs)
@@ -712,7 +707,7 @@ class FileCacheSourceHTTP(FileCacheSource):
         try:
             response = requests.head(f'{self._src_prefix_}{sub_path}')
             response.raise_for_status()
-        except requests.exceptions.RequestException as e:
+        except requests.exceptions.RequestException:
             ret = False
 
         return ret
@@ -771,13 +766,12 @@ class FileCacheSourceGS(FileCacheSource):
     def __init__(self, src_prefix, anonymous=False, **kwargs):
         src_prefix = src_prefix.rstrip('/')
         if (not src_prefix.startswith('gs://') or
-            src_prefix.count('/') != 2):
+                src_prefix.count('/') != 2):
             raise ValueError(f'Invalid prefix: {src_prefix}')
 
         super().__init__(src_prefix, **kwargs)
 
         self._src_type = 'gs'
-        self._anonymous = anonymous
         self._client = (gs_storage.Client().create_anonymous_client()
                         if anonymous else gs_storage.Client())
         self._bucket_name = src_prefix.lstrip('gs://')
@@ -853,7 +847,7 @@ class FileCacheSourceS3(FileCacheSource):
     def __init__(self, src_prefix, anonymous=False, **kwargs):
         src_prefix = src_prefix.rstrip('/')
         if (not src_prefix.startswith('s3://') or
-            src_prefix.count('/') != 2):
+                src_prefix.count('/') != 2):
             raise ValueError(f'Invalid prefix: {src_prefix}')
 
         super().__init__(src_prefix, **kwargs)
@@ -861,8 +855,8 @@ class FileCacheSourceS3(FileCacheSource):
         self._prefix_type = 's3'
         self._client = (boto3.client('s3',
                                      config=botocore.client.Config(
-                                         ignature_version=botocore.UNSIGNED))
-                           if anonymous else boto3.client('s3'))
+                                         signature_version=botocore.UNSIGNED))
+                        if anonymous else boto3.client('s3'))
         self._bucket_name = src_prefix.lstrip('s3://')
         self._cache_subdir = src_prefix.replace('s3://', 's3_')
 
@@ -908,7 +902,7 @@ class FileCacheSourceS3(FileCacheSource):
         temp_local_path = local_path.with_suffix(local_path.suffix + '.dltemp')
         try:
             self._client.download_file(self._bucket_name, sub_path,
-                                          str(temp_local_path))
+                                       str(temp_local_path))
             temp_local_path.rename(local_path)
         except botocore.exceptions.ClientError:
             temp_local_path.unlink(missing_ok=True)
@@ -985,7 +979,6 @@ class FileCachePrefix:
         if self._filecache._logger:
             self._filecache._logger.debug(f'Initializing prefix {self._prefix}')
 
-
     def exists(self, sub_path, anonymous=False):
         """Check if a file exists without downloading it.
 
@@ -1001,7 +994,6 @@ class FileCachePrefix:
         """
 
         return self._filecache.exists(f'{self._prefix}{sub_path}')
-
 
     def get_local_path(self, sub_path):
         """Return the local path for the given filename using this prefix.
@@ -1019,7 +1011,6 @@ class FileCachePrefix:
         return self._filecache.get_local_path(f'{self._prefix}{sub_path}',
                                               anonymous=self._anonymous)
 
-
     def retrieve(self, sub_path):
         """Retrieve a file from the storage location and store it in the file cache.
 
@@ -1035,7 +1026,6 @@ class FileCachePrefix:
                 file within the given timeout.
         """
 
-
         old_download_counter = self._filecache.download_counter
 
         ret = self._filecache.retrieve(f'{self._prefix}{sub_path}',
@@ -1045,7 +1035,6 @@ class FileCachePrefix:
         self._download_counter += (self._filecache.download_counter -
                                    old_download_counter)
         return ret
-
 
     def upload(self, sub_path):
         """Send a file from the file cache to the storage location.
@@ -1065,7 +1054,6 @@ class FileCachePrefix:
         self._upload_counter += (self._filecache.upload_counter -
                                  old_upload_counter)
         return ret
-
 
     @contextlib.contextmanager
     def open(self, filename, mode='r', *args, **kwargs):
