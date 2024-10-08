@@ -355,11 +355,10 @@ def test_local_retr_good(shared):
         with FileCache(shared=shared) as fc:
             for filename in EXPECTED_FILENAMES:
                 full_filename = os.path.join(EXPECTED_DIR, filename)
-                os_filename = filename.replace('/', os.sep)
                 path = fc.retrieve(full_filename)
-                assert str(path) == f'{EXPECTED_DIR}{os.sep}{os_filename}'
+                assert str(path) == f'{EXPECTED_DIR}/{filename}'
                 path = fc.retrieve(full_filename)
-                assert str(path) == f'{EXPECTED_DIR}{os.sep}{os_filename}'
+                assert str(path) == f'{EXPECTED_DIR}/{filename}'
                 _compare_to_expected_path(path, full_filename)
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
@@ -373,11 +372,10 @@ def test_local_retr_pfx_good(shared):
         with FileCache(shared=shared) as fc:
             lf = fc.new_prefix(EXPECTED_DIR)
             for filename in EXPECTED_FILENAMES:
-                os_filename = filename.replace('/', os.sep)
                 path = lf.retrieve(filename)
-                assert str(path) == f'{EXPECTED_DIR}{os.sep}{os_filename}'
+                assert str(path) == f'{EXPECTED_DIR}/{filename}'
                 path = lf.retrieve(filename)
-                assert str(path) == f'{EXPECTED_DIR}{os.sep}{os_filename}'
+                assert str(path) == f'{EXPECTED_DIR}/{filename}'
                 _compare_to_expected_path(path, filename)
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
