@@ -810,7 +810,8 @@ class FileCacheSourceLocal(FileCacheSource):
         sub_path = Path(sub_path).expanduser().resolve()
 
         if local_path != sub_path:
-            raise ValueError(f'Paths differ for local upload: {local_path} and {sub_path}')
+            raise ValueError(
+                f'Paths differ for local upload: {local_path} and {sub_path}')
 
         if not local_path.is_file():
             raise FileNotFoundError(f'File does not exist: {local_path}')
