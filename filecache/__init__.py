@@ -1086,7 +1086,7 @@ class FileCacheSourceS3(FileCacheSource):
         return ret
 
     def retrieve(self, sub_path, local_path):
-        """Retrieve a file from a Google Storage bucket.
+        """Retrieve a file from an AWS S3 bucket.
 
         Parameters:
             sub_path (str): The path of the file in the AWS S3 bucket given by the
