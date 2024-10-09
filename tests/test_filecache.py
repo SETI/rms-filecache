@@ -224,7 +224,9 @@ def test_temp_dir_good():
 
 def test_temp_dir_bad():
     with pytest.raises(ValueError):
-        _ = FileCache(temp_dir='\000')
+        FileCache(temp_dir='\000')
+    with pytest.raises(ValueError):
+        FileCache(temp_dir=EXPECTED_DIR / EXPECTED_FILENAMES[0])
 
 
 def test_shared_global():
@@ -302,21 +304,21 @@ def test_shared_named():
 
 def test_shared_bad():
     with pytest.raises(TypeError):
-        _ = FileCache(shared=5)
+        FileCache(shared=5)
     with pytest.raises(ValueError):
-        _ = FileCache(shared='a/b')
+        FileCache(shared='a/b')
     with pytest.raises(ValueError):
-        _ = FileCache(shared='a\\b')
+        FileCache(shared='a\\b')
     with pytest.raises(ValueError):
-        _ = FileCache(shared='/a')
+        FileCache(shared='/a')
     with pytest.raises(ValueError):
-        _ = FileCache(shared='\\a')
+        FileCache(shared='\\a')
 
 
 def test_prefix_bad():
     with FileCache() as fc:
         with pytest.raises(TypeError):
-            _ = fc.new_prefix(5)
+            fc.new_prefix(5)
     assert not fc.cache_dir.exists()
 
 
@@ -330,8 +332,6 @@ def test_exists_local_bad():
     with FileCache() as fc:
         assert not fc.exists(f'{EXPECTED_DIR}/nonexistent.txt')
         assert not fc.exists(f'{EXPECTED_DIR}/a/b/c.txt')
-        with pytest.raises(ValueError):
-            fc.exists(f'{EXPECTED_DIR}/a/b/../c.txt')
 
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
@@ -389,20 +389,16 @@ def test_local_retr_pfx_good(shared):
 
 def test_local_retr_bad():
     with FileCache() as fc:
-        with pytest.raises(ValueError):
-            _ = fc.retrieve('a/b/../../c.txt')
         with pytest.raises(FileNotFoundError):
-            _ = fc.retrieve('nonexistent.txt')
+            fc.retrieve('nonexistent.txt')
     assert not fc.cache_dir.exists()
 
 
 def test_local_retr_pfx_bad():
     with FileCache() as fc:
         lf = fc.new_prefix(EXPECTED_DIR)
-        with pytest.raises(ValueError):
-            _ = lf.retrieve('a/b/../../c.txt')
         with pytest.raises(FileNotFoundError):
-            _ = lf.retrieve('nonexistent.txt')
+            lf.retrieve('nonexistent.txt')
     assert not fc.cache_dir.exists()
 
 
@@ -512,12 +508,12 @@ def test_gs_retr_pfx_bad():
     with FileCache() as fc:
         pfx = fc.new_prefix('gs://rms-node-bogus-bucket-name-XXX', anonymous=True)
         with pytest.raises(FileNotFoundError):
-            _ = pfx.retrieve('bogus-filename')
+            pfx.retrieve('bogus-filename')
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 0
         pfx = fc.new_prefix(GS_TEST_BUCKET_ROOT, anonymous=True)
         with pytest.raises(FileNotFoundError):
-            _ = pfx.retrieve('bogus-filename')
+            pfx.retrieve('bogus-filename')
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 0
     assert not fc.cache_dir.exists()
@@ -547,12 +543,12 @@ def test_s3_retr_pfx_bad():
     with FileCache() as fc:
         pfx = fc.new_prefix('s3://rms-node-bogus-bucket-name-XXX', anonymous=True)
         with pytest.raises(FileNotFoundError):
-            _ = pfx.retrieve('bogus-filename')
+            pfx.retrieve('bogus-filename')
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 0
         pfx = fc.new_prefix(S3_TEST_BUCKET_ROOT, anonymous=True)
         with pytest.raises(FileNotFoundError):
-            _ = pfx.retrieve('bogus-filename')
+            pfx.retrieve('bogus-filename')
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 0
     assert not fc.cache_dir.exists()
@@ -579,12 +575,12 @@ def test_web_retr_pfx_bad():
     with FileCache() as fc:
         pfx = fc.new_prefix('https://bad-domain.seti.org')
         with pytest.raises(FileNotFoundError):
-            _ = pfx.retrieve('bogus-filename')
+            pfx.retrieve('bogus-filename')
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 0
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         with pytest.raises(FileNotFoundError):
-            _ = pfx.retrieve('bogus-filename')
+            pfx.retrieve('bogus-filename')
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 0
     assert not fc.cache_dir.exists()
@@ -907,6 +903,16 @@ def test_source_bad():
         FileCacheSourceS3('s3://hi/hi')
     with pytest.raises(ValueError):
         FileCacheSourceS3('s3://')
+
+
+def test_localsource_bad():
+    sl = FileCacheSourceLocal()
+    with pytest.raises(ValueError):
+        sl.retrieve('hi', 'bye')
+    with pytest.raises(ValueError):
+        sl.upload('hi', 'bye')
+    with pytest.raises(FileNotFoundError):
+        sl.upload('non-existent.txt', 'non-existent.txt')
 
 
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
