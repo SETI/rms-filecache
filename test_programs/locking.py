@@ -1,5 +1,8 @@
 ################################################################################
 # tests_programs/locking.py
+#
+# Test that locking actually works on a shared cache. This program is meant to
+# be run in multiple shells simultaneously.
 ################################################################################
 
 import logging

@@ -28,14 +28,24 @@ EXPECTED_FILENAMES = ('lorem1.txt',
                       'subdir1/lorem1.txt',
                       'subdir1/subdir2a/binary1.bin',
                       'subdir1/subdir2b/binary1.bin')
+
 GS_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests'
 S3_TEST_BUCKET_ROOT = 's3://rms-filecache-tests'
 HTTP_TEST_ROOT = 'https://storage.googleapis.com/rms-filecache-tests'
 CLOUD_PREFIXES = (GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT, HTTP_TEST_ROOT)
 
+BAD_GS_TEST_BUCKET_ROOT = 'gs://bad-bucket-name-XXX'
+BAD_S3_TEST_BUCKET_ROOT = 's3://bad-bucket-name-XXX'
+BAD_HTTP_TEST_ROOT = 'http://pds-bad-domain-XXX.seti.org'
+BAD_CLOUD_PREFIXES = (BAD_GS_TEST_BUCKET_ROOT, BAD_S3_TEST_BUCKET_ROOT,
+                      BAD_HTTP_TEST_ROOT)
+
 GS_WRITABLE_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests-writable'
 S3_WRITABLE_TEST_BUCKET_ROOT = 's3://rms-filecache-tests-writable'
 WRITABLE_CLOUD_PREFIXES = (GS_WRITABLE_TEST_BUCKET_ROOT, S3_WRITABLE_TEST_BUCKET_ROOT)
+
+ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
+                HTTP_TEST_ROOT)
 
 
 # This has to be first to clean up any shared directory from a previous failed run
@@ -322,27 +332,15 @@ def test_prefix_bad():
     assert not fc.cache_dir.exists()
 
 
-def test_exists_local_good():
-    with FileCache() as fc:
-        for filename in EXPECTED_FILENAMES:
-            assert fc.exists(f'{EXPECTED_DIR}/{filename}')
-
-
-def test_exists_local_bad():
-    with FileCache() as fc:
-        assert not fc.exists(f'{EXPECTED_DIR}/nonexistent.txt')
-        assert not fc.exists(f'{EXPECTED_DIR}/a/b/c.txt')
-
-
-@pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_exists_cloud_good(prefix):
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_exists_all_good(prefix):
     with FileCache(all_anonymous=True) as fc:
         for filename in EXPECTED_FILENAMES:
             assert fc.exists(f'{prefix}/{filename}')
 
 
-@pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_exists_cloud_bad(prefix):
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_exists_all_bad(prefix):
     with FileCache(all_anonymous=True) as fc:
         assert not fc.exists(f'{prefix}/nonexistent.txt')
         assert not fc.exists(f'{prefix}/a/b/c.txt')
@@ -387,21 +385,6 @@ def test_local_retr_pfx_good(shared):
             assert not fc.cache_dir.exists()
 
 
-def test_local_retr_bad():
-    with FileCache() as fc:
-        with pytest.raises(FileNotFoundError):
-            fc.retrieve('nonexistent.txt')
-    assert not fc.cache_dir.exists()
-
-
-def test_local_retr_pfx_bad():
-    with FileCache() as fc:
-        lf = fc.new_prefix(EXPECTED_DIR)
-        with pytest.raises(FileNotFoundError):
-            lf.retrieve('nonexistent.txt')
-    assert not fc.cache_dir.exists()
-
-
 @pytest.mark.parametrize('shared', (False, True, 'test'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_cloud_retr_good(shared, prefix):
@@ -433,6 +416,51 @@ def test_cloud_retr_pfx_good(shared, prefix):
             _compare_to_expected_path(path, filename)
             # Retrieving the same thing a second time should do nothing
             path = pfx.retrieve(filename)
+            assert str(path).replace('\\', '/').endswith(filename)
+            _compare_to_expected_path(path, filename)
+        assert pfx.upload_counter == 0
+        assert pfx.download_counter == len(EXPECTED_FILENAMES)
+        fc.clean_up(final=True)
+    assert not fc.cache_dir.exists()
+
+
+@pytest.mark.parametrize('shared', (False, True, 'test'))
+@pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
+def test_cloud_retr_multi_good(shared, prefix):
+    with FileCache(shared=shared, all_anonymous=True) as fc:
+        for filename in EXPECTED_FILENAMES:
+            paths = fc.retrieve([f'{prefix}/{filename}'])
+            assert len(paths) == 1
+            path = paths[0]
+            assert str(path).replace('\\', '/').endswith(filename)
+            _compare_to_expected_path(path, filename)
+            # Retrieving the same thing a second time should do nothing
+            paths = fc.retrieve((f'{prefix}/{filename}',))
+            assert len(paths) == 1
+            path = paths[0]
+            assert str(path).replace('\\', '/').endswith(filename)
+            _compare_to_expected_path(path, filename)
+        assert fc.upload_counter == 0
+        assert fc.download_counter == len(EXPECTED_FILENAMES)
+        fc.clean_up(final=True)
+    assert not fc.cache_dir.exists()
+
+
+@pytest.mark.parametrize('shared', (False, True, 'test'))
+@pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
+def test_cloud_retr_multi_pfx_good(shared, prefix):
+    with FileCache(shared=shared) as fc:
+        pfx = fc.new_prefix(prefix, anonymous=True)
+        for filename in EXPECTED_FILENAMES:
+            paths = pfx.retrieve((filename,))
+            assert len(paths) == 1
+            path = paths[0]
+            assert str(path).replace('\\', '/').endswith(filename)
+            _compare_to_expected_path(path, filename)
+            # Retrieving the same thing a second time should do nothing
+            paths = pfx.retrieve([filename])
+            assert len(paths) == 1
+            path = paths[0]
             assert str(path).replace('\\', '/').endswith(filename)
             _compare_to_expected_path(path, filename)
         assert pfx.upload_counter == 0
@@ -484,69 +512,50 @@ def test_cloud3_retr_pfx_good(prefix):
     assert not fc.cache_dir.exists()
 
 
-def test_gs_retr_bad():
+def test_local_retr_bad():
+    with FileCache() as fc:
+        with pytest.raises(FileNotFoundError):
+            fc.retrieve('nonexistent.txt')
+    assert not fc.cache_dir.exists()
+
+
+def test_local_retr_pfx_bad():
+    with FileCache() as fc:
+        lf = fc.new_prefix(EXPECTED_DIR)
+        with pytest.raises(FileNotFoundError):
+            lf.retrieve('nonexistent.txt')
+    assert not fc.cache_dir.exists()
+
+
+@pytest.mark.parametrize('prefix', BAD_CLOUD_PREFIXES)
+def test_cloud_retr_bad(prefix):
     with FileCache() as fc:
         with pytest.raises(ValueError):
-            fc.retrieve('gs://rms-node-bogus-bucket-name-XXX',
-                        anonymous=True)
+            fc.retrieve(prefix, anonymous=True)
         assert fc.upload_counter == 0
         assert fc.download_counter == 0
         with pytest.raises(FileNotFoundError):
-            fc.retrieve('gs://rms-node-bogus-bucket-name-XXX/bogus-filename',
-                        anonymous=True)
-        assert fc.upload_counter == 0
-        assert fc.download_counter == 0
-        with pytest.raises(FileNotFoundError):
-            fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/bogus-filename',
+            fc.retrieve(f'{prefix}/bogus-filename',
                         anonymous=True)
         assert fc.upload_counter == 0
         assert fc.download_counter == 0
     assert not fc.cache_dir.exists()
 
 
-def test_gs_retr_pfx_bad():
+@pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
+def test_cloud2_retr_bad(prefix):
     with FileCache() as fc:
-        pfx = fc.new_prefix('gs://rms-node-bogus-bucket-name-XXX', anonymous=True)
         with pytest.raises(FileNotFoundError):
-            pfx.retrieve('bogus-filename')
-        assert pfx.upload_counter == 0
-        assert pfx.download_counter == 0
-        pfx = fc.new_prefix(GS_TEST_BUCKET_ROOT, anonymous=True)
-        with pytest.raises(FileNotFoundError):
-            pfx.retrieve('bogus-filename')
-        assert pfx.upload_counter == 0
-        assert pfx.download_counter == 0
-    assert not fc.cache_dir.exists()
-
-
-def test_s3_retr_bad():
-    with FileCache() as fc:
-        with pytest.raises(ValueError):
-            fc.retrieve('s3://rms-node-bogus-bucket-name-XXX',
-                        anonymous=True)
-        assert fc.upload_counter == 0
-        assert fc.download_counter == 0
-        with pytest.raises(FileNotFoundError):
-            fc.retrieve('s3://rms-node-bogus-bucket-name-XXX/bogus-filename',
-                        anonymous=True)
-        assert fc.upload_counter == 0
-        assert fc.download_counter == 0
-        with pytest.raises(FileNotFoundError):
-            fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/bogus-filename',
-                        anonymous=True)
+            fc.retrieve(f'{prefix}/bogus-filename', anonymous=True)
         assert fc.upload_counter == 0
         assert fc.download_counter == 0
     assert not fc.cache_dir.exists()
 
 
-def test_s3_retr_pfx_bad():
+@pytest.mark.parametrize('prefix', BAD_CLOUD_PREFIXES)
+def test_cloud_retr_pfx_bad(prefix):
     with FileCache() as fc:
-        pfx = fc.new_prefix('s3://rms-node-bogus-bucket-name-XXX', anonymous=True)
-        with pytest.raises(FileNotFoundError):
-            pfx.retrieve('bogus-filename')
-        assert pfx.upload_counter == 0
-        assert pfx.download_counter == 0
-        pfx = fc.new_prefix(S3_TEST_BUCKET_ROOT, anonymous=True)
+        pfx = fc.new_prefix(prefix, anonymous=True)
         with pytest.raises(FileNotFoundError):
             pfx.retrieve('bogus-filename')
         assert pfx.upload_counter == 0
@@ -554,31 +563,10 @@ def test_s3_retr_pfx_bad():
     assert not fc.cache_dir.exists()
 
 
-def test_web_retr_bad():
+@pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
+def test_cloud2_retr_pfx_bad(prefix):
     with FileCache() as fc:
-        with pytest.raises(ValueError):
-            fc.retrieve('https://bad-domain.seti.org')
-        assert fc.upload_counter == 0
-        assert fc.download_counter == 0
-        with pytest.raises(FileNotFoundError):
-            fc.retrieve('https://bad-domain.seti.org/bogus-filename')
-        assert fc.upload_counter == 0
-        assert fc.download_counter == 0
-        with pytest.raises(FileNotFoundError):
-            fc.retrieve(f'{HTTP_TEST_ROOT}/bogus-filename')
-        assert fc.upload_counter == 0
-        assert fc.download_counter == 0
-    assert not fc.cache_dir.exists()
-
-
-def test_web_retr_pfx_bad():
-    with FileCache() as fc:
-        pfx = fc.new_prefix('https://bad-domain.seti.org')
-        with pytest.raises(FileNotFoundError):
-            pfx.retrieve('bogus-filename')
-        assert pfx.upload_counter == 0
-        assert pfx.download_counter == 0
-        pfx = fc.new_prefix(HTTP_TEST_ROOT)
+        pfx = fc.new_prefix(prefix, anonymous=True)
         with pytest.raises(FileNotFoundError):
             pfx.retrieve('bogus-filename')
         assert pfx.upload_counter == 0
@@ -880,6 +868,95 @@ def test_complex_read_write_pfx():
         assert res == b'AB'
         assert pfx.download_counter == 1
         assert pfx.upload_counter == 0
+
+
+def test_complex_retr_multi_1():
+    with FileCache() as fc:
+        # Retrieve a couple of local files one at a time
+        fc.retrieve(EXPECTED_DIR / EXPECTED_FILENAMES[0])
+        fc.retrieve(EXPECTED_DIR / EXPECTED_FILENAMES[1])
+        assert fc.download_counter == 0
+        assert fc.upload_counter == 0
+        # Now retrieve all the local files
+        paths = fc.retrieve([EXPECTED_DIR / x for x in EXPECTED_FILENAMES])
+        assert len(paths) == len(EXPECTED_FILENAMES)
+        assert fc.download_counter == 0
+        assert fc.upload_counter == 0
+
+@pytest.mark.parametrize('shared', (False, True))
+def test_complex_retr_multi_2(shared):
+    with FileCache(shared=shared, cache_owner=True) as fc:
+        # Retrieve various cloud files one at a time
+        fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
+        fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
+        fc.retrieve(f'{HTTP_TEST_ROOT}/{EXPECTED_FILENAMES[2]}')
+        fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[2]}')
+        fc.retrieve(EXPECTED_DIR / EXPECTED_FILENAMES[3])
+        assert fc.download_counter == 4
+        assert fc.upload_counter == 0
+        # Now try to retrieve them all at once
+        full_paths = []
+        expected_paths = []
+        for prefix in ALL_PREFIXES:
+            prefix = str(prefix)
+            for filename in EXPECTED_FILENAMES:
+                full_paths.append(f'{prefix}/{filename}')
+                full_filename = (prefix
+                                 .replace('https://', 'http_')
+                                 .replace('gs://', 'gs_')
+                                 .replace('s3://', 's3_')) + '/' + filename
+                if '://' in prefix:
+                    full_filename = str(fc.cache_dir / full_filename)
+                expected_paths.append(full_filename)
+        local_paths = fc.retrieve(full_paths)
+        for lp, ep in zip(local_paths, expected_paths):
+            assert str(lp) == ep
+        assert fc.download_counter == len(ALL_PREFIXES) * len(EXPECTED_FILENAMES) - 4
+
+@pytest.mark.parametrize('shared', (False, True))
+def test_complex_retr_multi_3(shared):
+    with FileCache(shared=shared, cache_owner=True) as fc:
+        # Retrieve various cloud files one at a time
+        fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
+        fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
+        fc.retrieve(f'{HTTP_TEST_ROOT}/{EXPECTED_FILENAMES[2]}')
+        fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[2]}')
+        fc.retrieve(EXPECTED_DIR / EXPECTED_FILENAMES[3])
+        assert fc.download_counter == 4
+        assert fc.upload_counter == 0
+        # Now try to retrieve them all at once
+        full_paths = []
+        expected_paths = []
+        for filename in EXPECTED_FILENAMES:  # Flipped from above
+            for prefix in ALL_PREFIXES:
+                prefix = str(prefix)
+                full_paths.append(f'{prefix}/{filename}')
+                full_filename = (prefix
+                                 .replace('https://', 'http_')
+                                 .replace('gs://', 'gs_')
+                                 .replace('s3://', 's3_')) + '/' + filename
+                if '://' in prefix:
+                    full_filename = str(fc.cache_dir / full_filename)
+                expected_paths.append(full_filename)
+        local_paths = fc.retrieve(full_paths)
+        for lp, ep in zip(local_paths, expected_paths):
+            assert str(lp) == ep
+        assert fc.download_counter == len(ALL_PREFIXES) * len(EXPECTED_FILENAMES) - 4
+
+@pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
+def test_complex_retr_multi_4(prefix):
+    with FileCache() as fc:
+        # Retrieve some cloud files with a bad name included
+        full_paths = [f'{prefix}/{filename}' for filename in EXPECTED_FILENAMES]
+        full_paths = [f'{prefix}/nonexistent.txt'] + full_paths
+        with pytest.raises(FileNotFoundError):
+            local_paths = fc.retrieve(full_paths)
+        # Make sure everything else got downloaded
+        for path in full_paths[1:]:
+            local_path = fc.get_local_path(path)
+            assert local_path.exists()
+        assert fc.download_counter == len(EXPECTED_FILENAMES)
+        assert fc.upload_counter == 0
 
 
 def test_source_bad():
