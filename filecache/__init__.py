@@ -145,6 +145,7 @@ import os
 from pathlib import Path
 import requests
 import tempfile
+import time
 import uuid
 
 import filelock
@@ -181,6 +182,7 @@ class FileCache:
     """Class which manages the lifecycle of files from various sources."""
 
     _FILE_CACHE_PREFIX = '.file_cache_'
+    _LOCK_PREFIX = '.__lock__'
 
     def __init__(self, temp_dir=None, shared=False, cache_owner=False, mp_safe=None,
                  atexit_cleanup=True, all_anonymous=False, lock_timeout=60, logger=None):
@@ -387,7 +389,7 @@ class FileCache:
 
     def _lock_path(self, path):
         path = Path(path)
-        return path.parent / f'.__lock__{path.name}'
+        return path.parent / f'{self._LOCK_PREFIX}{path.name}'
 
     def exists(self, full_path, anonymous=False):
         """Check if a file exists without downloading it.
@@ -489,6 +491,9 @@ class FileCache:
             files will be present.
         """
 
+        if lock_timeout is None:
+            lock_timeout = self._lock_timeout
+
         if isinstance(full_path, (list, tuple)):
             sources = []
             sub_paths = []
@@ -499,7 +504,8 @@ class FileCache:
                 sub_paths.append(sub_path)
                 local_paths.append(local_path)
             if self.is_mp_safe:
-                return self._retrieve_multi_locked(sources, sub_paths, local_paths)
+                return self._retrieve_multi_locked(sources, sub_paths, local_paths,
+                                                   lock_timeout)
             return self._retrieve_multi_unlocked(sources, sub_paths, local_paths)
 
         source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
@@ -513,7 +519,7 @@ class FileCache:
         if local_path.is_file():
             if self._logger:
                 self._logger.debug(
-                    'Accessing cached file for {full_path} at {local_path}')
+                    f'Accessing cached file for {full_path} at {local_path}')
             return local_path
 
         if self.is_mp_safe:
@@ -537,8 +543,6 @@ class FileCache:
         """Retrieve a single file from the storage location with lock protection."""
 
         lock_path = self._lock_path(local_path)
-        if lock_timeout is None:
-            lock_timeout = self._lock_timeout
         lock = filelock.FileLock(lock_path, timeout=lock_timeout)
         try:
             lock.acquire()
@@ -569,7 +573,7 @@ class FileCache:
     def _retrieve_multi_unlocked(self, sources, sub_paths, local_paths):
         """Retrieve multiple files from storage locations without lock protection."""
 
-        ret = [None] * len(sources)
+        func_ret = [None] * len(sources)
 
         source_dict = {}
 
@@ -581,13 +585,13 @@ class FileCache:
             if source._src_type == 'local':
                 if self._logger:
                     self._logger.debug(f'Accessing local file {sub_path}')
-                ret[idx] = source.retrieve(sub_path, local_path)
+                func_ret[idx] = source.retrieve(sub_path, local_path)
                 continue
             if local_path.is_file():
                 if self._logger:
                     self._logger.debug(
-                        'Accessing cached file for {full_path} at {local_path}')
-                ret[idx] = local_path
+                        f'Accessing cached file for {full_path} at {local_path}')
+                func_ret[idx] = local_path
                 continue
             pfx = source._src_prefix_
             assert '://' in pfx
@@ -599,27 +603,35 @@ class FileCache:
         # them all at once
         for source_pfx in source_dict:
             source = source_dict[source_pfx][0][1]  # All the same
-            source_idxes = [x[0] for x in source_dict[source_pfx]]
-            source_sub_paths = [x[2] for x in source_dict[source_pfx]]
-            source_local_paths = [x[3] for x in source_dict[source_pfx]]
-            try:
-                rets = source.retrieve_multi(source_sub_paths, source_local_paths)
-            finally:
-                for local_path in source_local_paths:
-                    if local_path.is_file():
-                        self._download_counter += 1
+            source_idxes, _, source_sub_paths, source_local_paths = list(
+                zip(*source_dict[source_pfx]))
+            if self._logger:
+                self._logger.debug(
+                    f'Performing multi-file download for prefix {source_pfx}')
+                for sub_path in source_sub_paths:
+                    self._logger.debug(f'  {sub_path}')
+            rets = source.retrieve_multi(source_sub_paths, source_local_paths)
+            for ret, sub_path in zip(rets, source_sub_paths):
+                if isinstance(ret, Exception):
+                    if self._logger:
+                        self._logger.debug(f'    Fail: {sub_path} {ret}')
+                else:
+                    self._download_counter += 1
+
             assert len(source_idxes) == len(rets)
             for source_ret, source_idx in zip(rets, source_idxes):
-                ret[source_idx] = source_ret
+                func_ret[source_idx] = source_ret
 
-        return ret
+        return func_ret
 
-    def _retrieve_multi_locked(self, sources, sub_paths, local_paths):
+    def _retrieve_multi_locked(self, sources, sub_paths, local_paths, lock_timeout):
         """Retrieve multiple files from storage locations with lock protection."""
 
-        # XXX Implement lock protection!
+        start_time = time.time()
 
-        ret = [None] * len(sources)
+        func_ret = [None] * len(sources)
+
+        wait_to_appear = []  # Locked by another process (they are downloading it)
 
         source_dict = {}
 
@@ -628,16 +640,19 @@ class FileCache:
         # organize them by source; we use the source prefix to distinguish among them.
         for idx, (source, sub_path, local_path) in enumerate(zip(sources,
                                                                  sub_paths, local_paths)):
+            # No need to lock for local files
             if source._src_type == 'local':
                 if self._logger:
                     self._logger.debug(f'Accessing local file {sub_path}')
-                ret[idx] = source.retrieve(sub_path, local_path)
+                func_ret[idx] = source.retrieve(sub_path, local_path)
                 continue
+            # Since all download operations for individual files are atomic, no need to
+            # lock if the file actually exists
             if local_path.is_file():
                 if self._logger:
                     self._logger.debug(
-                        'Accessing cached file for {full_path} at {local_path}')
-                ret[idx] = local_path
+                        f'Accessing cached file for {sub_path} at {local_path}')
+                func_ret[idx] = local_path
                 continue
             pfx = source._src_prefix_
             assert '://' in pfx
@@ -649,20 +664,94 @@ class FileCache:
         # them all at once
         for source_pfx in source_dict:
             source = source_dict[source_pfx][0][1]  # All the same
-            source_idxes = [x[0] for x in source_dict[source_pfx]]
-            source_sub_paths = [x[2] for x in source_dict[source_pfx]]
-            source_local_paths = [x[3] for x in source_dict[source_pfx]]
+            orig_source_idxes = [x[0] for x in source_dict[source_pfx]]
+            orig_source_sub_paths = [x[2] for x in source_dict[source_pfx]]
+            orig_source_local_paths = [x[3] for x in source_dict[source_pfx]]
+            if self._logger:
+                self._logger.debug(
+                    f'Performing multi-file download for prefix {source_pfx}')
+                for sub_path in orig_source_sub_paths:
+                    if self._logger:
+                        self._logger.debug(f'  {sub_path}')
+
+            # We first loop through the local paths and try to acquire locks on all
+            # the files. If we fail to get a lock on a file, it must be downloading
+            # somewhere else, so we just remove it from the list of files to download
+            # right now and try again later.
+            lock_list = []
+            source_idxes = []
+            source_sub_paths = []
+            source_local_paths = []
+            for idx, sub_path, local_path in zip(orig_source_idxes,
+                                                 orig_source_sub_paths,
+                                                 orig_source_local_paths):
+                lock_path = self._lock_path(local_path)
+                lock = filelock.FileLock(lock_path, timeout=0)
+                lock_list.append((lock_path, lock))
+                try:
+                    lock.acquire()
+                except filelock._error.Timeout:
+                    wait_to_appear.append((idx, f'{source_pfx}{sub_path}', local_path))
+                    if self._logger:
+                        self._logger.debug(f'  Lock failed: {sub_path}')
+                    continue
+                source_idxes.append(idx)
+                source_sub_paths.append(sub_path)
+                source_local_paths.append(local_path)
+
+            # Now we can actually download the files that we locked
             try:
                 rets = source.retrieve_multi(source_sub_paths, source_local_paths)
+                assert len(source_sub_paths) == len(rets)
             finally:
-                for local_path in source_local_paths:
-                    if local_path.is_file():
+                for ret, sub_path in zip(rets, source_sub_paths):
+                    if isinstance(ret, Exception):
+                        if self._logger:
+                            self._logger.debug(f'    Fail: {sub_path} {ret}')
+                    else:
                         self._download_counter += 1
-            assert len(source_idxes) == len(rets)
-            for source_ret, source_idx in zip(rets, source_idxes):
-                ret[source_idx] = source_ret
 
-        return ret
+            # Release all the locks
+            for lock_path, lock in lock_list:
+                # Technically there is a potential race condition here, because
+                # after we release the lock, someone else could lock this file,
+                # and then we could delete it (because on Linux locks are only
+                # advisory). Then the next process to come along to try to lock
+                # this file would also succeed because it would really be a
+                # different lock file! However, we have to do it in this order
+                # because otherwise it won't work on Windows, where locks are not
+                # just advisory. The worst that could happen is we end up
+                # downloading the file twice.
+                lock.release()
+                lock_path.unlink(missing_ok=True)
+
+            # Record the results
+            for source_ret, source_idx in zip(rets, source_idxes):
+                func_ret[source_idx] = source_ret
+
+        # If wait_to_appear is not empty, then we failed to acquire at least one lock,
+        # which means that another process was downloading the file. So now we just
+        # sit here and wait for all of the missing files to magically show up, or for
+        # us to time out.
+        while wait_to_appear:
+            new_wait_to_appear = []
+            for idx, full_path, local_path in wait_to_appear:
+                if func_ret[idx] is not None:
+                    # Already dealt with
+                    continue
+                if local_path.is_file():
+                    func_ret[idx] = local_path
+                    if self._logger:
+                        self._logger.debug(f'  Downloaded elsewhere: {full_path}')
+                    continue
+                new_wait_to_appear.append((idx, full_path, local_path))
+
+            wait_to_appear = new_wait_to_appear
+            time.sleep(1)  # Wait 1 second before trying again
+            if time.time() - start_time > lock_timeout:
+                raise TimeoutError
+
+        return func_ret
 
     def upload(self, full_path, anonymous=False):
         """Upload a file(s) from the file cache to the storage location(s).
@@ -738,18 +827,19 @@ class FileCache:
             source_local_paths = [x[3] for x in source_dict[source_pfx]]
             try:
                 rets = source.upload_multi(source_sub_paths, source_local_paths)
-            finally:
-                assert len(source_idxes) == len(rets)
-                for ret, sub_path in zip(rets, source_sub_paths):
-                    if ret:
-                        self._upload_counter += 1
-                    else:
-                        fail_files.append(sub_path)
+            except Exception:
+                raise
+            assert len(source_idxes) == len(rets)
+            for ret, local_path in zip(rets, source_local_paths):
+                if ret:
+                    self._upload_counter += 1
+                else:
+                    fail_files.append(local_path)
 
         if file_not_exist:
-            raise FileNotFoundError('File(s) does not exist: {', '.join(fail_files)}')
+            raise FileNotFoundError("File(s) does not exist: {', '.join(fail_files)}")
         if fail_files:
-            raise FileNotFoundError('Failed to upload file(s): {', '.join(fail_files)}')
+            raise FileNotFoundError("Failed to upload file(s): {', '.join(fail_files)}")
 
     @contextlib.contextmanager
     def open(self, full_path, mode='r', *args,
@@ -850,22 +940,27 @@ class FileCache:
             # then never written anything there.
             for root, dirs, files in os.walk(self._cache_dir, topdown=False):
                 for name in files:
+                    if name.startswith(self._LOCK_PREFIX):
+                        if self._logger:
+                            self._logger.error(
+                                'Cleaning up cache that has an active lock file:'
+                                f'{root}/{name}')
                     if self._logger:
-                        self._logger.debug(f'  Removing {name}')
+                        self._logger.debug(f'  Removing file {root}/{name}')
                     try:
                         os.remove(os.path.join(root, name))
                     except FileNotFoundError:  # pragma: no cover
                         pass
                 for name in dirs:
                     if self._logger:
-                        self._logger.debug(f'  Removing {name}')
+                        self._logger.debug(f'  Removing dir {root}/{name}')
                     try:
                         os.rmdir(os.path.join(root, name))
                     except FileNotFoundError:  # pragma: no cover
                         pass
 
             if self._logger:
-                self._logger.debug(f'  Removing {self._cache_dir}')
+                self._logger.debug(f'  Removing dir {self._cache_dir}')
             try:
                 os.rmdir(self._cache_dir)
             except FileNotFoundError:  # pragma: no cover
@@ -944,6 +1039,7 @@ class FileCacheSource:
             have download failures, all other files will be downloaded.
         """
 
+        print(sub_paths)
         results = {}
         for sub_path, local_path, result in self._download_object_parallel(sub_paths,
                                                                            local_paths):
@@ -1536,7 +1632,7 @@ class FileCachePrefix:
         return self._filecache.get_local_path(f'{self._prefix}{sub_path}',
                                               anonymous=self._anonymous)
 
-    def retrieve(self, sub_path):
+    def retrieve(self, sub_path, lock_timeout=None):
         """Retrieve a file(s) from the given sub_path and store it in the file cache.
 
         Parameters:
@@ -1544,6 +1640,10 @@ class FileCachePrefix:
                 If `sub_path` is a list or tuple, the complete list of files is retrieved.
                 Depending on the storage location, this may be more efficient because
                 files can be downloaded in parallel.
+            lock_timeout(int, optional): How long to wait, in seconds, if another process
+                is marked as retrieving the file before raising an exception. 0 means to
+                not wait at all. A negative value means to never time out. If None, use
+                the default value given when this :class:`FileCachePrefix` was created.
 
         Returns:
             Path or list: The Path of the filename in the temporary directory. If
@@ -1558,15 +1658,18 @@ class FileCachePrefix:
 
         old_download_counter = self._filecache.download_counter
 
+        if lock_timeout is None:
+            lock_timeout = self._lock_timeout
+
         if isinstance(sub_path, (list, tuple)):
             new_sub_path = [f'{self._prefix}{p}' for p in sub_path]
             ret = self._filecache.retrieve(new_sub_path,
                                            anonymous=self._anonymous,
-                                           lock_timeout=self._lock_timeout)
+                                           lock_timeout=lock_timeout)
         else:
             ret = self._filecache.retrieve(f'{self._prefix}{sub_path}',
                                            anonymous=self._anonymous,
-                                           lock_timeout=self._lock_timeout)
+                                           lock_timeout=lock_timeout)
 
         self._download_counter += (self._filecache.download_counter -
                                    old_download_counter)
@@ -1597,7 +1700,7 @@ class FileCachePrefix:
         return ret
 
     @contextlib.contextmanager
-    def open(self, sub_path, mode='r', *args, **kwargs):
+    def open(self, sub_path, mode='r', *args, lock_timeout=None, **kwargs):
         """Retrieve+open or open+upload a file as a context manager.
 
         If `mode` is a read mode (like ``'r'`` or ``'rb'``) then the file will be first
@@ -1609,6 +1712,10 @@ class FileCachePrefix:
             sub_path (str): The path of the file relative to the prefix.
             mode (str): The mode string as you would specify to Python's `open()`
                 function.
+            lock_timeout(int, optional): How long to wait, in seconds, if another process
+                is marked as retrieving the file before raising an exception. 0 means to
+                not wait at all. A negative value means to never time out. If None, use
+                the default value given when this :class:`FileCachePrefix` was created.
 
         Returns:
             file-like object: The same object as would be returned by the normal `open()`
@@ -1616,7 +1723,7 @@ class FileCachePrefix:
         """
 
         if mode[0] == 'r':
-            local_path = self.retrieve(sub_path)
+            local_path = self.retrieve(sub_path, lock_timeout=lock_timeout)
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
         else:  # 'w', 'x', 'a'
@@ -1627,10 +1734,10 @@ class FileCachePrefix:
 
     @property
     def download_counter(self):
-        """Return the number of actual file downloads that have taken place."""
+        """The number of actual file downloads that have taken place."""
         return self._download_counter
 
     @property
     def upload_counter(self):
-        """Return the number of actual file uploads that have taken place."""
+        """The number of actual file uploads that have taken place."""
         return self._upload_counter

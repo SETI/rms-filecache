@@ -26,3 +26,5 @@ src = fc.new_source('gs://rms-node-holdings/pds3-holdings/metadata/COISS_2xxx')
 for num in range(2001, 2117):
     path = src.retrieve(f'COISS_{num}/COISS_{num}_index.tab')
     print(path)
+
+fc.clean_up(final=True)
