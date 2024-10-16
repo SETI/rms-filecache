@@ -124,7 +124,6 @@ def test_logger():
     filecache.set_global_logger(logger)
     with FileCache(shared=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
-        print(id(pfx))
         pfx.retrieve(EXPECTED_FILENAMES[0])
         fc.clean_up(final=True)
 # Creating shared cache /tmp/.file_cache___global__
@@ -852,7 +851,7 @@ def test_complex_read_write():
 
 def test_complex_read_write_pfx():
     pfx_name = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
-    with FileCache() as fc:
+    with FileCache(all_anonymous=True) as fc:
         pfx = fc.new_prefix(pfx_name)
         with pfx.open('test_file.txt', 'wb') as fp:
             fp.write(b'A')
@@ -863,7 +862,7 @@ def test_complex_read_write_pfx():
         assert res == b'AB'
         assert pfx.download_counter == 0
         assert pfx.upload_counter == 2
-    with FileCache() as fc:
+    with FileCache(all_anonymous=True) as fc:
         pfx = fc.new_prefix(pfx_name)
         with pfx.open('test_file.txt', 'rb') as fp:
             res = fp.read()
@@ -873,7 +872,7 @@ def test_complex_read_write_pfx():
 
 
 def test_complex_retr_multi_1():
-    with FileCache() as fc:
+    with FileCache(all_anonymous=True) as fc:
         # Retrieve a couple of local files one at a time
         fc.retrieve(EXPECTED_DIR / EXPECTED_FILENAMES[0])
         fc.retrieve(EXPECTED_DIR / EXPECTED_FILENAMES[1])
@@ -887,7 +886,7 @@ def test_complex_retr_multi_1():
 
 @pytest.mark.parametrize('shared', (False, True))
 def test_complex_retr_multi_2(shared):
-    with FileCache(shared=shared, cache_owner=True) as fc:
+    with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
         # Retrieve various cloud files one at a time
         fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
         fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
@@ -912,12 +911,12 @@ def test_complex_retr_multi_2(shared):
                 expected_paths.append(full_filename)
         local_paths = fc.retrieve(full_paths)
         for lp, ep in zip(local_paths, expected_paths):
-            assert str(lp) == ep
+            assert str(lp).replace('\\', '/') == ep.replace('\\', '/')
         assert fc.download_counter == len(ALL_PREFIXES) * len(EXPECTED_FILENAMES) - 4
 
 @pytest.mark.parametrize('shared', (False, True))
 def test_complex_retr_multi_3(shared):
-    with FileCache(shared=shared, cache_owner=True) as fc:
+    with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
         # Retrieve various cloud files one at a time
         fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
         fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
@@ -942,22 +941,29 @@ def test_complex_retr_multi_3(shared):
                 expected_paths.append(full_filename)
         local_paths = fc.retrieve(full_paths)
         for lp, ep in zip(local_paths, expected_paths):
-            assert str(lp) == ep
+            assert str(lp).replace('\\', '/') == ep.replace('\\', '/')
         assert fc.download_counter == len(ALL_PREFIXES) * len(EXPECTED_FILENAMES) - 4
 
-@pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_complex_retr_multi_4(prefix):
-    with FileCache() as fc:
+@pytest.mark.parametrize('shared', (False, True))
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_complex_retr_multi_4(shared, prefix):
+    with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
         # Retrieve some cloud files with a bad name included
         full_paths = [f'{prefix}/{filename}' for filename in EXPECTED_FILENAMES]
         full_paths = [f'{prefix}/nonexistent.txt'] + full_paths
         with pytest.raises(FileNotFoundError):
-            local_paths = fc.retrieve(full_paths)
+            local_paths = fc.retrieve(full_paths, exception_on_fail=True)
+            print('A', local_paths)
+        local_paths = fc.retrieve(full_paths, exception_on_fail=False)
+        assert isinstance(local_paths[0], FileNotFoundError)
         # Make sure everything else got downloaded
         for path in full_paths[1:]:
             local_path = fc.get_local_path(path)
             assert local_path.exists()
-        assert fc.download_counter == len(EXPECTED_FILENAMES)
+        if '://' in str(prefix):
+            assert fc.download_counter == len(EXPECTED_FILENAMES)
+        else:
+            assert fc.download_counter == 0
         assert fc.upload_counter == 0
 
 
