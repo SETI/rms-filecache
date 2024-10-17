@@ -884,6 +884,7 @@ def test_complex_retr_multi_1():
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
 
+
 @pytest.mark.parametrize('shared', (False, True))
 def test_complex_retr_multi_2(shared):
     with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
@@ -914,6 +915,7 @@ def test_complex_retr_multi_2(shared):
             assert str(lp).replace('\\', '/') == ep.replace('\\', '/')
         assert fc.download_counter == len(ALL_PREFIXES) * len(EXPECTED_FILENAMES) - 4
 
+
 @pytest.mark.parametrize('shared', (False, True))
 def test_complex_retr_multi_3(shared):
     with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
@@ -943,6 +945,7 @@ def test_complex_retr_multi_3(shared):
         for lp, ep in zip(local_paths, expected_paths):
             assert str(lp).replace('\\', '/') == ep.replace('\\', '/')
         assert fc.download_counter == len(ALL_PREFIXES) * len(EXPECTED_FILENAMES) - 4
+
 
 @pytest.mark.parametrize('shared', (False, True))
 @pytest.mark.parametrize('prefix', ALL_PREFIXES)

@@ -678,7 +678,7 @@ class FileCache:
                 func_ret[source_idx] = source_ret
 
         if files_not_exist or files_failed:
-            self._log_debug(f'Multi-file retrieval completed with errors')
+            self._log_debug('Multi-file retrieval completed with errors')
             if exception_on_fail:
                 exc_str = ''
                 if files_not_exist:
@@ -689,7 +689,7 @@ class FileCache:
                     exc_str += f"Failed to download file(s): {', '.join(files_failed)}"
                 raise FileNotFoundError(exc_str)
         else:
-            self._log_debug(f'Multi-file retrieval complete')
+            self._log_debug('Multi-file retrieval complete')
 
         return func_ret
 
@@ -831,7 +831,7 @@ class FileCache:
                     'Timeout while waiting for another process to finish downloading')
 
         if files_not_exist or files_failed:
-            self._log_debug(f'Multi-file retrieval completed with errors')
+            self._log_debug('Multi-file retrieval completed with errors')
             if exception_on_fail:
                 exc_str = ''
                 if files_not_exist:
@@ -842,7 +842,7 @@ class FileCache:
                     exc_str += f"Failed to download file(s): {', '.join(files_failed)}"
                 raise FileNotFoundError(exc_str)
         else:
-            self._log_debug(f'Multi-file retrieval complete')
+            self._log_debug('Multi-file retrieval complete')
 
         return func_ret
 
@@ -1020,6 +1020,11 @@ class FileCache:
                 this :class:`FileCache` is marked as the `cache_owner` of the cache, or if
                 True, a shared cache is deleted. Beware that this could affect other
                 processes using the same cache!
+
+        Notes:
+            It is permissible to call :meth:`clean_up` more than once. It is also
+            permissible to call :meth:`clean_up`, then perform more operations that place
+            files in the cache, then call :meth:`clean_up` again.
         """
 
         self._log_debug(f'Cleaning up cache {self._cache_dir}')
@@ -1048,19 +1053,19 @@ class FileCache:
                     self._log_debug(f'  Removing file {root}/{name}')
                     try:
                         os.remove(os.path.join(root, name))
-                    except FileNotFoundError:  # pragma: no cover
+                    except FileNotFoundError:  # pragma: no cover - race condition only
                         pass
                 for name in dirs:
                     self._log_debug(f'  Removing dir {root}/{name}')
                     try:
                         os.rmdir(os.path.join(root, name))
-                    except FileNotFoundError:  # pragma: no cover
+                    except FileNotFoundError:  # pragma: no cover - race condition only
                         pass
 
             self._log_debug(f'  Removing dir {self._cache_dir}')
             try:
                 os.rmdir(self._cache_dir)
-            except FileNotFoundError:  # pragma: no cover
+            except FileNotFoundError:  # pragma: no cover - race condition only
                 pass
 
     def __enter__(self):
@@ -1107,26 +1112,25 @@ class FileCacheSource:
         self._cache_subdir = None
 
     def exists(self):
-        raise NotImplementedError  # pragma: no cover
+        raise NotImplementedError
 
     def retrieve(self, sub_path, local_path):
-        raise NotImplementedError  # pragma: no cover
+        raise NotImplementedError
 
     def retrieve_multi(self, sub_paths, local_paths):
-        """Retrieve multiple files from the storage location.
-
-        This function is provided for the case when a subclass doesn't have its own way to
-        optimize downloading of multiple files.
+        """Retrieve multiple files from the storage location using threads.
 
         Parameters:
             sub_paths (list or tuple): The path of the files to retrieve relative to the
                 source prefix.
-            local_paths (list or tuple): The paths to the desination where the downloaded
-                files will be stored.
+            local_paths (list or tuple): The paths to the destinations where the
+                downloaded files will be stored.
 
         Returns:
-            list[Path or None]: The local Paths of the downloaded files. If a file failed
-            to download, the entry is None.
+            list[Path or Exception]: A list containing the local paths of the retrieved
+            files. If a file failed to download, the entry is the Exception that caused
+            the failure. This list is in the same order and has the same length as
+            `local_paths`.
 
         Notes:
             All parent directories in all `local_paths` are created even if a file
@@ -1137,15 +1141,10 @@ class FileCacheSource:
         """
 
         results = {}
-        for sub_path, local_path, result in self._download_object_parallel(sub_paths,
-                                                                           local_paths):
-            if isinstance(result, Exception):
-                results[sub_path] = result
-            else:
-                results[sub_path] = local_path
+        for sub_path, result in self._download_object_parallel(sub_paths, local_paths):
+            results[sub_path] = result
 
         ret = []
-
         for sub_path in sub_paths:
             ret.append(results[sub_path])
 
@@ -1153,48 +1152,43 @@ class FileCacheSource:
 
     def _download_object(self, sub_path, local_path):
         self.retrieve(sub_path, local_path)
-        return 'Success'
+        return local_path
 
     def _download_object_parallel(self, sub_paths, local_paths):
         with ThreadPoolExecutor(max_workers=8) as executor:  # XXX num threads
-            future_to_paths = {executor.submit(self._download_object, x[0], x[1]): x
-                                   for x in zip(sub_paths, local_paths)}
+            future_to_paths = {executor.submit(self._download_object, x[0], x[1]): x[0]
+                               for x in zip(sub_paths, local_paths)}
             for future in futures.as_completed(future_to_paths):
-                sub_path, local_path = future_to_paths[future]
+                sub_path = future_to_paths[future]
                 exception = future.exception()
-
                 if not exception:
-                    yield sub_path, local_path, future.result()
+                    yield sub_path, future.result()
                 else:
-                    yield sub_path, local_path, exception
+                    yield sub_path, exception
 
     def upload(self, sub_path, local_path):
-        raise NotImplementedError  # pragma: no cover
+        raise NotImplementedError
 
     def upload_multi(self, sub_paths, local_paths):
         """Upload multiple files to a storage location.
 
         Parameters:
-            sub_paths (list or tuple): The path of the desination files relative to the
+            sub_paths (list or tuple): The path of the destination files relative to the
                 source prefix.
             local_paths (list or tuple): The paths of the files to upload.
 
         Returns:
-            list[Path or None]: A list containing the local paths of the uploaded files.
-                If a file failed to upload, the entry is None. This list is in the same
-                order and has the same length as `local_paths`.
+            list[Path or Exception]: A list containing the local paths of the uploaded
+            files. If a file failed to upload, the entry is the Exception that caused the
+            failure. This list is in the same order and has the same length as
+            `local_paths`.
         """
 
         results = {}
-        for sub_path, local_path, result in self._upload_object_parallel(sub_paths,
-                                                                         local_paths):
-            if isinstance(result, Exception):
-                results[sub_path] = result
-            else:
-                results[sub_path] = local_path
+        for sub_path, result in self._upload_object_parallel(sub_paths, local_paths):
+            results[sub_path] = result
 
         ret = []
-
         for sub_path in sub_paths:
             ret.append(results[sub_path])
 
@@ -1202,20 +1196,19 @@ class FileCacheSource:
 
     def _upload_object(self, sub_path, local_path):
         self.upload(sub_path, local_path)
-        return 'Success'
+        return local_path
 
     def _upload_object_parallel(self, sub_paths, local_paths):
         with ThreadPoolExecutor(max_workers=8) as executor:  # XXX num threads
-            future_to_paths = {executor.submit(self._upload_object, x[0], x[1]): x
-                                  for x in zip(sub_paths, local_paths)}
+            future_to_paths = {executor.submit(self._upload_object, x[0], x[1]): x[0]
+                               for x in zip(sub_paths, local_paths)}
             for future in futures.as_completed(future_to_paths):
-                sub_path, local_path = future_to_paths[future]
+                sub_path = future_to_paths[future]
                 exception = future.exception()
-
                 if not exception:
-                    yield sub_path, local_path, future.result()
+                    yield sub_path, future.result()
                 else:
-                    yield sub_path, local_path, exception
+                    yield sub_path, exception
 
 
 class FileCacheSourceLocal(FileCacheSource):
@@ -1405,7 +1398,7 @@ class FileCacheSourceHTTP(FileCacheSource):
                 for chunk in response.iter_content(chunk_size=1024*1024):
                     f.write(chunk)
             temp_local_path.rename(local_path)
-        except Exception:  # pragma: no cover
+        except Exception:
             temp_local_path.unlink(missing_ok=True)
             raise
 
@@ -1414,7 +1407,7 @@ class FileCacheSourceHTTP(FileCacheSource):
     def upload(self, sub_path, local_path):
         """Upload a local file to a webserver. Not implemented."""
 
-        raise NotImplementedError  # pragma: no cover
+        raise NotImplementedError
 
 
 class FileCacheSourceGS(FileCacheSource):
@@ -1665,7 +1658,7 @@ class FileCachePrefix:
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
                 :meth:`FileCache.__init__` `all_anonymous` argument.
-            lock_timeout(int, optional): How long to wait, in seconds, if another process
+            lock_timeout (int, optional): How long to wait, in seconds, if another process
                 is marked as retrieving the file before raising an exception. 0 means to
                 not wait at all. A negative value means to never time out.
 
@@ -1687,9 +1680,9 @@ class FileCachePrefix:
         if not isinstance(prefix, (str, Path)):
             raise TypeError('prefix is not a str or Path')
 
-        self._prefix = str(prefix).rstrip('/') + '/'
+        self._prefix_ = str(prefix).rstrip('/') + '/'
 
-        self._filecache._log_debug(f'Initializing prefix {self._prefix}')
+        self._filecache._log_debug(f'Initializing prefix {self._prefix_}')
 
     def exists(self, sub_path):
         """Check if a file exists without downloading it.
@@ -1707,7 +1700,7 @@ class FileCachePrefix:
             ValueError: If the path is invalidly constructed.
         """
 
-        return self._filecache.exists(f'{self._prefix}{sub_path}')
+        return self._filecache.exists(f'{self._prefix_}{sub_path}')
 
     def get_local_path(self, sub_path):
         """Return the local path for the given sub_path relative to the prefix.
@@ -1723,10 +1716,10 @@ class FileCachePrefix:
             by this function as necessary.
         """
 
-        return self._filecache.get_local_path(f'{self._prefix}{sub_path}',
+        return self._filecache.get_local_path(f'{self._prefix_}{sub_path}',
                                               anonymous=self._anonymous)
 
-    def retrieve(self, sub_path, lock_timeout=None):
+    def retrieve(self, sub_path, lock_timeout=None, exception_on_fail=True):
         """Retrieve a file(s) from the given sub_path and store it in the file cache.
 
         Parameters:
@@ -1734,10 +1727,15 @@ class FileCachePrefix:
                 If `sub_path` is a list or tuple, the complete list of files is retrieved.
                 Depending on the storage location, this may be more efficient because
                 files can be downloaded in parallel.
-            lock_timeout(int, optional): How long to wait, in seconds, if another process
+            lock_timeout (int, optional): How long to wait, in seconds, if another process
                 is marked as retrieving the file before raising an exception. 0 means to
                 not wait at all. A negative value means to never time out. If None, use
                 the default value given when this :class:`FileCachePrefix` was created.
+            exception_on_fail (bool, optional): If True, if any file does not exist or
+                download fails a FileNotFound exception is raised. If False, the function
+                returns normally and any failed download is marked with the Exception
+                that caused the failure in place of the returned Path. Note that this does
+                not affect the behavior of TimeoutError.
 
         Returns:
             Path or list: The Path of the filename in the temporary directory. If
@@ -1756,14 +1754,16 @@ class FileCachePrefix:
             lock_timeout = self._lock_timeout
 
         if isinstance(sub_path, (list, tuple)):
-            new_sub_path = [f'{self._prefix}{p}' for p in sub_path]
+            new_sub_path = [f'{self._prefix_}{p}' for p in sub_path]
             ret = self._filecache.retrieve(new_sub_path,
                                            anonymous=self._anonymous,
-                                           lock_timeout=lock_timeout)
+                                           lock_timeout=lock_timeout,
+                                           exception_on_fail=exception_on_fail)
         else:
-            ret = self._filecache.retrieve(f'{self._prefix}{sub_path}',
+            ret = self._filecache.retrieve(f'{self._prefix_}{sub_path}',
                                            anonymous=self._anonymous,
-                                           lock_timeout=lock_timeout)
+                                           lock_timeout=lock_timeout,
+                                           exception_on_fail=exception_on_fail)
 
         self._download_counter += (self._filecache.download_counter -
                                    old_download_counter)
@@ -1782,11 +1782,11 @@ class FileCachePrefix:
         old_upload_counter = self._filecache.upload_counter
 
         if isinstance(sub_path, (list, tuple)):
-            new_sub_paths = [f'{self._prefix}{p}' for p in sub_path]
+            new_sub_paths = [f'{self._prefix_}{p}' for p in sub_path]
             ret = self._filecache.upload(new_sub_paths,
                                          anonymous=self._anonymous)
         else:
-            ret = self._filecache.upload(f'{self._prefix}{sub_path}',
+            ret = self._filecache.upload(f'{self._prefix_}{sub_path}',
                                          anonymous=self._anonymous)
 
         self._upload_counter += (self._filecache.upload_counter -
@@ -1806,7 +1806,7 @@ class FileCachePrefix:
             sub_path (str): The path of the file relative to the prefix.
             mode (str): The mode string as you would specify to Python's `open()`
                 function.
-            lock_timeout(int, optional): How long to wait, in seconds, if another process
+            lock_timeout (int, optional): How long to wait, in seconds, if another process
                 is marked as retrieving the file before raising an exception. 0 means to
                 not wait at all. A negative value means to never time out. If None, use
                 the default value given when this :class:`FileCachePrefix` was created.
