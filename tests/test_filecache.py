@@ -1495,7 +1495,7 @@ def test_complex_upl_multi_1(prefix):
     with FileCache() as fc:
         local_paths = []
         for i, filename in enumerate(EXPECTED_FILENAMES):
-            full_path = f'{new_prefix}/test_file{i}.{filename.rsplit('.')[1]}'
+            full_path = f"{new_prefix}/test_file{i}.{filename.rsplit('.')[1]}"
             full_paths.append(full_path)
             local_path = fc.get_local_path(full_path)
             local_paths.append(local_path)
@@ -1522,7 +1522,7 @@ def test_complex_upl_multi_pfx_1(prefix):
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         local_paths = []
         for i, filename in enumerate(EXPECTED_FILENAMES):
-            sub_path = f'test_file{i}.{filename.rsplit('.')[1]}'
+            sub_path = f"test_file{i}.{filename.rsplit('.')[1]}"
             sub_paths.append(sub_path)
             local_path = pfx.get_local_path(sub_path)
             local_paths.append(local_path)
