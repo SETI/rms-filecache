@@ -1936,7 +1936,7 @@ class FileCachePrefix:
         return ret
 
     @contextlib.contextmanager
-    def open(self, sub_path, mode='r', *args, lock_timeout=None, **kwargs):
+    def open(self, sub_path, mode='r', *args, **kwargs):
         """Retrieve+open or open+upload a file as a context manager.
 
         If `mode` is a read mode (like ``'r'`` or ``'rb'``) then the file will be first
@@ -1948,10 +1948,6 @@ class FileCachePrefix:
             sub_path (str): The path of the file relative to the prefix.
             mode (str): The mode string as you would specify to Python's `open()`
                 function.
-            lock_timeout (int, optional): How long to wait, in seconds, if another process
-                is marked as retrieving the file before raising an exception. 0 means to
-                not wait at all. A negative value means to never time out. If None, use
-                the default value given when this :class:`FileCachePrefix` was created.
 
         Returns:
             file-like object: The same object as would be returned by the normal `open()`
@@ -1959,7 +1955,7 @@ class FileCachePrefix:
         """
 
         if mode[0] == 'r':
-            local_path = self.retrieve(sub_path, lock_timeout=lock_timeout)
+            local_path = self.retrieve(sub_path)
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
         else:  # 'w', 'x', 'a'
