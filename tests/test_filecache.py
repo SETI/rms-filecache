@@ -1535,7 +1535,7 @@ def test_complex_upl_multi_pfx_1(prefix):
         assert pfx.upload_counter == len(EXPECTED_FILENAMES)
     assert not fc.cache_dir.exists()
     with FileCache() as fc:
-        pfx = fc.new_prefix(new_prefix)
+        pfx = fc.new_prefix(new_prefix, anonymous=True)
         local_paths = pfx.retrieve(sub_paths)
         assert len(local_paths) == len(EXPECTED_FILENAMES)
         for local_path, filename in zip(local_paths, EXPECTED_FILENAMES):
@@ -1593,7 +1593,7 @@ def test_cloud_upl_multi_bad_1(prefix):
         # However all of the other files should have been uploaded
         assert not fc.exists(paths[0])
         for path in paths[1:]:
-            assert fc.exists(path)
+            assert fc.exists(path, anonymous=True)
         assert fc.download_counter == 0
         assert fc.upload_counter == len(paths) - 1
     assert not fc.cache_dir.exists()
@@ -1636,7 +1636,7 @@ def test_cloud_upl_multi_bad_2(prefix):
             assert r == lp
         assert not fc.exists(paths[0])
         for path in paths[1:]:
-            assert fc.exists(path)
+            assert fc.exists(path, anonymous=True)
         assert fc.download_counter == 0
         assert fc.upload_counter == len(paths) - 1
     assert not fc.cache_dir.exists()
@@ -1681,7 +1681,7 @@ def test_cloud_upl_multi_bad_3(prefix):
             assert not isinstance(r, FileNotFoundError)
         assert not fc.exists(paths[0])
         for path in paths[1:]:
-            assert fc.exists(path)
+            assert fc.exists(path, anonymous=True)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
     assert not fc.cache_dir.exists()
