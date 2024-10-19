@@ -1591,7 +1591,7 @@ def test_cloud_upl_multi_bad_1(prefix):
         with pytest.raises(FileNotFoundError):
             fc.upload(paths, anonymous=True)
         # However all of the other files should have been uploaded
-        assert not fc.exists(paths[0])
+        assert not fc.exists(paths[0], anonymous=True)
         for path in paths[1:]:
             assert fc.exists(path, anonymous=True)
         assert fc.download_counter == 0
@@ -1634,7 +1634,7 @@ def test_cloud_upl_multi_bad_2(prefix):
         for r, lp in zip(ret[1:], local_paths[1:]):
             assert isinstance(r, Path)
             assert r == lp
-        assert not fc.exists(paths[0])
+        assert not fc.exists(paths[0], anonymous=True)
         for path in paths[1:]:
             assert fc.exists(path, anonymous=True)
         assert fc.download_counter == 0
@@ -1679,7 +1679,7 @@ def test_cloud_upl_multi_bad_3(prefix):
         for r, lp in zip(ret[1:], local_paths[1:]):
             assert isinstance(r, Exception)
             assert not isinstance(r, FileNotFoundError)
-        assert not fc.exists(paths[0])
+        assert not fc.exists(paths[0], anonymous=True)
         for path in paths[1:]:
             assert fc.exists(path, anonymous=True)
         assert fc.download_counter == 0
