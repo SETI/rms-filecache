@@ -71,10 +71,10 @@ from filecache import FileCache
 with FileCache() as fc:  # Use as context manager
     # Also use open() as a context manager
     with fc.open('gs://rms-filecache-tests/subdir1/subdir2a/binary1.bin', 'rb',
-                    anonymous=True) as fp:
+                 anonymous=True) as fp:
         bin1 = fp.read()
     with fc.open('s3://rms-filecache-tests/subdir1/subdir2a/binary1.bin', 'rb',
-                    anonymous=True) as fp:
+                 anonymous=True) as fp:
         bin2 = fp.read()
     assert bin1 == bin2
 # Cache automatically deleted here
@@ -109,7 +109,7 @@ of these instances can simplify the use of a `FileCache` by allowing the user to
 only specify the relative part of the path to be operated on, and to not specify various
 other parameters at each method call site.
 
-Compare this examples to the one above:
+Compare this example to the one above:
 
 ```python
 from filecache import FileCache
@@ -144,9 +144,9 @@ bucket at
 running the program, an environment variable could be set to one of these values::
 
 ```sh
-$ export PDS3_HOLDINGS_DIR="~/pds3-holdings"
-$ export PDS3_HOLDINGS_DIR="https://pds-rings.seti.org/holdings"
-$ export PDS3_HOLDINGS_DIR="gs://rms-node-holdings/pds3-holdings"
+$ export PDS3_HOLDINGS_SRC="~/pds3-holdings"
+$ export PDS3_HOLDINGS_SRC="https://pds-rings.seti.org/holdings"
+$ export PDS3_HOLDINGS_SRC="gs://rms-node-holdings/pds3-holdings"
 ```
 
 Then the program could be written as:

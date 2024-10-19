@@ -30,10 +30,10 @@ Usage examples::
     with FileCache() as fc:  # Use as context manager
         # Also use open() as a context manager
         with fc.open('gs://rms-filecache-tests/subdir1/subdir2a/binary1.bin', 'rb',
-                        anonymous=True) as fp:
+                     anonymous=True) as fp:
             bin1 = fp.read()
         with fc.open('s3://rms-filecache-tests/subdir1/subdir2a/binary1.bin', 'rb',
-                        anonymous=True) as fp:
+                     anonymous=True) as fp:
             bin2 = fp.read()
         assert bin1 == bin2
     # Cache automatically deleted here
@@ -67,7 +67,7 @@ of these instances can simplify the use of a :class:`FileCache` by allowing the 
 only specify the relative part of the path to be operated on, and to not specify various
 other parameters at each method call site.
 
-Compare this examples to the one above::
+Compare this example to the one above::
 
     from filecache import FileCache
     with FileCache() as fc:  # Use as context manager
@@ -99,9 +99,9 @@ bucket at
 ``gs://rms-node-holdings/pds3-holdings/volumes/COISS_2xxx/COISS_2001/voldesc.cat``. Before
 running the program, an environment variable could be set to one of these values::
 
-    $ export PDS3_HOLDINGS_DIR="~/pds3-holdings"
-    $ export PDS3_HOLDINGS_DIR="https://pds-rings.seti.org/holdings"
-    $ export PDS3_HOLDINGS_DIR="gs://rms-node-holdings/pds3-holdings"
+    $ export PDS3_HOLDINGS_SRC="~/pds3-holdings"
+    $ export PDS3_HOLDINGS_SRC="https://pds-rings.seti.org/holdings"
+    $ export PDS3_HOLDINGS_SRC="gs://rms-node-holdings/pds3-holdings"
 
 Then the program could be written as::
 
@@ -138,11 +138,16 @@ locations without invoking any caching behavior: :class:`FileCacheSourceLocal`,
 """
 
 import atexit
+from concurrent import futures
+from concurrent.futures import ThreadPoolExecutor
 import contextlib
+import logging
 import os
 from pathlib import Path
 import requests
+import sys
 import tempfile
+import time
 import uuid
 
 import filelock
@@ -155,19 +160,41 @@ import google.api_core.exceptions
 
 try:
     from ._version import __version__
-except ImportError:  # pragma: no cover
+except ImportError:  # pragma: no cover - only present when building a package
     __version__ = 'Version unspecified'
 
 
+# Default logger for all FileCache instances that didn't specify one explicitly
 _GLOBAL_LOGGER = False
+
+
+# Global cache of all instantiated FileCacheSource since they may involve opening
+# a connection and are not specific to a particular FileCache
 _SOURCE_CACHE = {}
 
 
 def set_global_logger(logger):
-    """Set the global logger for all FileCache instances created in the future."""
+    """Set the global logger for all FileCache instances that don't specify one."""
     global _GLOBAL_LOGGER
     logger = logger if logger else False  # Turn None into False
     _GLOBAL_LOGGER = logger
+
+
+def set_easy_logger():
+    """Set a default logger that outputs all messages to stdout."""
+    easy_logger = logging.getLogger(__name__)
+    easy_logger.setLevel(logging.DEBUG)
+
+    while easy_logger.handlers:
+        easy_logger.removeHandler(easy_logger.handlers[0])
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    easy_logger.addHandler(handler)
+
+    set_global_logger(easy_logger)
 
 
 def get_global_logger():
@@ -179,9 +206,11 @@ class FileCache:
     """Class which manages the lifecycle of files from various sources."""
 
     _FILE_CACHE_PREFIX = '.file_cache_'
+    _LOCK_PREFIX = '.__lock__'
 
     def __init__(self, temp_dir=None, shared=False, cache_owner=False, mp_safe=None,
-                 atexit_cleanup=True, all_anonymous=False, lock_timeout=60, logger=None):
+                 atexit_cleanup=True, all_anonymous=False, lock_timeout=60, nthreads=8,
+                 logger=None):
         r"""Initialization for the FileCache class.
 
         When specifying the full path to a file, if the prefix starts with
@@ -234,7 +263,7 @@ class FileCache:
                 instance around for the entire duration of the program, potentially
                 wasting memory. To be more memory conscious, but also be solely
                 responsible for calling clean_up, set this parameter to False.
-            all_anonymous (bool, optional): If True, all access to cloud resources will
+            all_anonymous (bool, optional): If True, all accesses to cloud resources will
                 be anonymous, and it is not necessary to pass in the `anonymous` option
                 separately to each method.
             lock_timeout (int, optional): The default value for lock timeouts for all
@@ -242,9 +271,11 @@ class FileCache:
                 wait, in seconds, if another process is marked as retrieving the file
                 before raising an exception. 0 means to not wait at all. A negative value
                 means to never time out.
+            nthreads (int, optional): The maximum number of threads to use when doing
+                multiple-file retrieval or upload.
             logger (logger, optional): If False, do not do any logging. If None, use the
                 global logger set with :func:`set_global_logger`. Otherwise use the
-                specified logger. All messages are logged at the DEBUG level.
+                specified logger.
 
         Notes:
             :class:`FileCache` can be used as a context, such as::
@@ -285,29 +316,22 @@ class FileCache:
         else:
             raise TypeError(f'shared argument {shared} is of improper type')
 
-        if str(sub_dir.parent) != '.':  # pragma: no cover - shouldn't be possible
-            raise ValueError('shared argument has directory elements')
-
-        self._anonymous = all_anonymous
+        self._all_anonymous = all_anonymous
         self._lock_timeout = lock_timeout
-
-        self._logger = _GLOBAL_LOGGER if logger is None else logger
-
-        self._cache_dir = temp_dir / sub_dir
-        if self._logger:
-            if self._is_shared:
-                self._logger.debug(f'Creating shared cache {self._cache_dir}')
-            else:
-                self._logger.debug(f'Creating cache {self._cache_dir}')
-        self._cache_dir.mkdir(exist_ok=self._is_shared)
-
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+        self._nthreads = nthreads
+        self._logger = logger
         self._is_cache_owner = cache_owner
         self._is_mp_safe = mp_safe if mp_safe is not None else self._is_shared
-
-        self._filecacheprefixes = {}
-
         self._upload_counter = 0
         self._download_counter = 0
+        self._filecacheprefixes = {}
+
+        self._cache_dir = temp_dir / sub_dir
+        shared_str = 'shared ' if self._is_shared else ''
+        self._log_debug(f'Creating {shared_str}cache {self._cache_dir}')
+        self._cache_dir.mkdir(exist_ok=self._is_shared)
 
         if atexit_cleanup:
             atexit.register(self.clean_up)
@@ -316,6 +340,31 @@ class FileCache:
     def cache_dir(self):
         """The top-level directory of the cache as a Path object."""
         return self._cache_dir
+
+    @property
+    def download_counter(self):
+        """The number of actual file downloads that have taken place."""
+        return self._download_counter
+
+    @property
+    def upload_counter(self):
+        """The number of actual file uploads that have taken place."""
+        return self._upload_counter
+
+    @property
+    def all_anonymous(self):
+        """A bool indicating whether or not to make all cloud accesses anonymous."""
+        return self._all_anonymous
+
+    @property
+    def lock_timeout(self):
+        """The default timeout in seconds while waiting for a file lock."""
+        return self._lock_timeout
+
+    @property
+    def nthreads(self):
+        """The default number of threads to use for multiple-file operations."""
+        return self._nthreads
 
     @property
     def is_shared(self):
@@ -332,23 +381,26 @@ class FileCache:
         """A bool indicating whether or not this FileCache is multi-processor safe."""
         return self._is_mp_safe
 
-    @property
-    def download_counter(self):
-        """The number of actual file downloads that have taken place."""
-        return self._download_counter
+    def _log_debug(self, msg):
+        logger = _GLOBAL_LOGGER if self._logger is None else self._logger
+        if logger:
+            logger.debug(msg)
 
-    @property
-    def upload_counter(self):
-        """The number of actual file uploads that have taken place."""
-        return self._upload_counter
+    def _log_error(self, msg):
+        logger = _GLOBAL_LOGGER if self._logger is None else self._logger
+        if logger:
+            logger.error(msg)
 
     def _get_source_and_paths(self, full_path, anonymous):
-        if self._anonymous:  # Override if all_anonymous was specified
+        if self.all_anonymous:  # Override if all_anonymous was specified
             anonymous = True
 
         src_str = ''  # Local is the default
         full_path = str(full_path).replace('\\', '/')
         if full_path.startswith(('http://', 'https://', 'gs://', 's3://')):
+            # Break 'http://a.b.c.d/e/f' into:
+            #   source   ('http://a.b.c.d')
+            #   sub_path ('e/g')
             idx = full_path.index('//')
             try:
                 idx = full_path.index('/', idx+2)
@@ -377,21 +429,20 @@ class FileCache:
 
         source = _SOURCE_CACHE[key]
         if source._src_type == 'local':
-            local_path = Path(sub_path)
+            local_path = Path(sub_path).expanduser().resolve()
         else:
             local_path = self._cache_dir / source._cache_subdir / sub_path
 
         return source, sub_path, local_path
 
     def _lock_path(self, path):
-        path = Path(path)
-        return path.parent / f'.__lock__{path.name}'
+        return Path(path).parent / f'{self._LOCK_PREFIX}{path.name}'
 
     def exists(self, full_path, anonymous=False):
         """Check if a file exists without downloading it.
 
         Parameters:
-            full_path (str): The full path of the file (including any source prefixes).
+            full_path (str): The full path of the file (including any source prefix).
             anonymous (bool, optional): If True, access cloud resources (GS and S3)
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
@@ -412,16 +463,14 @@ class FileCache:
             # Already in the cache
             return True
 
-        if self._logger:
-            self._logger.debug(f'Checking file for existence: {full_path}')
+        self._log_debug(f'Checking file for existence: {full_path}')
 
         ret = source.exists(sub_path)
 
-        if self._logger:
-            if ret:
-                self._logger.debug('  File exists')
-            else:
-                self._logger.debug('  File does not exist')
+        if ret:
+            self._log_debug(f'  File exists: {full_path}')
+        else:
+            self._log_debug(f'  File does not exist: {full_path}')
 
         return ret
 
@@ -429,7 +478,7 @@ class FileCache:
         """Return the local path for the given full_path.
 
         Parameters:
-            full_path (str): The full path of the file (including any source prefixes).
+            full_path (str): The full path of the file (including any source prefix).
             anonymous (bool, optional): If True, access cloud resources (GS and S3)
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
@@ -446,110 +495,524 @@ class FileCache:
         source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if self._logger:
-            self._logger.debug(f'Returning local path for {full_path} as {local_path}')
+        self._log_debug(f'Returning local path for {full_path} as {local_path}')
 
         return local_path
 
-    def retrieve(self, full_path, anonymous=False, lock_timeout=None, **kwargs):
-        """Retrieve a file from the given location and store it in the file cache.
+    def retrieve(self, full_path, anonymous=False, lock_timeout=None, nthreads=None,
+                 exception_on_fail=True, **kwargs):
+        """Retrieve file(s) from the given location(s) and store in the file cache.
 
         Parameters:
-            full_path (str): The full path of the file, including any prefixes.
+            full_path (str or list or tuple): The full path of the file, including any
+                source prefix. If `full_path` is a list or tuple, all full paths are
+                retrieved. This may be more efficient because files can be downloaded in
+                parallel. It is OK to retrieve files from multiple sources using one call.
             anonymous (bool, optional): If True, access cloud resources (GS and S3)
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
                 :meth:`__init__` `all_anonymous` argument.
             lock_timeout (int, optional): How long to wait, in seconds, if another process
-                is marked as retrieving the file before raising an exception. 0 means
-                to not wait at all. A negative value means to never time out. None means
-                to use the default value for this :class:`FileCache` instance.
+                is marked as retrieving the file before raising an exception. 0 means to
+                not wait at all. A negative value means to never time out. None means to
+                use the default value for this :class:`FileCache` instance.
+            nthreads (int, optional): The maximum number of threads to use when doing
+                multiple-file retrieval or upload. If None, use the default value for this
+                :class:`FileCache` instance.
+            exception_on_fail (bool, optional): If True, if any file does not exist or
+                download fails a FileNotFound exception is raised, and if any attempt to
+                acquire a lock or wait for another process to download a file fails a
+                TimeoutError is raised. If False, the function returns normally and any
+                failed download is marked with the Exception that caused the failure in
+                place of the returned Path.
 
         Returns:
-            Path: The Path of the filename in the temporary directory.
+            Path or Exception or list[Path or Exception]: The Path of the filename in the
+            temporary directory (or the original full path if local). If `full_path` was a
+            list or tuple of paths, then instead return a list of Paths of the filenames
+            in the temporary directory (or the original full path if local). If
+            `exception_on_fail` is False, any Path may be an Exception if that file does
+            not exist or the download failed or a timeout occurred.
 
         Raises:
-            FileNotFoundError: If the file does not exist or could not be downloaded.
-            TimeoutError: If we could not acquire the lock to allow downloading of the
-                file within the given timeout.
+            FileNotFoundError: If a file does not exist or could not be downloaded, and
+                exception_on_fail is True.
+            TimeoutError: If we could not acquire the lock to allow downloading of a file
+                within the given timeout or, for a multi-file download, if we timed out
+                waiting for other processes to download locked files, and
+                exception_on_fail is True.
+
+        Notes:
+            File download is normally an atomic operation; a program will never see a
+            partially-downloaded file, and if a download is interrupted there will be no
+            file present. However, when downloading multiple files at the same time, as
+            many files as possible are downloaded before an exception is raised.
         """
+
+        if lock_timeout is None:
+            lock_timeout = self.lock_timeout
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
+        # Technically we could just do everything as a locked multi-download, but we
+        # separate out the cases for efficiency
+        if isinstance(full_path, (list, tuple)):
+            if nthreads is None:
+                nthreads = self.nthreads
+            sources = []
+            sub_paths = []
+            local_paths = []
+            for path in full_path:
+                source, sub_path, local_path = self._get_source_and_paths(path, anonymous)
+                sources.append(source)
+                sub_paths.append(sub_path)
+                local_paths.append(local_path)
+            if self.is_mp_safe:
+                return self._retrieve_multi_locked(sources, sub_paths, local_paths,
+                                                   lock_timeout, nthreads,
+                                                   exception_on_fail)
+            return self._retrieve_multi_unlocked(sources, sub_paths, local_paths,
+                                                 nthreads, exception_on_fail)
 
         source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
 
         if source._src_type == 'local':
-            if self._logger:
-                self._logger.debug(f'Accessing local file {sub_path}')
-            return source.retrieve(sub_path, local_path)
+            self._log_debug(f'Accessing local file {sub_path}')
+            try:
+                return source.retrieve(sub_path, local_path)
+            except Exception as e:
+                if exception_on_fail:
+                    raise
+                return e
 
         # If the file actually exists, it's always safe to return it
         if local_path.is_file():
-            if self._logger:
-                self._logger.debug(
-                    'Accessing cached file for {full_path} at {local_path}')
+            self._log_debug(f'Accessing cached file for {full_path} at {local_path}')
             return local_path
 
         if self.is_mp_safe:
-            lock_path = self._lock_path(local_path)
-            if lock_timeout is None:
-                lock_timeout = self._lock_timeout
-            lock = filelock.FileLock(lock_path, timeout=lock_timeout)
-            try:
-                lock.acquire()
-            except filelock._error.Timeout:
-                raise TimeoutError(f'Could not acquire lock on {lock_path}')
-            if self._logger:
-                self._logger.debug(
-                    f'Downloading {source._src_prefix_}{sub_path} into {local_path} '
-                    'with locking')
-            try:
-                ret = source.retrieve(sub_path, local_path)
-            finally:
-                # Technically there is a potential race condition here, because after
-                # we release the lock, someone else could lock this file, and then we
-                # could delete it (because on Linux locks are only advisory). Then the
-                # next process to come along to try to lock this file would also succeed
-                # because it would really be a different lock file! However, we have
-                # to do it in this order because otherwise it won't work on Windows,
-                # where locks are not just advisory. The worst that could happen is we
-                # end up downloading the file twice.
-                lock.release()
-                lock_path.unlink(missing_ok=True)
+            return self._retrieve_locked(source, sub_path, local_path, lock_timeout,
+                                         exception_on_fail)
+        return self._retrieve_unlocked(source, sub_path, local_path, exception_on_fail)
 
-        else:
-            if self._logger:
-                self._logger.debug(
-                    f'Downloading {source._src_prefix_}{sub_path} into {local_path}')
+    def _retrieve_unlocked(self, source, sub_path, local_path, exception_on_fail):
+        """Retrieve a single file from the storage location without lock protection."""
+
+        self._log_debug(f'Downloading {source._src_prefix_}{sub_path} into {local_path}')
+        try:
             ret = source.retrieve(sub_path, local_path)
+        except Exception as e:
+            if exception_on_fail:
+                raise
+            return e
 
         self._download_counter += 1
 
         return ret
 
-    def upload(self, full_path, anonymous=False):
-        """Upload a file from the file cache to the storage location.
+    def _retrieve_locked(self, source, sub_path, local_path, lock_timeout,
+                         exception_on_fail):
+        """Retrieve a single file from the storage location with lock protection."""
+
+        lock_path = self._lock_path(local_path)
+        lock = filelock.FileLock(lock_path, timeout=lock_timeout)
+        try:
+            lock.acquire()
+        except filelock._error.Timeout as e:
+            if exception_on_fail:
+                raise
+            return e
+        self._log_debug(
+            f'Downloading {source._src_prefix_}{sub_path} into {local_path} with locking')
+        try:
+            ret = source.retrieve(sub_path, local_path)
+        except Exception as e:
+            if exception_on_fail:
+                raise
+            return e
+        finally:
+            # There is a potential race condition here in the case of a raised
+            # exception, because after we release the lock but before we delete
+            # it, someone else could notice the file isn't downloaded and lock
+            # it for another download attempt, and then we would delete someone
+            # else's lock (because on Linux locks are only advisory). However,
+            # we have to do it in this order because otherwise it won't work on
+            # Windows, where locks are not just advisory. However, the worst
+            # that could happen is we end up attempting to download the file
+            # twice.
+            lock.release()
+            lock_path.unlink(missing_ok=True)
+
+        self._download_counter += 1
+
+        return ret
+
+    def _retrieve_multi_unlocked(self, sources, sub_paths, local_paths, nthreads,
+                                 exception_on_fail):
+        """Retrieve multiple files from storage locations without lock protection."""
+
+        # Return Paths (or Exceptions) in the same order as sub_paths
+        func_ret = [None] * len(sources)
+
+        files_not_exist = []
+
+        source_dict = {}
+
+        # First find all the files that are either local or that we have already cached.
+        # For other files, create a list of just the files we need to retrieve and
+        # organize them by source; we use the source prefix to distinguish among them.
+        self._log_debug('Performing multi-file retrieval of:')
+        for idx, (source, sub_path, local_path) in enumerate(zip(sources,
+                                                                 sub_paths, local_paths)):
+            pfx = source._src_prefix_
+            if source._src_type == 'local':
+                self._log_debug(f'    Local file   {pfx}{sub_path}')
+                try:
+                    func_ret[idx] = source.retrieve(sub_path, local_path)
+                except Exception as e:
+                    files_not_exist.append(sub_path)
+                    func_ret[idx] = e
+                continue
+            if local_path.is_file():
+                self._log_debug(f'    Cached file  {pfx}{sub_path} at {local_path}')
+                func_ret[idx] = local_path
+                continue
+            assert '://' in pfx
+            if pfx not in source_dict:
+                source_dict[pfx] = []
+            source_dict[pfx].append((idx, source, sub_path, local_path))
+            self._log_debug(f'    To download {pfx}{sub_path}')
+
+        # Now go through the sources, package up the paths to retrieve, and retrieve
+        # them all at once
+        for source_pfx in source_dict:
+            source = source_dict[source_pfx][0][1]  # All the same
+            source_idxes, _, source_sub_paths, source_local_paths = list(
+                zip(*source_dict[source_pfx]))
+            self._log_debug(
+                f'  Performing multi-file download for prefix {source_pfx}:')
+            for sub_path in source_sub_paths:
+                self._log_debug(f'    {sub_path}')
+            rets = source.retrieve_multi(source_sub_paths, source_local_paths,
+                                         nthreads=nthreads)
+            assert len(source_idxes) == len(rets)
+            for ret, sub_path in zip(rets, source_sub_paths):
+                if isinstance(ret, Exception):
+                    self._log_debug(f'    Download failed: {sub_path} {ret}')
+                    files_not_exist.append(f'{source_pfx}{sub_path}')
+                else:
+                    self._download_counter += 1
+
+            for source_ret, source_idx in zip(rets, source_idxes):
+                func_ret[source_idx] = source_ret
+
+        if files_not_exist:
+            self._log_debug('Multi-file retrieval completed with errors')
+            if exception_on_fail:
+                exc_str = f"File(s) do not exist: {', '.join(files_not_exist)}"
+                raise FileNotFoundError(exc_str)
+        else:
+            self._log_debug('Multi-file retrieval complete')
+
+        return func_ret
+
+    def _retrieve_multi_locked(self, sources, sub_paths, local_paths, lock_timeout,
+                               nthreads, exception_on_fail):
+        """Retrieve multiple files from storage locations with lock protection."""
+
+        start_time = time.time()
+
+        # Return Paths (or Exceptions) in the same order as sub_paths
+        func_ret = [None] * len(sources)
+
+        files_not_exist = []
+
+        wait_to_appear = []  # Locked by another process (they are downloading it)
+
+        source_dict = {}
+
+        # First find all the files that are either local or that we have already cached.
+        # For other files, create a list of just the files we need to retrieve and
+        # organize them by source; we use the source prefix to distinguish among them.
+        self._log_debug('Performing locked multi-file retrieval of:')
+        for idx, (source, sub_path, local_path) in enumerate(zip(sources,
+                                                                 sub_paths, local_paths)):
+            pfx = source._src_prefix_
+            # No need to lock for local files
+            if source._src_type == 'local':
+                self._log_debug(f'    Local file   {pfx}{sub_path}')
+                try:
+                    func_ret[idx] = source.retrieve(sub_path, local_path)
+                except Exception as e:
+                    files_not_exist.append(sub_path)
+                    func_ret[idx] = e
+                continue
+            # Since all download operations for individual files are atomic, no need to
+            # lock if the file actually exists
+            if local_path.is_file():
+                self._log_debug(f'    Cached file  {pfx}{sub_path} at {local_path}')
+                func_ret[idx] = local_path
+                continue
+            assert '://' in pfx
+            if pfx not in source_dict:
+                source_dict[pfx] = []
+            source_dict[pfx].append((idx, source, sub_path, local_path))
+            self._log_debug(f'    To download {pfx}{sub_path}')
+
+        # Now go through the sources, package up the paths to retrieve, and retrieve
+        # them all at once
+        for source_pfx in source_dict:
+            source = source_dict[source_pfx][0][1]  # All the same
+            orig_source_idxes, _, orig_source_sub_paths, orig_source_local_paths = list(
+                zip(*source_dict[source_pfx]))
+            self._log_debug(
+                f'  Performing locked multi-file download for prefix {source_pfx}:')
+            for sub_path in orig_source_sub_paths:
+                self._log_debug(f'      {sub_path}')
+
+            # We first loop through the local paths and try to acquire locks on all
+            # the files. If we fail to get a lock on a file, it must be downloading
+            # somewhere else, so we just remove it from the list of files to download
+            # right now and then wait for it to appear later.
+            lock_list = []
+            source_idxes = []
+            source_sub_paths = []
+            source_local_paths = []
+            for idx, sub_path, local_path in zip(orig_source_idxes,
+                                                 orig_source_sub_paths,
+                                                 orig_source_local_paths):
+                lock_path = self._lock_path(local_path)
+                # We don't actually want to wait for a lock to clear, we just want
+                # to know if someone else is downloading the file right now
+                lock = filelock.FileLock(lock_path, timeout=0)
+                try:
+                    lock.acquire()
+                except filelock._error.Timeout:
+                    self._log_debug(f'    Failed to lock: {sub_path}')
+                    wait_to_appear.append((idx, f'{source_pfx}{sub_path}', local_path,
+                                           lock_path))
+                    continue
+                lock_list.append((lock_path, lock))
+                source_idxes.append(idx)
+                source_sub_paths.append(sub_path)
+                source_local_paths.append(local_path)
+
+            # Now we can actually download the files that we locked
+            rets = source.retrieve_multi(source_sub_paths, source_local_paths,
+                                         nthreads=nthreads)
+            assert len(source_sub_paths) == len(rets)
+            for ret, sub_path in zip(rets, source_sub_paths):
+                if isinstance(ret, Exception):
+                    self._log_debug(f'    Download failed: {sub_path} {ret}')
+                    files_not_exist.append(f'{source_pfx}{sub_path}')
+                else:
+                    self._log_debug(f'    Successfully downloaded: {sub_path}')
+                    self._download_counter += 1
+
+            # Release all the locks
+            for lock_path, lock in lock_list:
+                # There is a potential race condition here in the case of a raised
+                # exception, because after we release the lock but before we delete
+                # it, someone else could notice the file isn't downloaded and lock
+                # it for another download attempt, and then we would delete someone
+                # else's lock (because on Linux locks are only advisory). However,
+                # we have to do it in this order because otherwise it won't work on
+                # Windows, where locks are not just advisory. However, the worst
+                # that could happen is we end up attempting to download the file
+                # twice.
+                lock.release()
+                lock_path.unlink(missing_ok=True)
+
+            # Record the results
+            for source_ret, source_idx in zip(rets, source_idxes):
+                func_ret[source_idx] = source_ret
+
+        # If wait_to_appear is not empty, then we failed to acquire at least one lock,
+        # which means that another process was downloading the file. So now we just
+        # sit here and wait for all of the missing files to magically show up, or for
+        # us to time out. If the lock file disappears but the destination file isn't
+        # present, that means the other process failed in its download.
+        timed_out = False
+        while wait_to_appear:
+            new_wait_to_appear = []
+            for idx, full_path, local_path, lock_path in wait_to_appear:
+                if local_path.is_file():
+                    func_ret[idx] = local_path
+                    self._log_debug(f'  Downloaded elsewhere: {full_path}')
+                    continue
+                if not lock_path.is_file():
+                    func_ret[idx] = FileNotFoundError(
+                        f'Another process failed to download {full_path}')
+                    self._log_debug(f'  Download elsewhere failed: {full_path}')
+                    continue
+                new_wait_to_appear.append((idx, full_path, local_path, lock_path))
+
+            if not new_wait_to_appear:
+                break
+
+            wait_to_appear = new_wait_to_appear
+            if time.time() - start_time > lock_timeout:
+                exc = TimeoutError(
+                    'Timeout while waiting for another process to finish downloading')
+                self._log_debug(
+                    '  Timeout while waiting for another process to finish downloading:')
+                for idx, full_path, local_path, lock_path in wait_to_appear:
+                    func_ret[idx] = exc
+                    self._log_debug(f'    {full_path}')
+                if exception_on_fail:
+                    raise exc
+                timed_out = True
+                break
+            time.sleep(1)  # Wait 1 second before trying again
+
+        if files_not_exist or timed_out:
+            self._log_debug('Multi-file retrieval completed with errors')
+            if exception_on_fail and files_not_exist:
+                exc_str = f"File(s) do not exist: {', '.join(files_not_exist)}"
+                raise FileNotFoundError(exc_str)
+        else:
+            self._log_debug('Multi-file retrieval complete')
+
+        return func_ret
+
+    def upload(self, full_path, anonymous=False, nthreads=None, exception_on_fail=True):
+        """Upload file(s) from the file cache to the storage location(s).
 
         Parameters:
-            full_path (str): The full path of the file, including any prefixes.
+            full_path (str or list or tuple): The full path of the file, including any
+                source prefix. If `full_path` is a list or tuple, the complete list of
+                files is uploaded. This may be more efficient because files can be
+                uploaded in parallel.
             anonymous (bool, optional): If True, access cloud resources (GS and S3)
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
                 :meth:`__init__` `all_anonymous` argument.
+            nthreads (int, optional): The maximum number of threads to use when doing
+                multiple-file retrieval or upload. If None, use the default value for this
+                :class:`FileCache` instance.
+            exception_on_fail (bool, optional): If True, if any file does not exist or
+                upload fails an exception is raised. If False, the function returns
+                normally and any failed upload is marked with the Exception that caused
+                the failure in place of the returned path.
+
+        Returns:
+            Path or Exception or list[Path or Exception]: The Path of the filename in the
+            temporary directory (or the original full path if local). If `full_path` was a
+            list or tuple of paths, then instead return a list of Paths of the filenames
+            in the temporary directory (or the original full path if local). If
+            `exception_on_fail` is False, any Path may be an Exception if that file does
+            not exist or the upload failed.
 
         Raises:
-            FileNotFoundError: If the file to upload does not exist.
+            FileNotFoundError: If a file to upload does not exist or the upload failed,
+            and exception_on_fail is True.
         """
+
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
+        if isinstance(full_path, (list, tuple)):
+            if nthreads is None:
+                nthreads = self.nthreads
+            sources = []
+            sub_paths = []
+            local_paths = []
+            for path in full_path:
+                source, sub_path, local_path = self._get_source_and_paths(path, anonymous)
+                sources.append(source)
+                sub_paths.append(sub_path)
+                local_paths.append(local_path)
+            return self._upload_multi(sources, sub_paths, local_paths, nthreads,
+                                      exception_on_fail)
 
         source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
 
-        if self._logger:
-            self._logger.debug(
-                f'Uploading {local_path} to {source._src_prefix_}{sub_path}')
-        if not Path(local_path).is_file():
-            raise FileNotFoundError(f'File does not exist: {local_path}')
+        self._log_debug(f'Uploading {local_path} to {source._src_prefix_}{sub_path}')
 
-        source.upload(sub_path, local_path)
+        try:
+            ret = source.upload(sub_path, local_path)
+        except Exception as e:
+            if exception_on_fail:
+                raise e
+            else:
+                return e
 
         self._upload_counter += 1
+
+        return ret
+
+    def _upload_multi(self, sources, sub_paths, local_paths, nthreads, exception_on_fail):
+        """Upload multiple files to storage locations."""
+
+        func_ret = [None] * len(sources)
+
+        files_not_exist = []
+        files_failed = []
+
+        source_dict = {}
+
+        # First find all the files that are either local or that we have already cached.
+        # For other files, create a list of just the files we need to retrieve and
+        # organize them by source; we use the source prefix to distinguish among them.
+        self._log_debug('Performing multi-file upload of:')
+        for idx, (source, sub_path, local_path) in enumerate(zip(sources,
+                                                                 sub_paths, local_paths)):
+            pfx = source._src_prefix_
+            if source._src_type == 'local':
+                try:
+                    func_ret[idx] = source.upload(sub_path, local_path)
+                    self._log_debug(f'  Local file     {pfx}{sub_path}')
+                except FileNotFoundError as e:
+                    self._log_debug(f'  LOCAL FILE DOES NOT EXIST {pfx}{sub_path}')
+                    files_not_exist.append(sub_path)
+                    func_ret[idx] = e
+                continue
+            if not Path(local_path).is_file():
+                self._log_debug(f'  LOCAL FILE DOES NOT EXIST {pfx}{sub_path}')
+                files_not_exist.append(sub_path)
+                func_ret[idx] = FileNotFoundError(
+                    f'File does not exist: {pfx}{sub_path}')
+                continue
+            assert '://' in pfx
+            if pfx not in source_dict:
+                source_dict[pfx] = []
+            source_dict[pfx].append((idx, source, sub_path, local_path))
+
+        # Now go through the sources, package up the paths to upload, and upload
+        # them all at once
+        for source_pfx in source_dict:
+            source = source_dict[source_pfx][0][1]  # All the same
+            source_idxes, _, source_sub_paths, source_local_paths = list(
+                zip(*source_dict[source_pfx]))
+            self._log_debug(
+                f'Performing multi-file upload for prefix {source_pfx}:')
+            for sub_path in source_sub_paths:
+                self._log_debug(f'  {sub_path}')
+            rets = source.upload_multi(source_sub_paths, source_local_paths,
+                                       nthreads=nthreads)
+            assert len(source_idxes) == len(rets)
+            for ret, local_path in zip(rets, source_local_paths):
+                if isinstance(ret, Exception):
+                    self._log_debug(f'    Upload failed: {sub_path} {ret}')
+                    files_failed.append(local_path)
+                else:
+                    self._upload_counter += 1
+
+            for source_ret, source_idx in zip(rets, source_idxes):
+                func_ret[source_idx] = source_ret
+
+        if exception_on_fail:
+            exc_str = ''
+            if files_not_exist:
+                exc_str += f"File(s) do not exist: {', '.join(files_not_exist)}"
+            if files_failed:
+                if exc_str:
+                    exc_str += ' AND '
+                exc_str += f"Failed to upload file(s): {', '.join(files_failed)}"
+            if exc_str:
+                raise FileNotFoundError(exc_str)
+
+        return func_ret
 
     @contextlib.contextmanager
     def open(self, full_path, mode='r', *args,
@@ -562,17 +1025,16 @@ class FileCache:
         when this context manager is exited the file will be uploaded.
 
         Parameters:
-            filename (str or Path): The filename to open.
-            mode (str): The mode string as you would specify to Python's `open()`
-                function.
+            filename (str or Path): The filename to open. mode (str): The mode string as
+                you would specify to Python's `open()` function.
             anonymous (bool, optional): If True, access cloud resources (GS and S3)
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
                 :meth:`__init__` `all_anonymous` argument.
             lock_timeout (int, optional): How long to wait, in seconds, if another process
-                is marked as retrieving the file before raising an exception. 0 means
-                to not wait at all. A negative value means to never time out. None means
-                to use the default value for this :class:`FileCache` instance.
+                is marked as retrieving the file before raising an exception. 0 means to
+                not wait at all. A negative value means to never time out. If None, use
+                the default value for this :class:`FileCache` instance.
 
         Returns:
             file-like object: The same object as would be returned by the normal `open()`
@@ -590,33 +1052,45 @@ class FileCache:
                 yield fp
             self.upload(full_path, anonymous=anonymous)
 
-    def new_prefix(self, prefix, anonymous=False, lock_timeout=None, **kwargs):
+    def new_prefix(self, prefix, anonymous=False, lock_timeout=None, nthreads=None,
+                   **kwargs):
         """Create a new FileCachePrefix with the given prefix.
 
         Parameters:
             prefix (Path or str): The prefix for the storage location, which may include
-                the source prefix was well as any top-level directories. All accesses
-                made through this :class:`FileCachePrefix` instance will have this prefix
+                the source prefix was well as any top-level directories. All accesses made
+                through this :class:`FileCachePrefix` instance will have this prefix
                 prepended to their file path.
             anonymous (bool, optional): If True, access cloud resources (GS and S3)
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
                 :meth:`__init__` `all_anonymous` argument.
             lock_timeout (int, optional): How long to wait, in seconds, if another process
-                is marked as retrieving the file before raising an exception. 0 means
-                to not wait at all. A negative value means to never time out. None means
-                to use the default value for this :class:`FileCache` instance.
+                is marked as retrieving the file before raising an exception. 0 means to
+                not wait at all. A negative value means to never time out. None means to
+                use the default value for this :class:`FileCache` instance.
+            nthreads (int, optional): The maximum number of threads to use when doing
+                multiple-file retrieval or upload. If None, use the default value for this
+                :class:`FileCache` instance.
         """
 
         if isinstance(prefix, Path):
             prefix = str(prefix)
+        if not isinstance(prefix, str):
+            raise TypeError('prefix is not a str or Path')
+        if not prefix.startswith(('http://', 'https://', 'gs://', 's3://')):
+            prefix = prefix.replace('\\', '/').rstrip('/')
         if lock_timeout is None:
-            lock_timeout = self._lock_timeout
+            lock_timeout = self.lock_timeout
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+        if nthreads is None:
+            nthreads = self.nthreads
         key = (prefix, anonymous, lock_timeout)
         if key not in self._filecacheprefixes:
             self._filecacheprefixes[key] = FileCachePrefix(
                 prefix, self, anonymous=anonymous, lock_timeout=lock_timeout,
-                **kwargs)
+                nthreads=nthreads, **kwargs)
         return self._filecacheprefixes[key]
 
     def clean_up(self, final=False):
@@ -628,10 +1102,14 @@ class FileCache:
                 this :class:`FileCache` is marked as the `cache_owner` of the cache, or if
                 True, a shared cache is deleted. Beware that this could affect other
                 processes using the same cache!
+
+        Notes:
+            It is permissible to call :meth:`clean_up` more than once. It is also
+            permissible to call :meth:`clean_up`, then perform more operations that place
+            files in the cache, then call :meth:`clean_up` again.
         """
 
-        if self._logger:
-            self._logger.debug(f'Cleaning up cache {self._cache_dir}')
+        self._log_debug(f'Cleaning up cache {self._cache_dir}')
 
         # Verify this is really a cache directory before walking it and deleting
         # every file. We are just being paranoid to make sure this never does a
@@ -650,25 +1128,26 @@ class FileCache:
             # then never written anything there.
             for root, dirs, files in os.walk(self._cache_dir, topdown=False):
                 for name in files:
-                    if self._logger:
-                        self._logger.debug(f'  Removing {name}')
+                    if name.startswith(self._LOCK_PREFIX):
+                        self._log_error(
+                            'Cleaning up cache that has an active lock file:'
+                            f'{root}/{name}')
+                    self._log_debug(f'  Removing file {root}/{name}')
                     try:
                         os.remove(os.path.join(root, name))
-                    except FileNotFoundError:  # pragma: no cover
+                    except FileNotFoundError:  # pragma: no cover - race condition only
                         pass
                 for name in dirs:
-                    if self._logger:
-                        self._logger.debug(f'  Removing {name}')
+                    self._log_debug(f'  Removing dir {root}/{name}')
                     try:
                         os.rmdir(os.path.join(root, name))
-                    except FileNotFoundError:  # pragma: no cover
+                    except FileNotFoundError:  # pragma: no cover - race condition only
                         pass
 
-            if self._logger:
-                self._logger.debug(f'  Removing {self._cache_dir}')
+            self._log_debug(f'  Removing dir {self._cache_dir}')
             try:
                 os.rmdir(self._cache_dir)
-            except FileNotFoundError:  # pragma: no cover
+            except FileNotFoundError:  # pragma: no cover - race condition only
                 pass
 
     def __enter__(self):
@@ -678,6 +1157,8 @@ class FileCache:
     def __exit__(self, exc_type, exc_value, traceback):
         """Exit the context manage for a FileCache, executing any clean up needed."""
         self.clean_up()
+        # Since the cache is cleaned up, no need to clean up later
+        atexit.unregister(self.clean_up)
 
 
 ################################################################################
@@ -712,14 +1193,114 @@ class FileCacheSource:
         # The _cache_subdir attribute is only used by the FileCache class
         self._cache_subdir = None
 
-    def exists(self):
-        raise NotImplementedError  # pragma: no cover
+    def exists(self, sub_path):
+        raise NotImplementedError
 
     def retrieve(self, sub_path, local_path):
-        raise NotImplementedError  # pragma: no cover
+        raise NotImplementedError
+
+    def retrieve_multi(self, sub_paths, local_paths, nthreads=8):
+        """Retrieve multiple files from the storage location using threads.
+
+        Parameters:
+            sub_paths (list or tuple): The path of the files to retrieve relative to the
+                source prefix.
+            local_paths (list or tuple): The paths to the destinations where the
+                downloaded files will be stored.
+            nthreads (int, optional): The maximum number of threads to use.
+
+        Returns:
+            list[Path or Exception]: A list containing the local paths of the retrieved
+            files. If a file failed to download, the entry is the Exception that caused
+            the failure. This list is in the same order and has the same length as
+            `local_paths`.
+
+        Notes:
+            All parent directories in all `local_paths` are created even if a file
+            download fails.
+
+            The download of each file is an atomic operation. However, even if some files
+            have download failures, all other files will be downloaded.
+        """
+
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
+        results = {}
+        for sub_path, result in self._download_object_parallel(sub_paths, local_paths,
+                                                               nthreads):
+            results[sub_path] = result
+
+        ret = []
+        for sub_path in sub_paths:
+            ret.append(results[sub_path])
+
+        return ret
+
+    def _download_object(self, sub_path, local_path):
+        self.retrieve(sub_path, local_path)
+        return local_path
+
+    def _download_object_parallel(self, sub_paths, local_paths, nthreads):
+        with ThreadPoolExecutor(max_workers=nthreads) as executor:
+            future_to_paths = {executor.submit(self._download_object, x[0], x[1]): x[0]
+                               for x in zip(sub_paths, local_paths)}
+            for future in futures.as_completed(future_to_paths):
+                sub_path = future_to_paths[future]
+                exception = future.exception()
+                if not exception:
+                    yield sub_path, future.result()
+                else:
+                    yield sub_path, exception
 
     def upload(self, sub_path, local_path):
-        raise NotImplementedError  # pragma: no cover
+        raise NotImplementedError
+
+    def upload_multi(self, sub_paths, local_paths, nthreads=8):
+        """Upload multiple files to a storage location.
+
+        Parameters:
+            sub_paths (list or tuple): The path of the destination files relative to the
+                source prefix.
+            local_paths (list or tuple): The paths of the files to upload.
+            nthreads (int, optional): The maximum number of threads to use.
+
+        Returns:
+            list[Path or Exception]: A list containing the local paths of the uploaded
+            files. If a file failed to upload, the entry is the Exception that caused the
+            failure. This list is in the same order and has the same length as
+            `local_paths`.
+        """
+
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
+        results = {}
+        for sub_path, result in self._upload_object_parallel(sub_paths, local_paths,
+                                                             nthreads):
+            results[sub_path] = result
+
+        ret = []
+        for sub_path in sub_paths:
+            ret.append(results[sub_path])
+
+        return ret
+
+    def _upload_object(self, sub_path, local_path):
+        self.upload(sub_path, local_path)
+        return local_path
+
+    def _upload_object_parallel(self, sub_paths, local_paths, nthreads):
+        with ThreadPoolExecutor(max_workers=nthreads) as executor:
+            future_to_paths = {executor.submit(self._upload_object, x[0], x[1]): x[0]
+                               for x in zip(sub_paths, local_paths)}
+            for future in futures.as_completed(future_to_paths):
+                sub_path = future_to_paths[future]
+                exception = future.exception()
+                if not exception:
+                    yield sub_path, future.result()
+                else:
+                    yield sub_path, exception
 
 
 class FileCacheSourceLocal(FileCacheSource):
@@ -760,7 +1341,7 @@ class FileCacheSourceLocal(FileCacheSource):
         return Path(sub_path).is_file()
 
     def retrieve(self, sub_path, local_path):
-        """Retrieve a file from the storage location and store it in the file cache.
+        """Retrieve a file from the storage location.
 
         Parameters:
             sub_path (str or Path): The full path of the local file to retrieve.
@@ -792,7 +1373,7 @@ class FileCacheSourceLocal(FileCacheSource):
 
         # We don't actually do anything for local paths since the file is already in the
         # correct location.
-        return sub_path
+        return local_path
 
     def upload(self, sub_path, local_path):
         """Upload a file from the local filesystem to the storage location.
@@ -800,6 +1381,10 @@ class FileCacheSourceLocal(FileCacheSource):
         Parameters:
             sub_path (str or Path): The full path of the destination.
             local_path (str or Path): The full path of the local file to upload.
+
+        Returns:
+            Path: The Path of the filename, which is the same as the `local_path`
+            parameter.
 
         Raises:
             ValueError: If `sub_path` and `local_path` are not identical.
@@ -818,7 +1403,7 @@ class FileCacheSourceLocal(FileCacheSource):
 
         # We don't actually do anything for local paths since the file is already in the
         # correct location.
-        return
+        return local_path
 
 
 class FileCacheSourceHTTP(FileCacheSource):
@@ -901,7 +1486,7 @@ class FileCacheSourceHTTP(FileCacheSource):
             response = requests.get(url, stream=True)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            raise FileNotFoundError(f'Failed to download file from: {url}') from e
+            raise FileNotFoundError(f'Failed to download file: {url}') from e
 
         temp_local_path = local_path.with_suffix(f'{local_path.suffix}.{uuid.uuid4()}')
         try:
@@ -909,7 +1494,7 @@ class FileCacheSourceHTTP(FileCacheSource):
                 for chunk in response.iter_content(chunk_size=1024*1024):
                     f.write(chunk)
             temp_local_path.rename(local_path)
-        except Exception:  # pragma: no cover
+        except Exception:
             temp_local_path.unlink(missing_ok=True)
             raise
 
@@ -918,7 +1503,7 @@ class FileCacheSourceHTTP(FileCacheSource):
     def upload(self, sub_path, local_path):
         """Upload a local file to a webserver. Not implemented."""
 
-        raise NotImplementedError  # pragma: no cover
+        raise NotImplementedError
 
 
 class FileCacheSourceGS(FileCacheSource):
@@ -964,7 +1549,10 @@ class FileCacheSourceGS(FileCacheSource):
         """
 
         blob = self._bucket.blob(sub_path)
-        return blob.exists()
+        try:
+            return blob.exists()
+        except Exception:
+            return False
 
     def retrieve(self, sub_path, local_path):
         """Retrieve a file from a Google Storage bucket.
@@ -1006,7 +1594,7 @@ class FileCacheSourceGS(FileCacheSource):
             # that it can't be downloaded, so we have to remove it here
             temp_local_path.unlink(missing_ok=True)
             raise FileNotFoundError(
-                f'Failed to download file from: {self._src_prefix_}{sub_path}')
+                f'Failed to download file: {self._src_prefix_}{sub_path}')
         except Exception:  # pragma: no cover
             temp_local_path.unlink(missing_ok=True)
             raise
@@ -1021,14 +1609,23 @@ class FileCacheSourceGS(FileCacheSource):
                 given by the source prefix.
             local_path (str or Path): The full path of the local file to upload.
 
+        Returns:
+            Path: The Path of the filename, which is the same as the `local_path`
+            parameter.
+
         Raises:
             FileNotFoundError: If the local file does not exist.
         """
 
         local_path = Path(local_path).expanduser().resolve()
 
+        if not local_path.exists():
+            raise FileNotFoundError(f'File does not exist: {local_path}')
+
         blob = self._bucket.blob(sub_path)
         blob.upload_from_filename(str(local_path))
+
+        return local_path
 
 
 class FileCacheSourceS3(FileCacheSource):
@@ -1120,7 +1717,7 @@ class FileCacheSourceS3(FileCacheSource):
         except botocore.exceptions.ClientError:
             temp_local_path.unlink(missing_ok=True)
             raise FileNotFoundError(
-                f'Failed to download file from: {self._src_prefix_}{sub_path}')
+                f'Failed to download file: {self._src_prefix_}{sub_path}')
         except Exception:  # pragma: no cover
             temp_local_path.unlink(missing_ok=True)
             raise
@@ -1135,6 +1732,10 @@ class FileCacheSourceS3(FileCacheSource):
                 given by the source prefix.
             local_path (str or Path): The full path of the local file to upload.
 
+        Returns:
+            Path: The Path of the filename, which is the same as the `local_path`
+            parameter.
+
         Raises:
             FileNotFoundError: If the local file does not exist.
         """
@@ -1142,6 +1743,8 @@ class FileCacheSourceS3(FileCacheSource):
         local_path = Path(local_path).expanduser().resolve()
 
         self._client.upload_file(str(local_path), self._bucket_name, sub_path)
+
+        return local_path
 
 
 class FileCachePrefix:
@@ -1153,25 +1756,30 @@ class FileCachePrefix:
     a single location.
     """
 
-    def __init__(self, prefix, filecache, anonymous=False, lock_timeout=60):
+    def __init__(self, prefix, filecache, anonymous=False, lock_timeout=None,
+                 nthreads=None):
         """Initialization for the FileCachePrefix class.
 
         Parameters:
             prefix (str or Path): The prefix for the storage location. If the prefix
                 starts with ``gs://bucket-name`` it is from Google Storage. If the prefix
-                starts with ``s3://bucket-name`` it is from AWS S3. If the prefix
-                starts with ``http://`` or ``https://`` it is from a website download.
-                Anything else is considered to be in the local filesystem and can be a str
-                or Path object.
+                starts with ``s3://bucket-name`` it is from AWS S3. If the prefix starts
+                with ``http://`` or ``https://`` it is from a website download. Anything
+                else is considered to be in the local filesystem and can be a str or Path
+                object.
             file_cache (FileCache): The :class:`FileCache` in which to store files
                 retrieved from this prefix.
             anonymous (bool, optional): If True, access cloud resources (GS and S3)
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
                 :meth:`FileCache.__init__` `all_anonymous` argument.
-            lock_timeout(int, optional): How long to wait, in seconds, if another process
+            lock_timeout (int, optional): How long to wait, in seconds, if another process
                 is marked as retrieving the file before raising an exception. 0 means to
-                not wait at all. A negative value means to never time out.
+                not wait at all. A negative value means to never time out. None means to
+                use the default value for the associated :class:`FileCache` instance.
+            nthreads (int, optional): The maximum number of threads to use when doing
+                multiple-file retrieval or upload. If None, use the default value for the
+                associated :class:`FileCache` instance.
 
         Notes:
             Within a given :class:`FileCache`, :class:`FileCachePrefix` instances that
@@ -1185,16 +1793,18 @@ class FileCachePrefix:
         self._filecache = filecache
         self._anonymous = anonymous
         self._lock_timeout = lock_timeout
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+        self._nthreads = nthreads
         self._upload_counter = 0
         self._download_counter = 0
 
         if not isinstance(prefix, (str, Path)):
             raise TypeError('prefix is not a str or Path')
 
-        self._prefix = str(prefix).rstrip('/') + '/'
+        self._prefix_ = str(prefix).rstrip('/') + '/'
 
-        if self._filecache._logger:
-            self._filecache._logger.debug(f'Initializing prefix {self._prefix}')
+        self._filecache._log_debug(f'Initializing prefix {self._prefix_}')
 
     def exists(self, sub_path):
         """Check if a file exists without downloading it.
@@ -1212,7 +1822,8 @@ class FileCachePrefix:
             ValueError: If the path is invalidly constructed.
         """
 
-        return self._filecache.exists(f'{self._prefix}{sub_path}')
+        return self._filecache.exists(f'{self._prefix_}{sub_path}',
+                                      anonymous=self._anonymous)
 
     def get_local_path(self, sub_path):
         """Return the local path for the given sub_path relative to the prefix.
@@ -1228,50 +1839,128 @@ class FileCachePrefix:
             by this function as necessary.
         """
 
-        return self._filecache.get_local_path(f'{self._prefix}{sub_path}',
+        return self._filecache.get_local_path(f'{self._prefix_}{sub_path}',
                                               anonymous=self._anonymous)
 
-    def retrieve(self, sub_path):
-        """Retrieve a file from the given sub_path and store it in the file cache.
+    def retrieve(self, sub_path, nthreads=None, exception_on_fail=True):
+        """Retrieve a file(s) from the given sub_path and store it in the file cache.
 
         Parameters:
-            sub_path (str): The path of the file relative to the prefix.
+            sub_path (str or list or tuple): The path of the file relative to the prefix.
+                If `sub_path` is a list or tuple, the complete list of files is retrieved.
+                Depending on the storage location, this may be more efficient because
+                files can be downloaded in parallel.
+            nthreads (int, optional): The maximum number of threads to use when doing
+                multiple-file retrieval or upload. If None, use
+                the default value given when this :class:`FileCachePrefix` was created.
+            exception_on_fail (bool, optional): If True, if any file does not exist or
+                download fails a FileNotFound exception is raised, and if any attempt to
+                acquire a lock or wait for another process to download a file fails a
+                TimeoutError is raised. If False, the function returns normally and any
+                failed download is marked with the Exception that caused the failure in
+                place of the returned Path.
 
         Returns:
-            Path: The Path of the filename in the temporary directory.
+            Path or Exception or list[Path or Exception]: The Path of the filename in the
+            temporary directory (or the original full path if local). If `full_path` was a
+            list or tuple of paths, then instead return a list of Paths of the filenames
+            in the temporary directory (or the original full path if local). If
+            `exception_on_fail` is False, any Path may be an Exception if that file does
+            not exist or the download failed or a timeout occurred.
 
         Raises:
-            FileNotFoundError: If the file does not exist or could not be downloaded.
-            TimeoutError: If we could not acquire the lock to allow downloading of the
-                file within the given timeout.
+            FileNotFoundError: If a file does not exist or could not be downloaded, and
+                exception_on_fail is True.
+            TimeoutError: If we could not acquire the lock to allow downloading of a file
+                within the given timeout or, for a multi-file download, if we timed out
+                waiting for other processes to download locked files, and
+                exception_on_fail is True.
+
+        Notes:
+            File download is normally an atomic operation; a program will never see a
+            partially-downloaded file, and if a download is interrupted there will be no
+            file present. However, when downloading multiple files at the same time, as
+            many files as possible are downloaded before an exception is raised.
         """
 
         old_download_counter = self._filecache.download_counter
 
-        ret = self._filecache.retrieve(f'{self._prefix}{sub_path}',
-                                       anonymous=self._anonymous,
-                                       lock_timeout=self._lock_timeout)
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
 
-        self._download_counter += (self._filecache.download_counter -
-                                   old_download_counter)
+        if nthreads is None:
+            nthreads = self._nthreads
+
+        try:
+            if isinstance(sub_path, (list, tuple)):
+                new_sub_path = [f'{self._prefix_}{p}' for p in sub_path]
+                ret = self._filecache.retrieve(new_sub_path,
+                                               anonymous=self._anonymous,
+                                               lock_timeout=self._lock_timeout,
+                                               nthreads=nthreads,
+                                               exception_on_fail=exception_on_fail)
+            else:
+                ret = self._filecache.retrieve(f'{self._prefix_}{sub_path}',
+                                               anonymous=self._anonymous,
+                                               lock_timeout=self._lock_timeout,
+                                               exception_on_fail=exception_on_fail)
+        finally:
+            self._download_counter += (self._filecache.download_counter -
+                                       old_download_counter)
+
         return ret
 
-    def upload(self, sub_path):
-        """Upload a file from the file cache to the storage location.
+    def upload(self, sub_path, nthreads=None, exception_on_fail=True):
+        """Upload file(s) from the file cache to the storage location(s).
 
         Parameters:
-            sub_path (str): The path of the file relative to the prefix.
+            sub_path (str or list or tuple): The path of the file relative to the prefix.
+                If `sub_path` is a list or tuple, the complete list of files is uploaded.
+                This may be more efficient because files can be uploaded in parallel.
+            nthreads (int, optional): The maximum number of threads to use when doing
+                multiple-file retrieval or upload. If None, use
+                the default value given when this :class:`FileCachePrefix` was created.
+            exception_on_fail (bool, optional): If True, if any file does not exist or
+                upload fails an exception is raised. If False, the function returns
+                normally and any failed upload is marked with the Exception that caused
+                the failure in place of the returned path.
+
+        Returns:
+            Path or Exception or list[Path or Exception]: The Path of the filename in the
+            temporary directory (or the original full path if local). If `full_path` was a
+            list or tuple of paths, then instead return a list of Paths of the filenames
+            in the temporary directory (or the original full path if local). If
+            `exception_on_fail` is False, any Path may be an Exception if that file does
+            not exist or the upload failed.
 
         Raises:
-            FileNotFoundError: If the file to upload does not exist.
+            FileNotFoundError: If a file to upload does not exist or the upload failed,
+            and exception_on_fail is True.
         """
+
         old_upload_counter = self._filecache.upload_counter
 
-        ret = self._filecache.upload(f'{self._prefix}{sub_path}',
-                                     anonymous=self._anonymous)
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
 
-        self._upload_counter += (self._filecache.upload_counter -
-                                 old_upload_counter)
+        if nthreads is None:
+            nthreads = self._nthreads
+
+        try:
+            if isinstance(sub_path, (list, tuple)):
+                new_sub_paths = [f'{self._prefix_}{p}' for p in sub_path]
+                ret = self._filecache.upload(new_sub_paths,
+                                             anonymous=self._anonymous,
+                                             nthreads=nthreads,
+                                             exception_on_fail=exception_on_fail)
+            else:
+                ret = self._filecache.upload(f'{self._prefix_}{sub_path}',
+                                             anonymous=self._anonymous,
+                                             exception_on_fail=exception_on_fail)
+        finally:
+            self._upload_counter += (self._filecache.upload_counter -
+                                     old_upload_counter)
+
         return ret
 
     @contextlib.contextmanager
@@ -1305,10 +1994,10 @@ class FileCachePrefix:
 
     @property
     def download_counter(self):
-        """Return the number of actual file downloads that have taken place."""
+        """The number of actual file downloads that have taken place."""
         return self._download_counter
 
     @property
     def upload_counter(self):
-        """Return the number of actual file uploads that have taken place."""
+        """The number of actual file uploads that have taken place."""
         return self._upload_counter
