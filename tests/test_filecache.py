@@ -995,10 +995,10 @@ def test_cache_owner():
 
 def test_local_upl_good():
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir = Path(temp_dir)
+        temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache() as fc:
             local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
-            assert local_path.resolve() == (temp_dir / 'dir1/test_file.txt').resolve()
+            assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
             assert fc.upload(f'{temp_dir}/dir1/test_file.txt') == local_path
             assert os.path.exists(temp_dir / 'dir1/test_file.txt')
@@ -1008,11 +1008,11 @@ def test_local_upl_good():
 
 def test_local_upl_pfx_good():
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir = Path(temp_dir)
+        temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache() as fc:
             pfx = fc.new_prefix(temp_dir)
             local_path = pfx.get_local_path('dir1/test_file.txt')
-            assert local_path.resolve() == (temp_dir / 'dir1/test_file.txt').resolve()
+            assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
             assert pfx.upload('dir1/test_file.txt') == local_path
             assert os.path.exists(temp_dir / 'dir1/test_file.txt')
@@ -1416,7 +1416,7 @@ def test_complex_retr_multi_pfx_3(shared, prefix):
 
 def test_local_upl_multi_good():
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir = Path(temp_dir)
+        temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache() as fc:
             paths = [f'dir1/test_file{x}' for x in range(10)]
             local_paths = [fc.get_local_path(temp_dir / x) for x in paths]
@@ -1436,7 +1436,7 @@ def test_local_upl_multi_good():
 
 def test_local_upl_multi_pfx_good():
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir = Path(temp_dir)
+        temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache() as fc:
             pfx = fc.new_prefix(temp_dir)
             paths = [f'dir1/test_file{x}' for x in range(10)]

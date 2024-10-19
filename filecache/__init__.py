@@ -427,7 +427,7 @@ class FileCache:
 
         source = _SOURCE_CACHE[key]
         if source._src_type == 'local':
-            local_path = Path(sub_path)
+            local_path = Path(sub_path).expanduser().resolve()
         else:
             local_path = self._cache_dir / source._cache_subdir / sub_path
 
