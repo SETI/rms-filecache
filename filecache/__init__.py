@@ -318,6 +318,8 @@ class FileCache:
 
         self._all_anonymous = all_anonymous
         self._lock_timeout = lock_timeout
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
         self._nthreads = nthreads
         self._logger = logger
         self._is_cache_owner = cache_owner
@@ -549,6 +551,8 @@ class FileCache:
 
         if lock_timeout is None:
             lock_timeout = self.lock_timeout
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
 
         # Technically we could just do everything as a locked multi-download, but we
         # separate out the cases for efficiency
@@ -904,6 +908,9 @@ class FileCache:
             and exception_on_fail is True.
         """
 
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
         if isinstance(full_path, (list, tuple)):
             if nthreads is None:
                 nthreads = self.nthreads
@@ -1071,6 +1078,8 @@ class FileCache:
             prefix = str(prefix)
         if lock_timeout is None:
             lock_timeout = self.lock_timeout
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
         if nthreads is None:
             nthreads = self.nthreads
         key = (prefix, anonymous, lock_timeout)
@@ -1210,6 +1219,9 @@ class FileCacheSource:
             have download failures, all other files will be downloaded.
         """
 
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
         results = {}
         for sub_path, result in self._download_object_parallel(sub_paths, local_paths,
                                                                nthreads):
@@ -1255,6 +1267,9 @@ class FileCacheSource:
             failure. This list is in the same order and has the same length as
             `local_paths`.
         """
+
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
 
         results = {}
         for sub_path, result in self._upload_object_parallel(sub_paths, local_paths,
@@ -1774,6 +1789,8 @@ class FileCachePrefix:
         self._filecache = filecache
         self._anonymous = anonymous
         self._lock_timeout = lock_timeout
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
         self._nthreads = nthreads
         self._upload_counter = 0
         self._download_counter = 0
@@ -1864,6 +1881,9 @@ class FileCachePrefix:
 
         old_download_counter = self._filecache.download_counter
 
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
         if nthreads is None:
             nthreads = self._nthreads
 
@@ -1915,6 +1935,9 @@ class FileCachePrefix:
         """
 
         old_upload_counter = self._filecache.upload_counter
+
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
 
         if nthreads is None:
             nthreads = self._nthreads

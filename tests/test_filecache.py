@@ -1141,7 +1141,7 @@ def test_cloud_upl_bad_2(prefix):
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
         with pytest.raises(Exception) as e:
             fc.upload(f'{new_prefix}/{filename}', anonymous=True)
-        assert not isinstance(e, FileNotFoundError)
+        assert not isinstance(e.type, FileNotFoundError)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         ret = fc.upload(f'{new_prefix}/{filename}', anonymous=True,
@@ -1163,7 +1163,7 @@ def test_cloud_upl_pfx_bad_2(prefix):
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
         with pytest.raises(Exception) as e:
             pfx.upload(filename)
-        assert not isinstance(e, FileNotFoundError)
+        assert not isinstance(e.type, FileNotFoundError)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         assert pfx.download_counter == 0

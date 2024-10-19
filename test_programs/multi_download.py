@@ -51,11 +51,11 @@ for dl_prefix, ul_prefix in [('gs://rms-node-holdings/pds3-holdings',
                     with open(path2, 'wb') as fp2:
                         fp2.write(fp1.read())
 
-            # start_time = time.time()
-            # for num in range(2001, 2001+NUM_VOL):
-            #     path = pfx2.upload(f'COISS_{num}/COISS_{num}_index.tab')
-            # end_time = time.time()
-            # ul_seq_time = end_time-start_time
+            start_time = time.time()
+            for num in range(2001, 2001+NUM_VOL):
+                path = pfx2.upload(f'COISS_{num}/COISS_{num}_index.tab')
+            end_time = time.time()
+            ul_seq_time = end_time-start_time
 
     if TEST_PAR:
         with FileCache(shared=True, cache_owner=True, logger=my_logger) as fc:
