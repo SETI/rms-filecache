@@ -1801,7 +1801,8 @@ class FileCachePrefix:
             ValueError: If the path is invalidly constructed.
         """
 
-        return self._filecache.exists(f'{self._prefix_}{sub_path}')
+        return self._filecache.exists(f'{self._prefix_}{sub_path}',
+                                      anonymous=self._anonymous)
 
     def get_local_path(self, sub_path):
         """Return the local path for the given sub_path relative to the prefix.
