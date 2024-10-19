@@ -1076,6 +1076,8 @@ class FileCache:
 
         if isinstance(prefix, Path):
             prefix = str(prefix)
+        if not prefix.startswith(('http://', 'https://', 'gs://', 's3://')):
+            prefix = prefix.replace('\\', '/').rstrip('/')
         if lock_timeout is None:
             lock_timeout = self.lock_timeout
         if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):

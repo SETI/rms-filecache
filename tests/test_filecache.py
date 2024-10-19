@@ -602,7 +602,7 @@ def test_cloud2_retr_bad(shared, prefix):
 
 @pytest.mark.parametrize('shared', (False, True))
 @pytest.mark.parametrize('prefix', BAD_CLOUD_PREFIXES)
-def test_cloud_retr_pfx_bad(shared, prefix):
+def test_cloud_retr_pfx_bad_1(shared, prefix):
     with FileCache(shared=shared, cache_owner=True) as fc:
         pfx = fc.new_prefix(prefix, anonymous=True)
         with pytest.raises(FileNotFoundError):
@@ -611,7 +611,7 @@ def test_cloud_retr_pfx_bad(shared, prefix):
         assert fc.download_counter == 0
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 0
-        ret = pfx.retrieve(f'{prefix}/bogus-filename', exception_on_fail=False)
+        ret = pfx.retrieve('bogus-filename', exception_on_fail=False)
         assert isinstance(ret, FileNotFoundError)
         assert fc.upload_counter == 0
         assert fc.download_counter == 0
@@ -622,7 +622,7 @@ def test_cloud_retr_pfx_bad(shared, prefix):
 
 @pytest.mark.parametrize('shared', (False, True))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_cloud2_retr_pfx_bad(shared, prefix):
+def test_cloud_retr_pfx_bad_2(shared, prefix):
     with FileCache(shared=shared, cache_owner=True) as fc:
         pfx = fc.new_prefix(prefix, anonymous=True)
         with pytest.raises(FileNotFoundError):
@@ -631,7 +631,7 @@ def test_cloud2_retr_pfx_bad(shared, prefix):
         assert fc.download_counter == 0
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 0
-        ret = pfx.retrieve(f'{prefix}/bogus-filename', exception_on_fail=False)
+        ret = pfx.retrieve('bogus-filename', exception_on_fail=False)
         assert isinstance(ret, FileNotFoundError)
         assert fc.upload_counter == 0
         assert fc.download_counter == 0
@@ -1459,10 +1459,10 @@ def test_local_upl_multi_pfx_good():
 
 def test_local_upl_multi_bad():
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir = Path(temp_dir)
+        temp_dir = Path(temp_dir).resolve()
         with FileCache() as fc:
             local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
-            assert local_path.resolve() == (temp_dir / 'dir1/test_file.txt').resolve()
+            assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
             with pytest.raises(FileNotFoundError):
                 fc.upload([local_path,
@@ -1473,15 +1473,15 @@ def test_local_upl_multi_bad():
 
 def test_local_upl_multi_pfx_bad():
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir = Path(temp_dir)
+        temp_dir = Path(temp_dir).resolve()
         with FileCache() as fc:
             pfx = fc.new_prefix(temp_dir)
             local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
-            assert local_path.resolve() == (temp_dir / 'dir1/test_file.txt').resolve()
+            assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
             with pytest.raises(FileNotFoundError):
                 pfx.upload(['dir1/test_file.txt',
-                            temp_dir / 'XXXXXX.XXX'])
+                            'XXXXXX.XXX'])
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         assert pfx.download_counter == 0
