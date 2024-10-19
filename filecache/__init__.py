@@ -1076,6 +1076,8 @@ class FileCache:
 
         if isinstance(prefix, Path):
             prefix = str(prefix)
+        if not isinstance(prefix, str):
+            raise TypeError('prefix is not a str or Path')
         if not prefix.startswith(('http://', 'https://', 'gs://', 's3://')):
             prefix = prefix.replace('\\', '/').rstrip('/')
         if lock_timeout is None:

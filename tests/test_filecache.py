@@ -1567,7 +1567,7 @@ def test_cloud_upl_multi_pfx_good(prefix):
     with FileCache() as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
-        paths = [f'{new_prefix}/dir1/test_file{x}' for x in range(10)]
+        paths = [f'dir1/test_file{x}' for x in range(10)]
         local_paths = [pfx.get_local_path(x) for x in paths]
         for lp in local_paths:
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
