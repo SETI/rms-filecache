@@ -2014,3 +2014,8 @@ class FileCachePrefix:
     def prefix(self):
         """The URI prefix including a trailing slash."""
         return self._prefix_
+
+    @property
+    def is_local(self):
+        """A bool indicating whether or not the prefix refers to the local filesystem."""
+        return not self._prefix_.startswith(('http://', 'https://', 'gs://', 's3://'))
