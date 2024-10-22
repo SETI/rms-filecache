@@ -1853,7 +1853,8 @@ class FileCachePrefix:
         """
 
         return self._filecache.get_local_path(f'{self._prefix_}{sub_path}',
-                                              anonymous=self._anonymous)
+                                              anonymous=self._anonymous,
+                                              create_parents=create_parents)
 
     def retrieve(self, sub_path, nthreads=None, exception_on_fail=True):
         """Retrieve a file(s) from the given sub_path and store it in the file cache.

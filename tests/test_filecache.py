@@ -1017,7 +1017,11 @@ def test_local_upl_pfx_good():
         temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache() as fc:
             pfx = fc.new_prefix(temp_dir)
+            local_path = pfx.get_local_path('dir1/test_file.txt',
+                                            create_parents=False)
+            assert not local_path.parent.is_dir()
             local_path = pfx.get_local_path('dir1/test_file.txt')
+            assert local_path.parent.is_dir()
             assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
             assert pfx.upload('dir1/test_file.txt') == local_path
