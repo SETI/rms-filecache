@@ -1810,7 +1810,7 @@ class FileCachePrefix:
         if not isinstance(prefix, (str, Path)):
             raise TypeError('prefix is not a str or Path')
 
-        self._prefix_ = str(prefix).rstrip('/') + '/'
+        self._prefix_ = str(prefix).replace('\\', '/').rstrip('/') + '/'
 
         self._filecache._log_debug(f'Initializing prefix {self._prefix_}')
 
@@ -2014,3 +2014,8 @@ class FileCachePrefix:
     def prefix(self):
         """The URI prefix including a trailing slash."""
         return self._prefix_
+
+    @property
+    def is_local(self):
+        """A bool indicating whether or not the prefix refers to the local filesystem."""
+        return not self._prefix_.startswith(('http://', 'https://', 'gs://', 's3://'))

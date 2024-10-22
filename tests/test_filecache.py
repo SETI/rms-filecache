@@ -400,6 +400,7 @@ def test_local_retr_pfx_good(shared):
     for pass_no in range(5):  # Make sure the expected dir doesn't get modified
         with FileCache(shared=shared) as fc:
             lf = fc.new_prefix(EXPECTED_DIR)
+            assert lf.is_local
             for filename in EXPECTED_FILENAMES:
                 path = lf.retrieve(filename)
                 assert str(path).replace('\\', '/') == \
@@ -439,6 +440,7 @@ def test_cloud_retr_good(shared, prefix):
 def test_cloud_retr_pfx_good(shared, prefix):
     with FileCache(shared=shared) as fc:
         pfx = fc.new_prefix(prefix, anonymous=True)
+        assert not pfx.is_local
         for filename in LIMITED_FILENAMES:
             path = pfx.retrieve(filename)
             assert str(path).replace('\\', '/').endswith(filename)
@@ -1395,6 +1397,8 @@ def test_complex_retr_multi_pfx_3(shared, prefix):
     with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
         # Retrieve some cloud files with a bad name included
         pfx = fc.new_prefix(prefix)
+        clean_prefix = str(prefix).replace('\\', '/').rstrip('/')
+        assert pfx.prefix == f'{clean_prefix}/'
         full_paths = ['nonexistent.txt'] + list(EXPECTED_FILENAMES)
         with pytest.raises(FileNotFoundError):
             local_paths = pfx.retrieve(full_paths, exception_on_fail=True)
