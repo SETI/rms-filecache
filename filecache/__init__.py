@@ -1810,7 +1810,7 @@ class FileCachePrefix:
         if not isinstance(prefix, (str, Path)):
             raise TypeError('prefix is not a str or Path')
 
-        self._prefix_ = str(prefix).rstrip('/') + '/'
+        self._prefix_ = str(prefix).replace('\\', '/').rstrip('/') + '/'
 
         self._filecache._log_debug(f'Initializing prefix {self._prefix_}')
 
