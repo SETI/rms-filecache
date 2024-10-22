@@ -410,7 +410,7 @@ class FileCache:
             sub_path = full_path[idx+1:]
         else:
             # Local
-            sub_path = full_path
+            sub_path = str(Path(full_path).expanduser().resolve())
         if not src_str.startswith(('gs://', 's3://')):
             # No such thing as needing credentials for a local file or HTTP
             # so don't overconstrain the source cache
@@ -495,7 +495,10 @@ class FileCache:
         source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._log_debug(f'Returning local path for {full_path} as {local_path}')
+        if source._src_type == 'local':
+            self._log_debug(f'Returning local path for {full_path} (local file)')
+        else:
+            self._log_debug(f'Returning local path for {full_path} as {local_path}')
 
         return local_path
 
@@ -927,7 +930,10 @@ class FileCache:
 
         source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
 
-        self._log_debug(f'Uploading {local_path} to {source._src_prefix_}{sub_path}')
+        if source._src_type == 'local':
+            self._log_debug(f'Uploading {local_path} (local file)')
+        else:
+            self._log_debug(f'Uploading {local_path} to {source._src_prefix_}{sub_path}')
 
         try:
             ret = source.upload(sub_path, local_path)
@@ -1149,6 +1155,8 @@ class FileCache:
                 os.rmdir(self._cache_dir)
             except FileNotFoundError:  # pragma: no cover - race condition only
                 pass
+        else:
+            self._log_debug(f'  Ignoring shared cache {self._cache_dir}')
 
     def __enter__(self):
         """Enter the context manager for creating a FileCache."""
@@ -2001,3 +2009,8 @@ class FileCachePrefix:
     def upload_counter(self):
         """The number of actual file uploads that have taken place."""
         return self._upload_counter
+
+    @property
+    def prefix(self):
+        """The URI prefix including a trailing slash."""
+        return self._prefix_
