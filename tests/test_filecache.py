@@ -1397,7 +1397,7 @@ def test_complex_retr_multi_pfx_3(shared, prefix):
     with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
         # Retrieve some cloud files with a bad name included
         pfx = fc.new_prefix(prefix)
-        assert pfx.prefix == f'{str(prefix).replace('\\', '/')}/'
+        assert pfx.prefix == f"{str(prefix).replace('\\', '/')}/"
         full_paths = ['nonexistent.txt'] + list(EXPECTED_FILENAMES)
         with pytest.raises(FileNotFoundError):
             local_paths = pfx.retrieve(full_paths, exception_on_fail=True)
