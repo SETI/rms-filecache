@@ -474,7 +474,7 @@ class FileCache:
 
         return ret
 
-    def get_local_path(self, full_path, anonymous=False):
+    def get_local_path(self, full_path, anonymous=False, create_parents=True):
         """Return the local path for the given full_path.
 
         Parameters:
@@ -483,17 +483,20 @@ class FileCache:
                 without specifying credentials. Otherwise, credentials must be initialized
                 in the program's environment. This parameter can be overridden by the
                 :meth:`__init__` `all_anonymous` argument.
+            create_parents (bool, optional): If True, create all parent directories. This
+                is useful when getting the local path of a file that will be uploaded.
 
         Returns:
             Path: The Path of the filename in the temporary directory, or the `full_path`
             if the file source is local. The file does not have to exist because this path
             could be used for writing a file to upload. To facilitate this, a side effect
-            of this call is that the complete parent directory structure will be created
-            by this function as necessary.
+            of this call (if `create_parents` is True) is that the complete parent
+            directory structure will be created by this function as necessary.
         """
 
         source, sub_path, local_path = self._get_source_and_paths(full_path, anonymous)
-        local_path.parent.mkdir(parents=True, exist_ok=True)
+        if create_parents:
+            local_path.parent.mkdir(parents=True, exist_ok=True)
 
         if source._src_type == 'local':
             self._log_debug(f'Returning local path for {full_path} (local file)')
@@ -1833,18 +1836,20 @@ class FileCachePrefix:
         return self._filecache.exists(f'{self._prefix_}{sub_path}',
                                       anonymous=self._anonymous)
 
-    def get_local_path(self, sub_path):
+    def get_local_path(self, sub_path, create_parents=True):
         """Return the local path for the given sub_path relative to the prefix.
 
         Parameters:
             sub_path (str): The path of the file relative to the prefix.
+            create_parents (bool, optional): If True, create all parent directories. This
+                is useful when getting the local path of a file that will be uploaded.
 
         Returns:
-            Path: The Path of the filename in the temporary directory, or the `sub_path`
+            Path: The Path of the filename in the temporary directory, or the `full_path`
             if the file source is local. The file does not have to exist because this path
             could be used for writing a file to upload. To facilitate this, a side effect
-            of this call is that the complete parent directory structure will be created
-            by this function as necessary.
+            of this call (if `create_parents` is True) is that the complete parent
+            directory structure will be created by this function as necessary.
         """
 
         return self._filecache.get_local_path(f'{self._prefix_}{sub_path}',

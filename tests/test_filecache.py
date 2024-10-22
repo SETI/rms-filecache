@@ -999,7 +999,11 @@ def test_local_upl_good():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache() as fc:
+            local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt',
+                                           create_parents=False)
+            assert not local_path.parent.is_dir()
             local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
+            assert local_path.parent.is_dir()
             assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
             assert fc.upload(f'{temp_dir}/dir1/test_file.txt') == local_path
