@@ -1,11 +1,15 @@
 boto3
+boto3-stubs[s3]
 coverage
 filelock
 flake8
+google-api-python-client-stubs
 google-cloud-storage
+mypy
 myst-parser
 pytest
 requests
 sphinx
 sphinxcontrib-napoleon
 sphinx-rtd-theme
+types-requests

@@ -246,8 +246,8 @@ def test_temp_dir_good():
 
     cwd = os.getcwd()
 
-    fc4 = FileCache(temp_dir='.')
-    fc5 = FileCache(temp_dir=cwd)
+    fc4 = FileCache(cache_dir='.')
+    fc5 = FileCache(cache_dir=cwd)
     assert str(fc4.cache_dir.parent) == str(fc5.cache_dir.parent)
     assert str(fc4.cache_dir.parent) == cwd
     assert str(fc5.cache_dir.parent) == cwd
@@ -263,9 +263,9 @@ def test_temp_dir_good():
 
 def test_temp_dir_bad():
     with pytest.raises(ValueError):
-        FileCache(temp_dir='\000')
+        FileCache(cache_dir='\000')
     with pytest.raises(ValueError):
-        FileCache(temp_dir=EXPECTED_DIR / EXPECTED_FILENAMES[0])
+        FileCache(cache_dir=EXPECTED_DIR / EXPECTED_FILENAMES[0])
 
 
 def test_shared_global():
