@@ -54,9 +54,9 @@ ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
 
-# This has to be first to clean up any shared directory from a previous failed run
-def test_cleanup_shared_dir():
-    with FileCache(shared=True, cache_owner=True):
+# This has to be first to clean up any cache_name directory from a previous failed run
+def test_cleanup_cache_name_dir():
+    with FileCache(cache_name='global', delete_on_exit=True):
         pass
 
 
@@ -108,7 +108,7 @@ class MyLogger:
 
 
 def test_logger():
-    assert filecache.get_global_logger() is False
+    assert filecache.get_global_logger() is None
     # Global logger
     logger = MyLogger()
     filecache.set_global_logger(logger)
@@ -131,27 +131,27 @@ def test_logger():
 #   Removing http_storage.googleapis.com
 #   Removing /tmp/.file_cache_424b280b-e62c-4582-8560-211f54cabc23
     logger.has_prefix_list(['Creating', 'Initializing', 'Checking', 'File exists',
-                            'Checking', 'File does not', 'Downloading', 'Cleaning',
+                            'Checking', 'File does not', 'Downloading', 'Deleting',
                             'Removing', 'Removing', 'Removing', 'Removing'])
 
     logger = MyLogger()
     filecache.set_global_logger(logger)
-    with FileCache(shared=True) as fc:
+    with FileCache(cache_name='global') as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         pfx.retrieve(EXPECTED_FILENAMES[0])
-        fc.clean_up(final=True)
-# Creating shared cache /tmp/.file_cache___global__
+        fc.delete_cache()
+# Creating cache_name cache /tmp/.file_cache_global
 # Initializing prefix https://storage.googleapis.com/rms-node-filecache-test-bucket/
-# Downloading https://storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt to /tmp/.file_cache___global__/http_storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt
-# Cleaning up cache /tmp/.file_cache___global__
+# Downloading https://storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt to /tmp/.file_cache_global/http_storage.googleapis.com/rms-node-filecache-test-bucket/lorem1.txt
+# Cleaning up cache /tmp/.file_cache_global
 #   Removing lorem1.txt
 #   Removing rms-node-filecache-test-bucket
 #   Removing http_storage.googleapis.com
-#   Removing /tmp/.file_cache___global__
-# Cleaning up cache /tmp/.file_cache___global__
-    logger.has_prefix_list(['Creating', 'Initializing', 'Downloading', 'Cleaning',
+#   Removing /tmp/.file_cache_global
+# Cleaning up cache /tmp/.file_cache_global
+    logger.has_prefix_list(['Creating', 'Initializing', 'Downloading', 'Deleting',
                             'Removing', 'Removing', 'Removing', 'Removing',
-                            'Cleaning'])
+                            'Deleting'])
     logger.messages = []
 
     # Remove global logger
@@ -177,7 +177,7 @@ def test_logger():
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
     logger.has_prefix_list(['Creating', 'Initializing', 'Downloading', 'Accessing',
-                            'Cleaning', 'Removing', 'Removing', 'Removing', 'Removing'])
+                            'Deleting', 'Removing', 'Removing', 'Removing', 'Removing'])
 
     # Specified logger
     logger = MyLogger()
@@ -189,7 +189,7 @@ def test_logger():
 # Accessing local file lorem1.txt
 # Cleaning up cache /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
 #   Removing /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
-    logger.has_prefix_list(['Creating', 'Initializing', 'Accessing', 'Cleaning',
+    logger.has_prefix_list(['Creating', 'Initializing', 'Accessing', 'Deleting',
                             'Removing'])
 
     # Uploading
@@ -206,7 +206,7 @@ def test_logger():
 # Uploading /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819/gs_rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt to gs://rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt
 # Cleaning up cache /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819
     logger.has_prefix_list(['Creating', 'Initializing', 'Returning', 'Uploading',
-                            'Cleaning'])
+                            'Deleting'])
 
 
 def test_easy_logger(capsys):
@@ -231,127 +231,127 @@ def test_temp_dir_good():
     fc3 = FileCache()
     assert str(fc1.cache_dir) != str(fc2.cache_dir)
     assert str(fc2.cache_dir) != str(fc3.cache_dir)
-    assert fc1.cache_dir.name.startswith('.file_cache_')
-    assert fc2.cache_dir.name.startswith('.file_cache_')
-    assert fc3.cache_dir.name.startswith('.file_cache_')
-    assert not fc1.is_shared
-    assert not fc2.is_shared
-    assert not fc3.is_shared
-    fc1.clean_up()
-    fc2.clean_up()
-    fc3.clean_up()
+    assert fc1.cache_dir.name.startswith('_filecache_')
+    assert fc2.cache_dir.name.startswith('_filecache_')
+    assert fc3.cache_dir.name.startswith('_filecache_')
+    assert fc1.delete_on_exit
+    assert fc2.delete_on_exit
+    assert fc3.delete_on_exit
+    fc1.delete_cache()
+    fc2.delete_cache()
+    fc3.delete_cache()
     assert not fc1.cache_dir.exists()
     assert not fc2.cache_dir.exists()
     assert not fc3.cache_dir.exists()
 
     cwd = os.getcwd()
 
-    fc4 = FileCache(cache_dir='.')
-    fc5 = FileCache(cache_dir=cwd)
+    fc4 = FileCache(cache_root='.')
+    fc5 = FileCache(cache_root=cwd)
     assert str(fc4.cache_dir.parent) == str(fc5.cache_dir.parent)
     assert str(fc4.cache_dir.parent) == cwd
     assert str(fc5.cache_dir.parent) == cwd
-    assert fc4.cache_dir.name.startswith('.file_cache_')
-    assert fc5.cache_dir.name.startswith('.file_cache_')
-    assert not fc5.is_shared
-    assert not fc5.is_shared
-    fc4.clean_up()
-    fc5.clean_up()
+    assert fc4.cache_dir.name.startswith('_filecache_')
+    assert fc5.cache_dir.name.startswith('_filecache_')
+    assert fc5.delete_on_exit
+    assert fc5.delete_on_exit
+    fc4.delete_cache()
+    fc5.delete_cache()
     assert not fc4.cache_dir.exists()
     assert not fc5.cache_dir.exists()
 
 
 def test_temp_dir_bad():
     with pytest.raises(ValueError):
-        FileCache(cache_dir='\000')
+        FileCache(cache_root='\000')
     with pytest.raises(ValueError):
-        FileCache(cache_dir=EXPECTED_DIR / EXPECTED_FILENAMES[0])
+        FileCache(cache_root=EXPECTED_DIR / EXPECTED_FILENAMES[0])
 
 
-def test_shared_global():
+def test_cache_name_global():
     fc1 = FileCache()
-    fc2 = FileCache(shared=True)
-    fc3 = FileCache(shared=True)
+    fc2 = FileCache(cache_name='global')
+    fc3 = FileCache(cache_name='global')
     assert str(fc1.cache_dir) != str(fc2.cache_dir)
     assert str(fc2.cache_dir) == str(fc3.cache_dir)
-    assert fc1.cache_dir.name.startswith('.file_cache_')
-    assert fc2.cache_dir.name == '.file_cache___global__'
-    assert fc3.cache_dir.name == '.file_cache___global__'
-    assert not fc1.is_shared
-    assert fc2.is_shared
-    assert fc3.is_shared
-    fc1.clean_up()
+    assert fc1.cache_dir.name.startswith('_filecache_')
+    assert fc2.cache_dir.name == '_filecache_global'
+    assert fc3.cache_dir.name == '_filecache_global'
+    assert fc1.delete_on_exit
+    assert not fc2.delete_on_exit
+    assert not fc3.delete_on_exit
+    fc1.delete_cache()
     assert not fc1.cache_dir.exists()
     assert fc2.cache_dir.exists()
-    fc2.clean_up()
-    assert fc2.cache_dir.exists()
-    assert fc3.cache_dir.exists()
-    fc3.clean_up(final=True)
+    fc2.delete_cache()
+    assert not fc2.cache_dir.exists()
+    assert not fc3.cache_dir.exists()
+    fc3.delete_cache()
     assert not fc3.cache_dir.exists()
 
 
-def test_shared_global_ctx():
+def test_cache_name_global_ctx():
     with FileCache() as fc1:
         assert fc1.cache_dir.exists()
-        with FileCache(shared=True) as fc2:
+        with FileCache(cache_name='global') as fc2:
             assert fc2.cache_dir.exists()
-            with FileCache(shared=True) as fc3:
+            with FileCache(cache_name='global') as fc3:
                 assert fc3.cache_dir.exists()
                 assert str(fc1.cache_dir) != str(fc2.cache_dir)
                 assert str(fc2.cache_dir) == str(fc3.cache_dir)
-                assert fc1.cache_dir.name.startswith('.file_cache_')
-                assert fc2.cache_dir.name == '.file_cache___global__'
-                assert fc3.cache_dir.name == '.file_cache___global__'
-                assert not fc1.is_shared
-                assert fc2.is_shared
-                assert fc3.is_shared
+                assert fc1.cache_dir.name.startswith('_filecache_')
+                assert fc2.cache_dir.name == '_filecache_global'
+                assert fc3.cache_dir.name == '_filecache_global'
+                assert fc1.delete_on_exit
+                assert not fc2.delete_on_exit
+                assert not fc3.delete_on_exit
             assert fc3.cache_dir.exists()
         assert fc2.cache_dir.exists()
     assert not fc1.cache_dir.exists()
     assert fc3.cache_dir.exists()
-    fc3.clean_up(final=True)
+    fc3.delete_cache()
     assert not fc2.cache_dir.exists()
     assert not fc3.cache_dir.exists()
 
 
-def test_shared_named():
+def test_cache_name_named():
     fc1 = FileCache()
-    fc2 = FileCache(shared=True)
-    fc3 = FileCache(shared='test')
-    fc4 = FileCache(shared='test')
+    fc2 = FileCache(cache_name='global')
+    fc3 = FileCache(cache_name='test')
+    fc4 = FileCache(cache_name='test')
     assert str(fc1.cache_dir) != str(fc2.cache_dir)
     assert str(fc2.cache_dir) != str(fc3.cache_dir)
     assert str(fc3.cache_dir) == str(fc4.cache_dir)
-    assert fc1.cache_dir.name.startswith('.file_cache_')
-    assert fc2.cache_dir.name == '.file_cache___global__'
-    assert fc3.cache_dir.name == '.file_cache_test'
-    assert fc4.cache_dir.name == '.file_cache_test'
-    assert not fc1.is_shared
-    assert fc2.is_shared
-    assert fc3.is_shared
-    fc1.clean_up()
+    assert fc1.cache_dir.name.startswith('_filecache_')
+    assert fc2.cache_dir.name == '_filecache_global'
+    assert fc3.cache_dir.name == '_filecache_test'
+    assert fc4.cache_dir.name == '_filecache_test'
+    assert fc1.delete_on_exit
+    assert not fc2.delete_on_exit
+    assert not fc3.delete_on_exit
+    fc1.delete_cache()
     assert not fc1.cache_dir.exists()
     assert fc2.cache_dir.exists()
-    fc2.clean_up(final=True)
+    fc2.delete_cache()
     assert not fc2.cache_dir.exists()
     assert fc3.cache_dir.exists()
     assert fc4.cache_dir.exists()
-    fc3.clean_up(final=True)
+    fc3.delete_cache()
     assert not fc3.cache_dir.exists()
     assert not fc4.cache_dir.exists()
 
 
-def test_shared_bad():
+def test_cache_name_bad():
     with pytest.raises(TypeError):
-        FileCache(shared=5)
+        FileCache(cache_name=5)
     with pytest.raises(ValueError):
-        FileCache(shared='a/b')
+        FileCache(cache_name='a/b')
     with pytest.raises(ValueError):
-        FileCache(shared='a\\b')
+        FileCache(cache_name='a\\b')
     with pytest.raises(ValueError):
-        FileCache(shared='/a')
+        FileCache(cache_name='/a')
     with pytest.raises(ValueError):
-        FileCache(shared='\\a')
+        FileCache(cache_name='\\a')
 
 
 def test_prefix_bad():
@@ -376,10 +376,10 @@ def test_exists_all_bad(prefix):
         assert not fc.exists(f'{prefix}-bad/{EXPECTED_FILENAMES[0]}')
 
 
-@pytest.mark.parametrize('shared', (False, True, 'test'))
-def test_local_retr_good(shared):
+@pytest.mark.parametrize('cache_name', (None, 'test'))
+def test_local_retr_good(cache_name):
     for pass_no in range(5):  # Make sure the expected dir doesn't get modified
-        with FileCache(shared=shared) as fc:
+        with FileCache(cache_name=cache_name) as fc:
             for filename in EXPECTED_FILENAMES:
                 full_filename = f'{EXPECTED_DIR}/{filename}'
                 path = fc.retrieve(full_filename)
@@ -391,14 +391,14 @@ def test_local_retr_good(shared):
                 _compare_to_expected_path(path, full_filename)
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
-            fc.clean_up(final=True)
+            fc.delete_cache()
             assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True, 'test'))
-def test_local_retr_pfx_good(shared):
+@pytest.mark.parametrize('cache_name', (None, 'test'))
+def test_local_retr_pfx_good(cache_name):
     for pass_no in range(5):  # Make sure the expected dir doesn't get modified
-        with FileCache(shared=shared) as fc:
+        with FileCache(cache_name=cache_name) as fc:
             lf = fc.new_prefix(EXPECTED_DIR)
             assert lf.is_local
             for filename in EXPECTED_FILENAMES:
@@ -411,14 +411,14 @@ def test_local_retr_pfx_good(shared):
                 _compare_to_expected_path(path, filename)
             # No files or directories in the cache
             assert len(list(fc.cache_dir.iterdir())) == 0
-            fc.clean_up(final=True)
+            fc.delete_cache()
             assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True, 'test'))
+@pytest.mark.parametrize('cache_name', (None, 'test'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_cloud_retr_good(shared, prefix):
-    with FileCache(shared=shared, all_anonymous=True) as fc:
+def test_cloud_retr_good(cache_name, prefix):
+    with FileCache(cache_name=cache_name, all_anonymous=True) as fc:
         for filename in LIMITED_FILENAMES:
             assert fc.exists(f'{prefix}/{filename}')
             path = fc.retrieve(f'{prefix}/{filename}')
@@ -431,14 +431,14 @@ def test_cloud_retr_good(shared, prefix):
             _compare_to_expected_path(path, filename)
         assert fc.upload_counter == 0
         assert fc.download_counter == len(LIMITED_FILENAMES)
-        fc.clean_up(final=True)
+        fc.delete_cache()
     assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True, 'test'))
+@pytest.mark.parametrize('cache_name', (None, 'test'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_cloud_retr_pfx_good(shared, prefix):
-    with FileCache(shared=shared) as fc:
+def test_cloud_retr_pfx_good(cache_name, prefix):
+    with FileCache(cache_name=cache_name) as fc:
         pfx = fc.new_prefix(prefix, anonymous=True)
         assert not pfx.is_local
         for filename in LIMITED_FILENAMES:
@@ -453,14 +453,14 @@ def test_cloud_retr_pfx_good(shared, prefix):
         assert fc.download_counter == len(LIMITED_FILENAMES)
         assert pfx.upload_counter == 0
         assert pfx.download_counter == len(LIMITED_FILENAMES)
-        fc.clean_up(final=True)
+        fc.delete_cache()
     assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True, 'test'))
+@pytest.mark.parametrize('cache_name', (None, 'test'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_cloud_retr_multi_good(shared, prefix):
-    with FileCache(shared=shared, all_anonymous=True) as fc:
+def test_cloud_retr_multi_good(cache_name, prefix):
+    with FileCache(cache_name=cache_name, all_anonymous=True) as fc:
         for filename in LIMITED_FILENAMES:
             paths = fc.retrieve([f'{prefix}/{filename}'])
             assert len(paths) == 1
@@ -475,14 +475,14 @@ def test_cloud_retr_multi_good(shared, prefix):
             _compare_to_expected_path(path, filename)
         assert fc.upload_counter == 0
         assert fc.download_counter == len(LIMITED_FILENAMES)
-        fc.clean_up(final=True)
+        fc.delete_cache()
     assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True, 'test'))
+@pytest.mark.parametrize('cache_name', (None, 'test'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_cloud_retr_multi_pfx_good(shared, prefix):
-    with FileCache(shared=shared) as fc:
+def test_cloud_retr_multi_pfx_good(cache_name, prefix):
+    with FileCache(cache_name=cache_name) as fc:
         pfx = fc.new_prefix(prefix, anonymous=True)
         for filename in LIMITED_FILENAMES:
             paths = pfx.retrieve((filename,))
@@ -500,7 +500,7 @@ def test_cloud_retr_multi_pfx_good(shared, prefix):
         assert fc.download_counter == len(LIMITED_FILENAMES)
         assert pfx.upload_counter == 0
         assert pfx.download_counter == len(LIMITED_FILENAMES)
-        fc.clean_up(final=True)
+        fc.delete_cache()
     assert not fc.cache_dir.exists()
 
 
@@ -566,10 +566,10 @@ def test_local_retr_pfx_bad():
     assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True))
+@pytest.mark.parametrize('cache_name', (None, 'global'))
 @pytest.mark.parametrize('prefix', BAD_CLOUD_PREFIXES)
-def test_cloud_retr_bad(shared, prefix):
-    with FileCache(shared=shared, cache_owner=True) as fc:
+def test_cloud_retr_bad(cache_name, prefix):
+    with FileCache(cache_name=cache_name, delete_on_exit=True) as fc:
         with pytest.raises(ValueError):
             fc.retrieve(prefix, anonymous=True)
         assert fc.upload_counter == 0
@@ -586,10 +586,10 @@ def test_cloud_retr_bad(shared, prefix):
     assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True))
+@pytest.mark.parametrize('cache_name', (None, 'global'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_cloud2_retr_bad(shared, prefix):
-    with FileCache(shared=shared, cache_owner=True) as fc:
+def test_cloud2_retr_bad(cache_name, prefix):
+    with FileCache(cache_name=cache_name, delete_on_exit=True) as fc:
         with pytest.raises(FileNotFoundError):
             fc.retrieve(f'{prefix}/bogus-filename', anonymous=True)
         assert fc.upload_counter == 0
@@ -602,10 +602,10 @@ def test_cloud2_retr_bad(shared, prefix):
     assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True))
+@pytest.mark.parametrize('cache_name', (None, 'global'))
 @pytest.mark.parametrize('prefix', BAD_CLOUD_PREFIXES)
-def test_cloud_retr_pfx_bad_1(shared, prefix):
-    with FileCache(shared=shared, cache_owner=True) as fc:
+def test_cloud_retr_pfx_bad_1(cache_name, prefix):
+    with FileCache(cache_name=cache_name, delete_on_exit=True) as fc:
         pfx = fc.new_prefix(prefix, anonymous=True)
         with pytest.raises(FileNotFoundError):
             pfx.retrieve('bogus-filename')
@@ -622,10 +622,10 @@ def test_cloud_retr_pfx_bad_1(shared, prefix):
     assert not fc.cache_dir.exists()
 
 
-@pytest.mark.parametrize('shared', (False, True))
+@pytest.mark.parametrize('cache_name', (None, 'global'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_cloud_retr_pfx_bad_2(shared, prefix):
-    with FileCache(shared=shared, cache_owner=True) as fc:
+def test_cloud_retr_pfx_bad_2(cache_name, prefix):
+    with FileCache(cache_name=cache_name, delete_on_exit=True) as fc:
         pfx = fc.new_prefix(prefix, anonymous=True)
         with pytest.raises(FileNotFoundError):
             pfx.retrieve('bogus-filename')
@@ -664,13 +664,13 @@ def test_multi_prefixes_retr():
 
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
-def test_multi_prefixes_shared_retr(prefix):
-    with FileCache(shared=True, cache_owner=True) as fc1:
+def test_multi_prefixes_cache_name_retr(prefix):
+    with FileCache(cache_name='global', delete_on_exit=True) as fc1:
         pfx1 = fc1.new_prefix(prefix, anonymous=True)
         paths1 = []
         for filename in EXPECTED_FILENAMES:
             paths1.append(pfx1.retrieve(filename))
-        with FileCache(shared=True) as fc2:
+        with FileCache(cache_name='global') as fc2:
             pfx2 = fc2.new_prefix(prefix, anonymous=True)
             paths2 = []
             for filename in EXPECTED_FILENAMES:
@@ -683,7 +683,7 @@ def test_multi_prefixes_shared_retr(prefix):
 
 
 def test_locking_1():
-    with FileCache(shared=True, cache_owner=True) as fc:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -702,7 +702,7 @@ def test_locking_1():
 
 
 def test_locking_pfx_1():
-    with FileCache(shared=True, cache_owner=True) as fc:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -724,7 +724,7 @@ def test_locking_pfx_1():
 
 
 def test_locking_2():
-    with FileCache(shared=True, cache_owner=True) as fc:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -742,7 +742,7 @@ def test_locking_2():
 
 
 def test_locking_pfx_2():
-    with FileCache(shared=True, cache_owner=True) as fc:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -762,7 +762,7 @@ def test_locking_pfx_2():
 
 
 def test_locking_3():
-    with FileCache(shared=False) as fc:
+    with FileCache() as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -770,7 +770,7 @@ def test_locking_3():
         lock = filelock.FileLock(lock_path, timeout=0)
         lock.acquire()
         fc.retrieve(f'{HTTP_TEST_ROOT}/{EXPECTED_FILENAMES[0]}',
-                    lock_timeout=0)  # shared=False doesn't lock
+                    lock_timeout=0)
         lock.release()
         lock_path.unlink(missing_ok=True)
         assert fc.upload_counter == 0
@@ -779,7 +779,7 @@ def test_locking_3():
 
 
 def test_locking_pfx_3():
-    with FileCache(shared=False) as fc:
+    with FileCache() as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -787,7 +787,7 @@ def test_locking_pfx_3():
         lock_path = fc._lock_path(local_path)
         lock = filelock.FileLock(lock_path, timeout=0)
         lock.acquire()
-        pfx.retrieve(EXPECTED_FILENAMES[0])  # shared=False doesn't lock
+        pfx.retrieve(EXPECTED_FILENAMES[0])
         lock.release()
         lock_path.unlink(missing_ok=True)
         assert fc.upload_counter == 0
@@ -798,7 +798,7 @@ def test_locking_pfx_3():
 
 
 def test_locking_multi_1():
-    with FileCache(shared=True, cache_owner=True) as fc:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -818,7 +818,7 @@ def test_locking_multi_1():
 
 
 def test_locking_multi_pfx_1():
-    with FileCache(shared=True, cache_owner=True) as fc:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -841,7 +841,7 @@ def test_locking_multi_pfx_1():
 
 def test_locking_multi_2():
     filecache.set_easy_logger()
-    with FileCache(shared=True, cache_owner=True) as fc:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -861,7 +861,7 @@ def test_locking_multi_2():
 
 
 def test_locking_multi_pfx_2():
-    with FileCache(shared=True, cache_owner=True) as fc:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -888,7 +888,7 @@ def test_cleanup_locking_bad():
         local_path = fc.get_local_path('gs://test/test.txt')
         with open(local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}', 'w') as fp:
             fp.write('A')
-    logger.has_prefix_list(['Creating', 'Returning', 'Cleaning', 'ERROR', 'Removing',
+    logger.has_prefix_list(['Creating', 'Returning', 'Deleting', 'ERROR', 'Removing',
                             'Removing', 'Removing'])
     with FileCache() as fc:
         local_path = fc.get_local_path('gs://test/test.txt')
@@ -902,7 +902,7 @@ def test_bad_cache_dir():
             orig_cache_dir = fc._cache_dir
             fc._cache_dir = '/bogus/path/not/a/filecache'
     fc._cache_dir = orig_cache_dir
-    fc.clean_up()
+    fc.delete_cache()
     assert not fc.cache_dir.exists()
 
 
@@ -929,9 +929,9 @@ def test_double_delete():
         assert fc.download_counter == len(LIMITED_FILENAMES)
         assert pfx.upload_counter == 0
         assert pfx.download_counter == len(LIMITED_FILENAMES)
-        fc.clean_up()  # Test double clean_up
+        fc.delete_cache()  # Test double delete
         assert not fc.cache_dir.exists()
-        fc.clean_up()
+        fc.delete_cache()
         assert not fc.cache_dir.exists()
         for filename in LIMITED_FILENAMES:
             pfx.retrieve(filename)
@@ -940,12 +940,12 @@ def test_double_delete():
         assert pfx.upload_counter == 0
         assert pfx.download_counter == len(LIMITED_FILENAMES)*2
         assert fc.cache_dir.exists()
-        fc.clean_up()
+        fc.delete_cache()
         assert not fc.cache_dir.exists()
-        fc.clean_up()
+        fc.delete_cache()
         assert not fc.cache_dir.exists()
 
-    with FileCache(shared=True) as fc:
+    with FileCache(cache_name='global') as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         for filename in LIMITED_FILENAMES:
             pfx.retrieve(filename)
@@ -953,22 +953,22 @@ def test_double_delete():
         assert fc.download_counter == len(LIMITED_FILENAMES)
         assert pfx.upload_counter == 0
         assert pfx.download_counter == len(LIMITED_FILENAMES)
-        fc.clean_up()  # Test double clean_up
-        assert fc.cache_dir.exists()
-        fc.clean_up()
-        assert fc.cache_dir.exists()
+        fc.delete_cache()  # Test double clean_up
+        assert not fc.cache_dir.exists()
+        fc.delete_cache()
+        assert not fc.cache_dir.exists()
         for filename in LIMITED_FILENAMES:
             pfx.retrieve(filename)
         assert fc.upload_counter == 0
-        assert fc.download_counter == len(LIMITED_FILENAMES)
+        assert fc.download_counter == len(LIMITED_FILENAMES)*2
         assert pfx.upload_counter == 0
-        assert pfx.download_counter == len(LIMITED_FILENAMES)
+        assert pfx.download_counter == len(LIMITED_FILENAMES)*2
         assert fc.cache_dir.exists()
-        fc.clean_up()
-        assert fc.cache_dir.exists()
-        fc.clean_up()
-        assert fc.cache_dir.exists()
-        fc.clean_up(final=True)
+        fc.delete_cache()
+        assert not fc.cache_dir.exists()
+        fc.delete_cache()
+        assert not fc.cache_dir.exists()
+        fc.delete_cache()
         assert not fc.cache_dir.exists()
 
 
@@ -986,8 +986,8 @@ def test_open_context_read():
 
 
 def test_cache_owner():
-    with FileCache(shared=True, cache_owner=True) as fc1:
-        with FileCache(shared=True) as fc2:
+    with FileCache(cache_name='global', delete_on_exit=True) as fc1:
+        with FileCache(cache_name='global') as fc2:
             pass
         assert fc1.cache_dir == fc2.cache_dir
         assert os.path.exists(fc1.cache_dir)
@@ -1249,9 +1249,9 @@ def test_complex_retr_multi_1():
         assert fc.upload_counter == 0
 
 
-@pytest.mark.parametrize('shared', (False, True))
-def test_complex_retr_multi_2(shared):
-    with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
+@pytest.mark.parametrize('cache_name', (None, 'global'))
+def test_complex_retr_multi_2(cache_name):
+    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
         # Retrieve various cloud files one at a time
         fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
         fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
@@ -1280,9 +1280,9 @@ def test_complex_retr_multi_2(shared):
         assert fc.download_counter == len(ALL_PREFIXES) * len(EXPECTED_FILENAMES) - 4
 
 
-@pytest.mark.parametrize('shared', (False, True))
-def test_complex_retr_multi_3(shared):
-    with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
+@pytest.mark.parametrize('cache_name', (None, 'global'))
+def test_complex_retr_multi_3(cache_name):
+    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
         # Retrieve various cloud files one at a time
         fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
         fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
@@ -1311,10 +1311,10 @@ def test_complex_retr_multi_3(shared):
         assert fc.download_counter == len(ALL_PREFIXES) * len(EXPECTED_FILENAMES) - 4
 
 
-@pytest.mark.parametrize('shared', (False, True))
+@pytest.mark.parametrize('cache_name', (None, 'global'))
 @pytest.mark.parametrize('prefix', ALL_PREFIXES)
-def test_complex_retr_multi_4(shared, prefix):
-    with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
+def test_complex_retr_multi_4(cache_name, prefix):
+    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
         # Retrieve some cloud files with a bad name included
         full_paths = [f'{prefix}/{filename}' for filename in EXPECTED_FILENAMES]
         full_paths = [f'{prefix}/nonexistent.txt'] + full_paths
@@ -1348,9 +1348,9 @@ def test_complex_retr_multi_pfx_1():
         assert fc.upload_counter == 0
 
 
-@pytest.mark.parametrize('shared', (False, True))
-def test_complex_retr_multi_pfx_2(shared):
-    with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
+@pytest.mark.parametrize('cache_name', (None, 'global'))
+def test_complex_retr_multi_pfx_2(cache_name):
+    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
         # Retrieve various cloud files one at a time in random order
         pfx_gs = fc.new_prefix(GS_TEST_BUCKET_ROOT)
         pfx_s3 = fc.new_prefix(S3_TEST_BUCKET_ROOT)
@@ -1399,10 +1399,10 @@ def test_complex_retr_multi_pfx_2(shared):
         assert pfx_http.upload_counter == 0
 
 
-@pytest.mark.parametrize('shared', (False, True))
+@pytest.mark.parametrize('cache_name', (None, 'global'))
 @pytest.mark.parametrize('prefix', ALL_PREFIXES)
-def test_complex_retr_multi_pfx_3(shared, prefix):
-    with FileCache(shared=shared, cache_owner=True, all_anonymous=True) as fc:
+def test_complex_retr_multi_pfx_3(cache_name, prefix):
+    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
         # Retrieve some cloud files with a bad name included
         pfx = fc.new_prefix(prefix)
         clean_prefix = str(prefix).replace('\\', '/').rstrip('/')
@@ -1769,13 +1769,7 @@ def test_source_notimp():
 
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
 def test_atexit():
-    fc = FileCache(atexit_cleanup=False)
-    assert os.path.exists(fc.cache_dir)
-    atexit._run_exitfuncs()
-    assert os.path.exists(fc.cache_dir)
-    fc.clean_up()
-
-    fc = FileCache(atexit_cleanup=True)
+    fc = FileCache()
     assert os.path.exists(fc.cache_dir)
     atexit._run_exitfuncs()
     assert not os.path.exists(fc.cache_dir)
