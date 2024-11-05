@@ -2,6 +2,7 @@ from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import requests
+from typing import Optional
 import uuid
 
 import boto3
@@ -20,7 +21,10 @@ class FileCacheSource:
     bypassing the caching mechanism of :class:`FileCache`.
     """
 
-    def __init__(self, src_prefix=None):
+    def __init__(self,
+                 scheme: str,
+                 remote: str,
+                 anonymous: bool = False):
         """Initialization for the FileCacheSource superclass.
 
         Note:
@@ -29,17 +33,39 @@ class FileCacheSource:
             :class:`FileCacheSourceGS`, and :class:`FileCacheSourceS3`).
 
         Parameters:
-            src_prefix (str, optional): The prefix for the source, which can be one of
-                ``http://<host>``, ``https://<host>``, ``gs://<bucket>``, or
-                ``s3://<bucket>``. For a local source, this parameter should not be
-                specified.
+            scheme: The scheme of the source, such as 'gs' or 'file'.
+            anonymous...
         """
 
-        self._src_type = None
-        self._src_prefix_ = (src_prefix if src_prefix else '').rstrip('/') + '/'
+        if scheme not in self.schemes():
+            raise ValueError(f'Unsupported scheme: {scheme}')
+
+        if '/' in remote:
+            raise ValueError(f'Illegal remote {remote}')
+
+        self._scheme = scheme
+        self._remote = remote
+        self._anonymous = anonymous
+        self._src_prefix = f'{scheme}://{remote}'
+        self._src_prefix_ = self._src_prefix + '/'
 
         # The _cache_subdir attribute is only used by the FileCache class
         self._cache_subdir = None
+
+    @classmethod
+    def schemes(self) -> tuple:
+        """The URL schemes supported by this class."""
+        raise NotImplementedError
+
+    @classmethod
+    def scheme(self) -> str:
+        """The primary URL scheme supported by this class."""
+        raise NotImplementedError
+
+    @classmethod
+    def uses_anonymous(self) -> bool:
+        """Whether this class has the concept of anonymous accesses."""
+        raise NotImplementedError
 
     def exists(self, sub_path):
         raise NotImplementedError
@@ -158,7 +184,10 @@ class FileCacheSourceLocal(FileCacheSource):
     essentially no functionality on top of the standard Python filesystem functions.
     """
 
-    def __init__(self, src_prefix=None, anonymous=False, **kwargs):
+    def __init__(self,
+                 scheme: str,
+                 remote: str,
+                 anonymous: bool = False):
         """Initialization for the FileCacheLocal class.
 
         Parameters:
@@ -168,12 +197,27 @@ class FileCacheSourceLocal(FileCacheSource):
                 signature of the other source classes. It should not be used.
         """
 
-        if src_prefix is not None and src_prefix != '':
-            raise ValueError(f'Invalid prefix: {src_prefix}')
-        super().__init__(**kwargs)
+        if remote != '':
+            raise ValueError('UNC shares are not supported: {remote}')
 
-        self._src_type = 'local'
+        super().__init__(scheme, remote, anonymous)
+
         self._cache_subdir = ''
+
+    @classmethod
+    def schemes(self) -> tuple:
+        """The URL schemes supported by this class."""
+        return ('file',)
+
+    @classmethod
+    def scheme(self) -> str:
+        """The primary URL scheme supported by this class."""
+        return 'file'
+
+    @classmethod
+    def uses_anonymous(self) -> bool:
+        """Whether this class has the concept of anonymous accesses."""
+        return False
 
     def exists(self, sub_path):
         """Check if a file exists without downloading it.
@@ -257,7 +301,10 @@ class FileCacheSourceLocal(FileCacheSource):
 class FileCacheSourceHTTP(FileCacheSource):
     """Class that provides access to files stored on a webserver."""
 
-    def __init__(self, src_prefix, anonymous=False, **kwargs):
+    def __init__(self,
+                 scheme: str,
+                 remote: str,
+                 anonymous: bool = False):
         """Initialization for the FileCacheHTTP class.
 
         Parameters:
@@ -267,17 +314,30 @@ class FileCacheSourceHTTP(FileCacheSource):
                 signature of the other source classes. It should not be used.
         """
 
-        src_prefix = src_prefix.rstrip('/')
-        if (not src_prefix.startswith(('http://', 'https://')) or
-                src_prefix.count('/') != 2):
-            raise ValueError(f'Invalid prefix: {src_prefix}')
+        if remote == '':
+            raise ValueError('remote parameter must have a value')
 
-        super().__init__(src_prefix)
+        super().__init__(scheme, remote, anonymous)
 
         self._prefix_type = 'web'
-        self._cache_subdir = (src_prefix
+        self._cache_subdir = (self._src_prefix
                               .replace('http://', 'http_')
                               .replace('https://', 'http_'))
+
+    @classmethod
+    def schemes(self) -> tuple:
+        """The URL schemes supported by this class."""
+        return ('http', 'https')
+
+    @classmethod
+    def scheme(self) -> str:
+        """The primary URL scheme supported by this class."""
+        return 'http'
+
+    @classmethod
+    def uses_anonymous(self) -> bool:
+        """Whether this class has the concept of anonymous accesses."""
+        return False
 
     def exists(self, sub_path):
         """Check if a file exists without downloading it.
@@ -294,7 +354,7 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         ret = True
         try:
-            response = requests.head(f'{self._src_prefix_}{sub_path}')
+            response = requests.head(self._src_prefix_ + sub_path)
             response.raise_for_status()
         except requests.exceptions.RequestException:
             ret = False
@@ -326,7 +386,7 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         local_path = Path(local_path).expanduser().resolve()
 
-        url = f'{self._src_prefix_}{sub_path}'
+        url = self._src_prefix_ + sub_path
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -357,7 +417,10 @@ class FileCacheSourceHTTP(FileCacheSource):
 class FileCacheSourceGS(FileCacheSource):
     """Class that provides access to files stored in Google Storage."""
 
-    def __init__(self, src_prefix, anonymous=False, **kwargs):
+    def __init__(self,
+                 scheme: str,
+                 remote: str,
+                 anonymous: bool = False):
         """Initialization for the FileCacheGS class.
 
         Parameters:
@@ -368,19 +431,32 @@ class FileCacheSourceGS(FileCacheSource):
                 environment.
         """
 
-        src_prefix = src_prefix.rstrip('/')
-        if (not src_prefix.startswith('gs://') or
-                src_prefix.count('/') != 2):
-            raise ValueError(f'Invalid prefix: {src_prefix}')
+        if remote == '':
+            raise ValueError('remote parameter must have a value')
 
-        super().__init__(src_prefix)
+        super().__init__(scheme, remote, anonymous)
 
-        self._src_type = 'gs'
         self._client = (gs_storage.Client.create_anonymous_client()
                         if anonymous else gs_storage.Client())
-        self._bucket_name = src_prefix.lstrip('gs://')
+        self._bucket_name = remote
         self._bucket = self._client.bucket(self._bucket_name)
-        self._cache_subdir = src_prefix.replace('gs://', 'gs_')
+        self._cache_subdir = self._src_prefix.replace('gs://', 'gs_')
+        print('Bucket', self._bucket_name, 'subdir', self._cache_subdir)
+
+    @classmethod
+    def schemes(self) -> tuple:
+        """The URL schemes supported by this class."""
+        return ('gs',)
+
+    @classmethod
+    def scheme(self) -> str:
+        """The primary URL scheme supported by this class."""
+        return 'gs'
+
+    @classmethod
+    def uses_anonymous(self) -> bool:
+        """Whether this class has the concept of anonymous accesses."""
+        return True
 
     def exists(self, sub_path, logger=None):
         """Check if a file exists without downloading it.
@@ -396,6 +472,7 @@ class FileCacheSourceGS(FileCacheSource):
             accessible.
         """
 
+        print('Bucket', self._bucket_name, 'Path', sub_path)
         blob = self._bucket.blob(sub_path)
         try:
             return blob.exists()
@@ -479,7 +556,10 @@ class FileCacheSourceGS(FileCacheSource):
 class FileCacheSourceS3(FileCacheSource):
     """Class that provides access to files stored in AWS S3."""
 
-    def __init__(self, src_prefix, anonymous=False, **kwargs):
+    def __init__(self,
+                 scheme: str,
+                 remote: str,
+                 anonymous: bool = False):
         """Initialization for the FileCacheS3 class.
 
         Parameters:
@@ -490,20 +570,32 @@ class FileCacheSourceS3(FileCacheSource):
                 environment.
         """
 
-        src_prefix = src_prefix.rstrip('/')
-        if (not src_prefix.startswith('s3://') or
-                src_prefix.count('/') != 2):
-            raise ValueError(f'Invalid prefix: {src_prefix}')
+        if remote == '':
+            raise ValueError('remote parameter must have a value')
 
-        super().__init__(src_prefix)
+        super().__init__(scheme, remote, anonymous)
 
-        self._prefix_type = 's3'
         self._client = (boto3.client('s3',
                                      config=botocore.client.Config(
                                          signature_version=botocore.UNSIGNED))
                         if anonymous else boto3.client('s3'))
-        self._bucket_name = src_prefix.lstrip('s3://')
-        self._cache_subdir = src_prefix.replace('s3://', 's3_')
+        self._bucket_name = remote
+        self._cache_subdir = self._src_prefix.replace('s3://', 's3_')
+
+    @classmethod
+    def schemes(self) -> tuple:
+        """The URL schemes supported by this class."""
+        return ('s3',)
+
+    @classmethod
+    def scheme(self) -> str:
+        """The primary URL scheme supported by this class."""
+        return 's3'
+
+    @classmethod
+    def uses_anonymous(self) -> bool:
+        """Whether this class has the concept of anonymous accesses."""
+        return True
 
     def exists(self, sub_path):
         """Check if a file exists without downloading it.

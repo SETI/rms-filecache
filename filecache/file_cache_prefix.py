@@ -77,7 +77,7 @@ class FileCachePrefix:
             ValueError: If the path is invalidly constructed.
         """
 
-        return self._filecache.exists(f'{self._prefix_}{sub_path}',
+        return self._filecache.exists(self._prefix_ + sub_path,
                                       anonymous=self._anonymous)
 
     def get_local_path(self, sub_path, create_parents=True):
@@ -96,7 +96,7 @@ class FileCachePrefix:
             directory structure will be created by this function as necessary.
         """
 
-        return self._filecache.get_local_path(f'{self._prefix_}{sub_path}',
+        return self._filecache.get_local_path(self._prefix_ + sub_path,
                                               anonymous=self._anonymous,
                                               create_parents=create_parents)
 
@@ -149,6 +149,7 @@ class FileCachePrefix:
         if nthreads is None:
             nthreads = self._nthreads
 
+        print(self._prefix_, sub_path)
         try:
             if isinstance(sub_path, (list, tuple)):
                 new_sub_path = [f'{self._prefix_}{p}' for p in sub_path]
@@ -158,7 +159,7 @@ class FileCachePrefix:
                                                nthreads=nthreads,
                                                exception_on_fail=exception_on_fail)
             else:
-                ret = self._filecache.retrieve(f'{self._prefix_}{sub_path}',
+                ret = self._filecache.retrieve(self._prefix_ + sub_path,
                                                anonymous=self._anonymous,
                                                lock_timeout=self._lock_timeout,
                                                exception_on_fail=exception_on_fail)

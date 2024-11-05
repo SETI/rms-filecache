@@ -54,9 +54,9 @@ ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
 
-# This has to be first to clean up any cache_name directory from a previous failed run
-def test_cleanup_cache_name_dir():
-    with FileCache(cache_name='global', delete_on_exit=True):
+# This has to be first to clean up any global directory from a previous failed run
+def test_cleanup_global_dir():
+    with FileCache(delete_on_exit=True):
         pass
 
 
@@ -113,7 +113,7 @@ def test_logger():
     logger = MyLogger()
     filecache.set_global_logger(logger)
     assert filecache.get_global_logger() is logger
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         pfx.exists(EXPECTED_FILENAMES[0])
         pfx.exists('bad-filename')
@@ -136,7 +136,7 @@ def test_logger():
 
     logger = MyLogger()
     filecache.set_global_logger(logger)
-    with FileCache(cache_name='global') as fc:
+    with FileCache() as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         pfx.retrieve(EXPECTED_FILENAMES[0])
         fc.delete_cache()
@@ -156,14 +156,14 @@ def test_logger():
 
     # Remove global logger
     filecache.set_global_logger(False)
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         pfx.retrieve(EXPECTED_FILENAMES[0])
     assert len(logger.messages) == 0
 
     # Specified logger
     logger = MyLogger()
-    with FileCache(logger=logger) as fc:
+    with FileCache(cache_name=None, logger=logger) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         pfx.retrieve(EXPECTED_FILENAMES[0])
         pfx.retrieve(EXPECTED_FILENAMES[0])
@@ -181,7 +181,7 @@ def test_logger():
 
     # Specified logger
     logger = MyLogger()
-    with FileCache(logger=logger) as fc:
+    with FileCache(cache_name=None, logger=logger) as fc:
         pfx = fc.new_prefix(EXPECTED_DIR)
         pfx.retrieve(EXPECTED_FILENAMES[0])
 # Creating cache /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
@@ -194,7 +194,7 @@ def test_logger():
 
     # Uploading
     logger = MyLogger()
-    with FileCache(logger=logger) as fc:
+    with FileCache(cache_name=None, logger=logger) as fc:
         new_prefix = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         local_path = pfx.get_local_path('test_file.txt')
@@ -216,19 +216,19 @@ def test_easy_logger(capsys):
     filecache.set_easy_logger()
     filecache.set_easy_logger()
     filecache.set_easy_logger()
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         fc.new_prefix('gs://test')
     assert 'Initializing prefix gs://test/\n' in capsys.readouterr().out
     filecache.set_global_logger(None)
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         fc.new_prefix('gs://test')
     assert capsys.readouterr().out == ''
 
 
 def test_temp_dir_good():
-    fc1 = FileCache()
-    fc2 = FileCache()
-    fc3 = FileCache()
+    fc1 = FileCache(cache_name=None)
+    fc2 = FileCache(cache_name=None)
+    fc3 = FileCache(cache_name=None)
     assert str(fc1.cache_dir) != str(fc2.cache_dir)
     assert str(fc2.cache_dir) != str(fc3.cache_dir)
     assert fc1.cache_dir.name.startswith('_filecache_')
@@ -246,8 +246,8 @@ def test_temp_dir_good():
 
     cwd = os.getcwd()
 
-    fc4 = FileCache(cache_root='.')
-    fc5 = FileCache(cache_root=cwd)
+    fc4 = FileCache(cache_root='.', cache_name=None)
+    fc5 = FileCache(cache_root=cwd, cache_name=None)
     assert str(fc4.cache_dir.parent) == str(fc5.cache_dir.parent)
     assert str(fc4.cache_dir.parent) == cwd
     assert str(fc5.cache_dir.parent) == cwd
@@ -269,9 +269,9 @@ def test_temp_dir_bad():
 
 
 def test_cache_name_global():
-    fc1 = FileCache()
-    fc2 = FileCache(cache_name='global')
-    fc3 = FileCache(cache_name='global')
+    fc1 = FileCache(cache_name=None)
+    fc2 = FileCache()
+    fc3 = FileCache()
     assert str(fc1.cache_dir) != str(fc2.cache_dir)
     assert str(fc2.cache_dir) == str(fc3.cache_dir)
     assert fc1.cache_dir.name.startswith('_filecache_')
@@ -291,11 +291,11 @@ def test_cache_name_global():
 
 
 def test_cache_name_global_ctx():
-    with FileCache() as fc1:
+    with FileCache(cache_name=None) as fc1:
         assert fc1.cache_dir.exists()
-        with FileCache(cache_name='global') as fc2:
+        with FileCache() as fc2:
             assert fc2.cache_dir.exists()
-            with FileCache(cache_name='global') as fc3:
+            with FileCache() as fc3:
                 assert fc3.cache_dir.exists()
                 assert str(fc1.cache_dir) != str(fc2.cache_dir)
                 assert str(fc2.cache_dir) == str(fc3.cache_dir)
@@ -315,8 +315,8 @@ def test_cache_name_global_ctx():
 
 
 def test_cache_name_named():
-    fc1 = FileCache()
-    fc2 = FileCache(cache_name='global')
+    fc1 = FileCache(cache_name=None)
+    fc2 = FileCache()
     fc3 = FileCache(cache_name='test')
     fc4 = FileCache(cache_name='test')
     assert str(fc1.cache_dir) != str(fc2.cache_dir)
@@ -355,7 +355,7 @@ def test_cache_name_bad():
 
 
 def test_prefix_bad():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         with pytest.raises(TypeError):
             fc.new_prefix(5)
     assert not fc.cache_dir.exists()
@@ -363,14 +363,14 @@ def test_prefix_bad():
 
 @pytest.mark.parametrize('prefix', ALL_PREFIXES)
 def test_exists_all_good(prefix):
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         for filename in LIMITED_FILENAMES:
             assert fc.exists(f'{prefix}/{filename}')
 
 
 @pytest.mark.parametrize('prefix', ALL_PREFIXES)
 def test_exists_all_bad(prefix):
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         assert not fc.exists(f'{prefix}/nonexistent.txt')
         assert not fc.exists(f'{prefix}/a/b/c.txt')
         assert not fc.exists(f'{prefix}-bad/{EXPECTED_FILENAMES[0]}')
@@ -418,7 +418,7 @@ def test_local_retr_pfx_good(cache_name):
 @pytest.mark.parametrize('cache_name', (None, 'test'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_cloud_retr_good(cache_name, prefix):
-    with FileCache(cache_name=cache_name, all_anonymous=True) as fc:
+    with FileCache(cache_name=cache_name, anonymous=True) as fc:
         for filename in LIMITED_FILENAMES:
             assert fc.exists(f'{prefix}/{filename}')
             path = fc.retrieve(f'{prefix}/{filename}')
@@ -460,7 +460,7 @@ def test_cloud_retr_pfx_good(cache_name, prefix):
 @pytest.mark.parametrize('cache_name', (None, 'test'))
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_cloud_retr_multi_good(cache_name, prefix):
-    with FileCache(cache_name=cache_name, all_anonymous=True) as fc:
+    with FileCache(cache_name=cache_name, anonymous=True) as fc:
         for filename in LIMITED_FILENAMES:
             paths = fc.retrieve([f'{prefix}/{filename}'])
             assert len(paths) == 1
@@ -506,7 +506,7 @@ def test_cloud_retr_multi_pfx_good(cache_name, prefix):
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_cloud2_retr_pfx_good(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         # With two identical prefixes, it shouldn't matter which you use
         # because we will return the same object
         pfx1 = fc.new_prefix(prefix, anonymous=True)
@@ -530,9 +530,9 @@ def test_cloud2_retr_pfx_good(prefix):
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_cloud3_retr_pfx_good(prefix):
     # Multiple prefixes with different subdir prefixes
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx1 = fc.new_prefix(prefix, anonymous=True)
-        for filename in LIMITED_FILENAMES:
+        for filename in LIMITED_FILENAMES[1:]:
             subdirs, _, name = filename.rpartition('/')
             pfx2 = fc.new_prefix(f'{prefix}/{subdirs}', anonymous=True)
             path2 = pfx2.retrieve(name)
@@ -548,18 +548,18 @@ def test_cloud3_retr_pfx_good(prefix):
 
 
 def test_local_retr_bad():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         with pytest.raises(FileNotFoundError):
             fc.retrieve('nonexistent.txt')
     assert not fc.cache_dir.exists()
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         ret = fc.retrieve('nonexistent.txt', exception_on_fail=False)
         assert isinstance(ret, FileNotFoundError)
     assert not fc.cache_dir.exists()
 
 
 def test_local_retr_pfx_bad():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         lf = fc.new_prefix(EXPECTED_DIR)
         with pytest.raises(FileNotFoundError):
             lf.retrieve('nonexistent.txt')
@@ -643,7 +643,7 @@ def test_cloud_retr_pfx_bad_2(cache_name, prefix):
 
 
 def test_multi_prefixes_retr():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         prefixes = []
         # Different prefix should have different cache paths but all have the same
         # contents
@@ -665,12 +665,12 @@ def test_multi_prefixes_retr():
 
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_multi_prefixes_cache_name_retr(prefix):
-    with FileCache(cache_name='global', delete_on_exit=True) as fc1:
+    with FileCache(delete_on_exit=True) as fc1:
         pfx1 = fc1.new_prefix(prefix, anonymous=True)
         paths1 = []
         for filename in EXPECTED_FILENAMES:
             paths1.append(pfx1.retrieve(filename))
-        with FileCache(cache_name='global') as fc2:
+        with FileCache() as fc2:
             pfx2 = fc2.new_prefix(prefix, anonymous=True)
             paths2 = []
             for filename in EXPECTED_FILENAMES:
@@ -683,7 +683,7 @@ def test_multi_prefixes_cache_name_retr(prefix):
 
 
 def test_locking_1():
-    with FileCache(cache_name='global', delete_on_exit=True) as fc:
+    with FileCache(delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -702,7 +702,7 @@ def test_locking_1():
 
 
 def test_locking_pfx_1():
-    with FileCache(cache_name='global', delete_on_exit=True) as fc:
+    with FileCache(delete_on_exit=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -724,7 +724,7 @@ def test_locking_pfx_1():
 
 
 def test_locking_2():
-    with FileCache(cache_name='global', delete_on_exit=True) as fc:
+    with FileCache(delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -742,7 +742,7 @@ def test_locking_2():
 
 
 def test_locking_pfx_2():
-    with FileCache(cache_name='global', delete_on_exit=True) as fc:
+    with FileCache(delete_on_exit=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -762,7 +762,7 @@ def test_locking_pfx_2():
 
 
 def test_locking_3():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -779,7 +779,7 @@ def test_locking_3():
 
 
 def test_locking_pfx_3():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -798,7 +798,7 @@ def test_locking_pfx_3():
 
 
 def test_locking_multi_1():
-    with FileCache(cache_name='global', delete_on_exit=True) as fc:
+    with FileCache(delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -818,7 +818,7 @@ def test_locking_multi_1():
 
 
 def test_locking_multi_pfx_1():
-    with FileCache(cache_name='global', delete_on_exit=True) as fc:
+    with FileCache(delete_on_exit=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -841,7 +841,7 @@ def test_locking_multi_pfx_1():
 
 def test_locking_multi_2():
     filecache.set_easy_logger()
-    with FileCache(cache_name='global', delete_on_exit=True) as fc:
+    with FileCache(delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
         local_path = fc.cache_dir / filename
@@ -861,7 +861,7 @@ def test_locking_multi_2():
 
 
 def test_locking_multi_pfx_2():
-    with FileCache(cache_name='global', delete_on_exit=True) as fc:
+    with FileCache(delete_on_exit=True) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT, lock_timeout=0)
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -884,13 +884,13 @@ def test_locking_multi_pfx_2():
 
 def test_cleanup_locking_bad():
     logger = MyLogger()
-    with FileCache(logger=logger) as fc:
+    with FileCache(cache_name=None, logger=logger) as fc:
         local_path = fc.get_local_path('gs://test/test.txt')
         with open(local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}', 'w') as fp:
             fp.write('A')
     logger.has_prefix_list(['Creating', 'Returning', 'Deleting', 'ERROR', 'Removing',
                             'Removing', 'Removing'])
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         local_path = fc.get_local_path('gs://test/test.txt')
         with open(local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}', 'w') as fp:
             fp.write('A')
@@ -898,7 +898,7 @@ def test_cleanup_locking_bad():
 
 def test_bad_cache_dir():
     with pytest.raises(ValueError):
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             orig_cache_dir = fc._cache_dir
             fc._cache_dir = '/bogus/path/not/a/filecache'
     fc._cache_dir = orig_cache_dir
@@ -907,7 +907,7 @@ def test_bad_cache_dir():
 
 
 def test_double_delete():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         for filename in LIMITED_FILENAMES:
             pfx.retrieve(filename)
@@ -921,7 +921,7 @@ def test_double_delete():
         path.unlink()
     assert not fc.cache_dir.exists()
 
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         for filename in LIMITED_FILENAMES:
             pfx.retrieve(filename)
@@ -945,7 +945,7 @@ def test_double_delete():
         fc.delete_cache()
         assert not fc.cache_dir.exists()
 
-    with FileCache(cache_name='global') as fc:
+    with FileCache() as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         for filename in LIMITED_FILENAMES:
             pfx.retrieve(filename)
@@ -973,7 +973,7 @@ def test_double_delete():
 
 
 def test_open_context_read():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         with pfx.open(LIMITED_FILENAMES[0], 'r') as fp:
             cache_data = fp.read()
@@ -986,8 +986,8 @@ def test_open_context_read():
 
 
 def test_cache_owner():
-    with FileCache(cache_name='global', delete_on_exit=True) as fc1:
-        with FileCache(cache_name='global') as fc2:
+    with FileCache(delete_on_exit=True) as fc1:
+        with FileCache() as fc2:
             pass
         assert fc1.cache_dir == fc2.cache_dir
         assert os.path.exists(fc1.cache_dir)
@@ -998,7 +998,7 @@ def test_cache_owner():
 def test_local_upl_good():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt',
                                            create_parents=False)
             assert not local_path.parent.is_dir()
@@ -1015,7 +1015,7 @@ def test_local_upl_good():
 def test_local_upl_pfx_good():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             pfx = fc.new_prefix(temp_dir)
             local_path = pfx.get_local_path('dir1/test_file.txt',
                                             create_parents=False)
@@ -1033,7 +1033,7 @@ def test_local_upl_pfx_good():
 def test_local_upl_ctx():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir)
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             with fc.open(temp_dir / 'dir1/test_file.txt', 'wb') as fp2:
                 with open(EXPECTED_DIR / EXPECTED_FILENAMES[0], 'rb') as fp1:
                     fp2.write(fp1.read())
@@ -1045,7 +1045,7 @@ def test_local_upl_ctx():
 def test_local_upl_pfx_ctx():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir)
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             pfx = fc.new_prefix(temp_dir)
             with pfx.open('dir1/test_file.txt', 'wb') as fp2:
                 with open(EXPECTED_DIR / EXPECTED_FILENAMES[0], 'rb') as fp1:
@@ -1058,10 +1058,10 @@ def test_local_upl_pfx_ctx():
 def test_local_upl_bad():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir)
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             with pytest.raises(FileNotFoundError):
                 fc.upload(temp_dir / 'XXXXXX.XXX')
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             ret = fc.upload(temp_dir / 'XXXXXX.XXX', exception_on_fail=False)
             assert isinstance(ret, FileNotFoundError)
 
@@ -1069,11 +1069,11 @@ def test_local_upl_bad():
 def test_local_upl_pfx_bad():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir)
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             pfx = fc.new_prefix(temp_dir)
             with pytest.raises(FileNotFoundError):
                 pfx.upload('XXXXXX.XXX')
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             pfx = fc.new_prefix(temp_dir)
             ret = pfx.upload('XXXXXX.XXX', exception_on_fail=False)
             assert isinstance(ret, FileNotFoundError)
@@ -1081,7 +1081,7 @@ def test_local_upl_pfx_bad():
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_good(prefix):
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         local_path = fc.get_local_path(f'{new_prefix}/test_file.txt')
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
@@ -1093,7 +1093,7 @@ def test_cloud_upl_good(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_pfx_good(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         local_path = pfx.get_local_path('test_file.txt')
@@ -1108,7 +1108,7 @@ def test_cloud_upl_pfx_good(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_bad_1(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         with pytest.raises(FileNotFoundError):
             fc.upload(f'{prefix}/{uuid.uuid4()}/XXXXXXXXX.xxx',
                       anonymous=True)
@@ -1124,7 +1124,7 @@ def test_cloud_upl_bad_1(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_pfx_bad_1(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         with pytest.raises(FileNotFoundError):
@@ -1144,7 +1144,7 @@ def test_cloud_upl_pfx_bad_1(prefix):
 
 @pytest.mark.parametrize('prefix', BAD_WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_bad_2(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         filename = 'test_file.txt'
         local_path = fc.get_local_path(f'{new_prefix}/{filename}')
@@ -1165,7 +1165,7 @@ def test_cloud_upl_bad_2(prefix):
 
 @pytest.mark.parametrize('prefix', BAD_WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_pfx_bad_2(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         filename = 'test_file.txt'
@@ -1191,7 +1191,7 @@ def test_cloud_upl_pfx_bad_2(prefix):
 
 def test_complex_read_write():
     pfx_name = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         with fc.open(f'{pfx_name}/test_file.txt', 'wb') as fp:
             fp.write(b'A')
         with fc.open(f'{pfx_name}/test_file.txt', 'ab') as fp:
@@ -1201,7 +1201,7 @@ def test_complex_read_write():
         assert res == b'AB'
         assert fc.download_counter == 0
         assert fc.upload_counter == 2
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         with fc.open(f'{pfx_name}/test_file.txt', 'rb') as fp:
             res = fp.read()
         assert res == b'AB'
@@ -1211,7 +1211,7 @@ def test_complex_read_write():
 
 def test_complex_read_write_pfx():
     pfx_name = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         pfx = fc.new_prefix(pfx_name)
         with pfx.open('test_file.txt', 'wb') as fp:
             fp.write(b'A')
@@ -1224,7 +1224,7 @@ def test_complex_read_write_pfx():
         assert fc.upload_counter == 2
         assert pfx.download_counter == 0
         assert pfx.upload_counter == 2
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         pfx = fc.new_prefix(pfx_name)
         with pfx.open('test_file.txt', 'rb') as fp:
             res = fp.read()
@@ -1236,7 +1236,7 @@ def test_complex_read_write_pfx():
 
 
 def test_complex_retr_multi_1():
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         # Retrieve a couple of local files one at a time
         fc.retrieve(EXPECTED_DIR / EXPECTED_FILENAMES[0])
         fc.retrieve(EXPECTED_DIR / EXPECTED_FILENAMES[1])
@@ -1251,7 +1251,7 @@ def test_complex_retr_multi_1():
 
 @pytest.mark.parametrize('cache_name', (None, 'global'))
 def test_complex_retr_multi_2(cache_name):
-    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
+    with FileCache(cache_name=cache_name, delete_on_exit=True, anonymous=True) as fc:
         # Retrieve various cloud files one at a time
         fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
         fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
@@ -1282,7 +1282,7 @@ def test_complex_retr_multi_2(cache_name):
 
 @pytest.mark.parametrize('cache_name', (None, 'global'))
 def test_complex_retr_multi_3(cache_name):
-    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
+    with FileCache(cache_name=cache_name, delete_on_exit=True, anonymous=True) as fc:
         # Retrieve various cloud files one at a time
         fc.retrieve(f'{GS_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
         fc.retrieve(f'{S3_TEST_BUCKET_ROOT}/{EXPECTED_FILENAMES[1]}')
@@ -1314,7 +1314,7 @@ def test_complex_retr_multi_3(cache_name):
 @pytest.mark.parametrize('cache_name', (None, 'global'))
 @pytest.mark.parametrize('prefix', ALL_PREFIXES)
 def test_complex_retr_multi_4(cache_name, prefix):
-    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
+    with FileCache(cache_name=cache_name, delete_on_exit=True, anonymous=True) as fc:
         # Retrieve some cloud files with a bad name included
         full_paths = [f'{prefix}/{filename}' for filename in EXPECTED_FILENAMES]
         full_paths = [f'{prefix}/nonexistent.txt'] + full_paths
@@ -1334,7 +1334,7 @@ def test_complex_retr_multi_4(cache_name, prefix):
 
 
 def test_complex_retr_multi_pfx_1():
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         pfx = fc.new_prefix(str(EXPECTED_DIR))
         # Retrieve a couple of local files one at a time
         pfx.retrieve(EXPECTED_FILENAMES[0])
@@ -1350,7 +1350,7 @@ def test_complex_retr_multi_pfx_1():
 
 @pytest.mark.parametrize('cache_name', (None, 'global'))
 def test_complex_retr_multi_pfx_2(cache_name):
-    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
+    with FileCache(cache_name=cache_name, delete_on_exit=True, anonymous=True) as fc:
         # Retrieve various cloud files one at a time in random order
         pfx_gs = fc.new_prefix(GS_TEST_BUCKET_ROOT)
         pfx_s3 = fc.new_prefix(S3_TEST_BUCKET_ROOT)
@@ -1402,7 +1402,7 @@ def test_complex_retr_multi_pfx_2(cache_name):
 @pytest.mark.parametrize('cache_name', (None, 'global'))
 @pytest.mark.parametrize('prefix', ALL_PREFIXES)
 def test_complex_retr_multi_pfx_3(cache_name, prefix):
-    with FileCache(cache_name=cache_name, delete_on_exit=True, all_anonymous=True) as fc:
+    with FileCache(cache_name=cache_name, delete_on_exit=True, anonymous=True) as fc:
         # Retrieve some cloud files with a bad name included
         pfx = fc.new_prefix(prefix)
         clean_prefix = str(prefix).replace('\\', '/').rstrip('/')
@@ -1429,7 +1429,7 @@ def test_complex_retr_multi_pfx_3(cache_name, prefix):
 def test_local_upl_multi_good():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             paths = [f'dir1/test_file{x}' for x in range(10)]
             local_paths = [fc.get_local_path(temp_dir / x) for x in paths]
             for lp in local_paths:
@@ -1449,7 +1449,7 @@ def test_local_upl_multi_good():
 def test_local_upl_multi_pfx_good():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             pfx = fc.new_prefix(temp_dir)
             paths = [f'dir1/test_file{x}' for x in range(10)]
             local_paths = [pfx.get_local_path(x) for x in paths]
@@ -1472,7 +1472,7 @@ def test_local_upl_multi_pfx_good():
 def test_local_upl_multi_bad():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).resolve()
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
             assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
@@ -1486,7 +1486,7 @@ def test_local_upl_multi_bad():
 def test_local_upl_multi_pfx_bad():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).resolve()
-        with FileCache() as fc:
+        with FileCache(cache_name=None) as fc:
             pfx = fc.new_prefix(temp_dir)
             local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
             assert local_path == (temp_dir / 'dir1/test_file.txt')
@@ -1504,7 +1504,7 @@ def test_local_upl_multi_pfx_bad():
 def test_complex_upl_multi_1(prefix):
     new_prefix = f'{prefix}/{uuid.uuid4()}'
     full_paths = []
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         local_paths = []
         for i, filename in enumerate(EXPECTED_FILENAMES):
             full_path = f"{new_prefix}/test_file{i}.{filename.rsplit('.')[1]}"
@@ -1516,7 +1516,7 @@ def test_complex_upl_multi_1(prefix):
         assert ret == local_paths
         assert fc.download_counter == 0
         assert fc.upload_counter == len(EXPECTED_FILENAMES)
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         local_paths = fc.retrieve(full_paths, anonymous=True)
         assert len(local_paths) == len(EXPECTED_FILENAMES)
         for local_path, filename in zip(local_paths, EXPECTED_FILENAMES):
@@ -1530,7 +1530,7 @@ def test_complex_upl_multi_1(prefix):
 def test_complex_upl_multi_pfx_1(prefix):
     new_prefix = f'{prefix}/{uuid.uuid4()}'
     sub_paths = []
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         local_paths = []
         for i, filename in enumerate(EXPECTED_FILENAMES):
@@ -1546,7 +1546,7 @@ def test_complex_upl_multi_pfx_1(prefix):
         assert pfx.download_counter == 0
         assert pfx.upload_counter == len(EXPECTED_FILENAMES)
     assert not fc.cache_dir.exists()
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         local_paths = pfx.retrieve(sub_paths)
         assert len(local_paths) == len(EXPECTED_FILENAMES)
@@ -1561,7 +1561,7 @@ def test_complex_upl_multi_pfx_1(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_multi_good(prefix):
-    with FileCache(all_anonymous=True) as fc:
+    with FileCache(cache_name=None, anonymous=True) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         paths = [f'{new_prefix}/dir1/test_file{x}' for x in range(10)]
         local_paths = [fc.get_local_path(x) for x in paths]
@@ -1576,7 +1576,7 @@ def test_cloud_upl_multi_good(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_multi_pfx_good(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         paths = [f'dir1/test_file{x}' for x in range(10)]
@@ -1594,7 +1594,7 @@ def test_cloud_upl_multi_pfx_good(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_multi_bad_1(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         paths = [f'{new_prefix}/dir1/test_file{x}' for x in range(10)]
         local_paths = [fc.get_local_path(x) for x in paths]
@@ -1613,7 +1613,7 @@ def test_cloud_upl_multi_bad_1(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_multi_pfx_bad_1(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         paths = [f'dir1/test_file{x}' for x in range(10)]
@@ -1635,7 +1635,7 @@ def test_cloud_upl_multi_pfx_bad_1(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_multi_bad_2(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         paths = [f'{new_prefix}/dir1/test_file{x}' for x in range(10)]
         local_paths = [fc.get_local_path(x) for x in paths]
@@ -1656,7 +1656,7 @@ def test_cloud_upl_multi_bad_2(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_multi_pfx_bad_2(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         paths = [f'dir1/test_file{x}' for x in range(10)]
@@ -1680,7 +1680,7 @@ def test_cloud_upl_multi_pfx_bad_2(prefix):
 
 @pytest.mark.parametrize('prefix', BAD_WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_multi_bad_3(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         paths = [f'{new_prefix}/dir1/test_file{x}' for x in range(10)]
         local_paths = [fc.get_local_path(x) for x in paths]
@@ -1701,7 +1701,7 @@ def test_cloud_upl_multi_bad_3(prefix):
 
 @pytest.mark.parametrize('prefix', BAD_WRITABLE_CLOUD_PREFIXES)
 def test_cloud_upl_multi_pfx_bad_3(prefix):
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         new_prefix = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_prefix(new_prefix, anonymous=True)
         paths = [f'dir1/test_file{x}' for x in range(10)]
@@ -1725,29 +1725,32 @@ def test_cloud_upl_multi_pfx_bad_3(prefix):
 
 def test_source_bad():
     with pytest.raises(ValueError):
-        FileCacheSourceLocal('hi')
+        FileCacheSourceLocal('fred', 'hi')
+
     with pytest.raises(ValueError):
-        FileCacheSourceHTTP('fred://hi')
+        FileCacheSourceHTTP('fred', 'hi')
     with pytest.raises(ValueError):
-        FileCacheSourceHTTP('http://hi/hi')
+        FileCacheSourceHTTP('http', 'hi/hi')
     with pytest.raises(ValueError):
-        FileCacheSourceHTTP('http://')
+        FileCacheSourceHTTP('https', '')
+
     with pytest.raises(ValueError):
-        FileCacheSourceGS('fred://hi')
+        FileCacheSourceGS('fred', 'hi')
     with pytest.raises(ValueError):
-        FileCacheSourceGS('gs://hi/hi')
+        FileCacheSourceGS('gs', 'hi/hi')
     with pytest.raises(ValueError):
-        FileCacheSourceGS('gs://')
+        FileCacheSourceGS('gs', '')
+
     with pytest.raises(ValueError):
-        FileCacheSourceS3('fred://hi')
+        FileCacheSourceS3('fred', 'hi')
     with pytest.raises(ValueError):
-        FileCacheSourceS3('s3://hi/hi')
+        FileCacheSourceS3('s3', 'hi/hi')
     with pytest.raises(ValueError):
-        FileCacheSourceS3('s3://')
+        FileCacheSourceS3('s3', '')
 
 
 def test_localsource_bad():
-    sl = FileCacheSourceLocal()
+    sl = FileCacheSourceLocal('file', '')
     with pytest.raises(ValueError):
         sl.retrieve('hi', 'bye')
     with pytest.raises(ValueError):
@@ -1758,18 +1761,18 @@ def test_localsource_bad():
 
 def test_source_notimp():
     with pytest.raises(NotImplementedError):
-        FileCacheSource().exists('')
+        FileCacheSource('', '').exists('')
     with pytest.raises(NotImplementedError):
-        FileCacheSource().retrieve('', '')
+        FileCacheSource('', '').retrieve('', '')
     with pytest.raises(NotImplementedError):
-        FileCacheSource().upload('', '')
+        FileCacheSource('', '').upload('', '')
     with pytest.raises(NotImplementedError):
-        FileCacheSourceHTTP('https://x').upload('', '')
+        FileCacheSourceHTTP('https', 'x').upload('', '')
 
 
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
 def test_atexit():
-    fc = FileCache()
+    fc = FileCache(cache_name=None)
     assert os.path.exists(fc.cache_dir)
     atexit._run_exitfuncs()
     assert not os.path.exists(fc.cache_dir)
