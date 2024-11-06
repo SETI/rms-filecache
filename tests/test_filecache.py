@@ -15,7 +15,7 @@ import pytest
 import filecache
 from filecache import (FileCache,
                        FileCacheSource,
-                       FileCacheSourceLocal,
+                       FileCacheSourceFile,
                        FileCacheSourceHTTP,
                        FileCacheSourceGS,
                        FileCacheSourceS3)
@@ -999,10 +999,10 @@ def test_local_upl_good():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache(cache_name=None) as fc:
-            local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt',
+            local_path = fc.get_local_path(str(temp_dir / 'dir1/test_file.txt'),
                                            create_parents=False)
             assert not local_path.parent.is_dir()
-            local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
+            local_path = fc.get_local_path(str(temp_dir / 'dir1/test_file.txt'))
             assert local_path.parent.is_dir()
             assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
@@ -1034,8 +1034,8 @@ def test_local_upl_ctx():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir)
         with FileCache(cache_name=None) as fc:
-            with fc.open(temp_dir / 'dir1/test_file.txt', 'wb') as fp2:
-                with open(EXPECTED_DIR / EXPECTED_FILENAMES[0], 'rb') as fp1:
+            with fc.open(str(temp_dir / 'dir1/test_file.txt'), 'wb') as fp2:
+                with open(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]), 'rb') as fp1:
                     fp2.write(fp1.read())
             assert os.path.exists(temp_dir / 'dir1/test_file.txt')
         assert os.path.exists(temp_dir / 'dir1/test_file.txt')
@@ -1243,7 +1243,7 @@ def test_complex_retr_multi_1():
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         # Now retrieve all the local files
-        paths = fc.retrieve([EXPECTED_DIR / x for x in EXPECTED_FILENAMES])
+        paths = fc.retrieve([str(EXPECTED_DIR / x) for x in EXPECTED_FILENAMES])
         assert len(paths) == len(EXPECTED_FILENAMES)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
@@ -1431,10 +1431,11 @@ def test_local_upl_multi_good():
         temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache(cache_name=None) as fc:
             paths = [f'dir1/test_file{x}' for x in range(10)]
-            local_paths = [fc.get_local_path(temp_dir / x) for x in paths]
+            local_paths = [fc.get_local_path(str(temp_dir / x)) for x in paths]
+            local_paths_str = [str(x) for x in local_paths]
             for lp in local_paths:
                 _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
-            ret = fc.upload(local_paths)
+            ret = fc.upload(local_paths_str)
             assert ret == local_paths
             for lp in local_paths:
                 assert lp.is_file()
@@ -1473,12 +1474,12 @@ def test_local_upl_multi_bad():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).resolve()
         with FileCache(cache_name=None) as fc:
-            local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
+            local_path = fc.get_local_path(str(temp_dir / 'dir1/test_file.txt'))
             assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
             with pytest.raises(FileNotFoundError):
-                fc.upload([local_path,
-                           temp_dir / 'XXXXXX.XXX'])
+                fc.upload([str(local_path),
+                           str(temp_dir / 'XXXXXX.XXX')])
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
 
@@ -1488,7 +1489,7 @@ def test_local_upl_multi_pfx_bad():
         temp_dir = Path(temp_dir).resolve()
         with FileCache(cache_name=None) as fc:
             pfx = fc.new_prefix(temp_dir)
-            local_path = fc.get_local_path(temp_dir / 'dir1/test_file.txt')
+            local_path = fc.get_local_path(str(temp_dir / 'dir1/test_file.txt'))
             assert local_path == (temp_dir / 'dir1/test_file.txt')
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
             with pytest.raises(FileNotFoundError):
@@ -1725,7 +1726,7 @@ def test_cloud_upl_multi_pfx_bad_3(prefix):
 
 def test_source_bad():
     with pytest.raises(ValueError):
-        FileCacheSourceLocal('fred', 'hi')
+        FileCacheSourceFile('fred', 'hi')
 
     with pytest.raises(ValueError):
         FileCacheSourceHTTP('fred', 'hi')
@@ -1750,7 +1751,7 @@ def test_source_bad():
 
 
 def test_localsource_bad():
-    sl = FileCacheSourceLocal('file', '')
+    sl = FileCacheSourceFile('file', '')
     with pytest.raises(ValueError):
         sl.retrieve('hi', 'bye')
     with pytest.raises(ValueError):
@@ -1760,14 +1761,10 @@ def test_localsource_bad():
 
 
 def test_source_notimp():
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TypeError):
         FileCacheSource('', '').exists('')
     with pytest.raises(NotImplementedError):
-        FileCacheSource('', '').retrieve('', '')
-    with pytest.raises(NotImplementedError):
-        FileCacheSource('', '').upload('', '')
-    with pytest.raises(NotImplementedError):
-        FileCacheSourceHTTP('https', 'x').upload('', '')
+        FileCacheSourceHTTP('http', 'fred').upload('', '')
 
 
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK

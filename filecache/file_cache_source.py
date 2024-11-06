@@ -1,8 +1,16 @@
+##########################################################################################
+# filecache/file_cache_source.py
+##########################################################################################
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import requests
-from typing import Optional
+from typing import Generator
 import uuid
 
 import boto3
@@ -12,10 +20,10 @@ from google.cloud import storage as gs_storage  # type: ignore
 import google.api_core.exceptions
 
 
-class FileCacheSource:
+class FileCacheSource(ABC):
     """Superclass for all remote file source classes. Do not use directly.
 
-    The :class:`FileCacheSource` subclasses (:class:`FileCacheSourceLocal`,
+    The :class:`FileCacheSource` subclasses (:class:`FileCacheSourceFile`,
     :class:`FileCacheSourceHTTP`, :class:`FileCacheSourceGS`, and
     :class:`FileCacheSourceS3`) provide direct access to local and remote sources,
     bypassing the caching mechanism of :class:`FileCache`.
@@ -29,7 +37,7 @@ class FileCacheSource:
 
         Note:
             Do not instantiate :class:`FileCacheSource` directly. Instead use one of the
-            subclasses (:class:`FileCacheSourceLocal`, :class:`FileCacheSourceHTTP`,
+            subclasses (:class:`FileCacheSourceFile`, :class:`FileCacheSourceHTTP`,
             :class:`FileCacheSourceGS`, and :class:`FileCacheSourceS3`).
 
         Parameters:
@@ -50,44 +58,53 @@ class FileCacheSource:
         self._src_prefix_ = self._src_prefix + '/'
 
         # The _cache_subdir attribute is only used by the FileCache class
-        self._cache_subdir = None
+        self._cache_subdir = ''
 
     @classmethod
-    def schemes(self) -> tuple:
+    @abstractmethod
+    def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
-        raise NotImplementedError
+        ...
 
     @classmethod
-    def scheme(self) -> str:
+    def primary_scheme(self) -> str:
         """The primary URL scheme supported by this class."""
-        raise NotImplementedError
+        return self.schemes()[0]
 
     @classmethod
+    @abstractmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
-        raise NotImplementedError
+        ...
 
-    def exists(self, sub_path):
-        raise NotImplementedError
+    @abstractmethod
+    def exists(self,
+               sub_path: str) -> bool:
+        ...
 
-    def retrieve(self, sub_path, local_path):
-        raise NotImplementedError
+    @abstractmethod
+    def retrieve(self,
+                 sub_path: str,
+                 local_path: str | Path) -> Path:
+        ...
 
-    def retrieve_multi(self, sub_paths, local_paths, nthreads=8):
+    def retrieve_multi(self,
+                       sub_paths: Sequence[str],
+                       local_paths: Sequence[str | Path],
+                       *,
+                       nthreads: int = 8) -> list[Path | BaseException]:
         """Retrieve multiple files from the storage location using threads.
 
         Parameters:
-            sub_paths (list or tuple): The path of the files to retrieve relative to the
-                source prefix.
-            local_paths (list or tuple): The paths to the destinations where the
-                downloaded files will be stored.
-            nthreads (int, optional): The maximum number of threads to use.
+            sub_paths: The path of the files to retrieve relative to the source prefix.
+            local_paths: The paths to the destinations where the downloaded files will be
+                stored.
+            nthreads: The maximum number of threads to use.
 
         Returns:
-            list[Path or Exception]: A list containing the local paths of the retrieved
-            files. If a file failed to download, the entry is the Exception that caused
-            the failure. This list is in the same order and has the same length as
-            `local_paths`.
+            A list containing the local paths of the retrieved files. If a file failed to
+            download, the entry is the Exception that caused the failure. This list is in
+            the same order and has the same length as `local_paths`.
 
         Notes:
             All parent directories in all `local_paths` are created even if a file
@@ -111,11 +128,17 @@ class FileCacheSource:
 
         return ret
 
-    def _download_object(self, sub_path, local_path):
+    def _download_object(self,
+                         sub_path: str,
+                         local_path: str | Path) -> Path:
         self.retrieve(sub_path, local_path)
-        return local_path
+        return Path(local_path)
 
-    def _download_object_parallel(self, sub_paths, local_paths, nthreads):
+    def _download_object_parallel(self,
+                                  sub_paths: Sequence[str],
+                                  local_paths: Sequence[str | Path],
+                                  nthreads: int) -> Generator[
+                                      tuple[str, Path | BaseException]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._download_object, x[0], x[1]): x[0]
                                for x in zip(sub_paths, local_paths)}
@@ -127,23 +150,27 @@ class FileCacheSource:
                 else:
                     yield sub_path, exception
 
-    def upload(self, sub_path, local_path):
-        raise NotImplementedError
+    @abstractmethod
+    def upload(self,
+               sub_path: str,
+               local_path: str | Path) -> Path:
+        ...
 
-    def upload_multi(self, sub_paths, local_paths, nthreads=8):
+    def upload_multi(self,
+                     sub_paths: Sequence[str],
+                     local_paths: Sequence[str | Path],
+                     nthreads: int = 8) -> list[Path | BaseException]:
         """Upload multiple files to a storage location.
 
         Parameters:
-            sub_paths (list or tuple): The path of the destination files relative to the
-                source prefix.
-            local_paths (list or tuple): The paths of the files to upload.
-            nthreads (int, optional): The maximum number of threads to use.
+            sub_paths: The path of the destination files relative to the source prefix.
+            local_paths: The paths of the files to upload.
+            nthreads: The maximum number of threads to use.
 
         Returns:
-            list[Path or Exception]: A list containing the local paths of the uploaded
-            files. If a file failed to upload, the entry is the Exception that caused the
-            failure. This list is in the same order and has the same length as
-            `local_paths`.
+            A list containing the local paths of the uploaded files. If a file failed to
+            upload, the entry is the Exception that caused the failure. This list is in
+            the same order and has the same length as `local_paths`.
         """
 
         if not isinstance(nthreads, int) or nthreads <= 0:
@@ -160,11 +187,17 @@ class FileCacheSource:
 
         return ret
 
-    def _upload_object(self, sub_path, local_path):
+    def _upload_object(self,
+                       sub_path: str,
+                       local_path: str | Path) -> Path:
         self.upload(sub_path, local_path)
-        return local_path
+        return Path(local_path)
 
-    def _upload_object_parallel(self, sub_paths, local_paths, nthreads):
+    def _upload_object_parallel(self,
+                                sub_paths: Sequence[str],
+                                local_paths: Sequence[str | Path],
+                                nthreads: int) -> Generator[tuple[str,
+                                                                  Path | BaseException]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._upload_object, x[0], x[1]): x[0]
                                for x in zip(sub_paths, local_paths)}
@@ -177,7 +210,7 @@ class FileCacheSource:
                     yield sub_path, exception
 
 
-class FileCacheSourceLocal(FileCacheSource):
+class FileCacheSourceFile(FileCacheSource):
     """Class that provides direct access to local files.
 
     This class is unlikely to be directly useful to an external program, as it provides
@@ -191,10 +224,10 @@ class FileCacheSourceLocal(FileCacheSource):
         """Initialization for the FileCacheLocal class.
 
         Parameters:
-            src_prefix (str, optional): This parameter is only provided to mirror the
-                signature of the other source classes. It should not be used.
-            anonymous (bool, optional): This parameter is only provided to mirror the
-                signature of the other source classes. It should not be used.
+            scheme: Must be ``"file"`` or ``""``.
+            remote: Must be ``""`` since UNC shares are not supported.
+            anonymous: This parameter is only provided to mirror the signature of the
+                other source classes. It should not be used.
         """
 
         if remote != '':
@@ -205,44 +238,41 @@ class FileCacheSourceLocal(FileCacheSource):
         self._cache_subdir = ''
 
     @classmethod
-    def schemes(self) -> tuple:
+    def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
         return ('file',)
-
-    @classmethod
-    def scheme(self) -> str:
-        """The primary URL scheme supported by this class."""
-        return 'file'
 
     @classmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
         return False
 
-    def exists(self, sub_path):
+    def exists(self,
+               sub_path: str) -> bool:
         """Check if a file exists without downloading it.
 
         Parameters:
-            sub_path (str): The full path of the local file.
+            sub_path: The absolute path of the local file.
 
         Returns:
-            bool: True if the file exists. Note that it is possible that a file could
-            exist and still not be accessible due to permissions.
+            True if the file exists. Note that it is possible that a file could exist and
+            still not be accessible due to permissions.
         """
 
         return Path(sub_path).is_file()
 
-    def retrieve(self, sub_path, local_path):
+    def retrieve(self,
+                 sub_path: str,
+                 local_path: str | Path) -> Path:
         """Retrieve a file from the storage location.
 
         Parameters:
-            sub_path (str or Path): The full path of the local file to retrieve.
-            local_path (str or Path): The path to the desination where the file will
-                be stored.
+            sub_path: The absolute path of the local file to retrieve.
+            local_path: The path to the desination where the file will be stored. Must be
+                the same as `sub_path`.
 
         Returns:
-            Path: The Path of the filename, which is the same as the `sub_path`
-            parameter.
+            The Path of the filename, which is the same as the `sub_path` parameter.
 
         Raises:
             ValueError: If `sub_path` and `local_path` are not identical.
@@ -253,49 +283,51 @@ class FileCacheSourceLocal(FileCacheSource):
             file.
         """
 
-        local_path = Path(local_path).expanduser().resolve()
-        sub_path = Path(sub_path).expanduser().resolve()
+        local_path_p = Path(local_path).expanduser().resolve()
+        sub_path_p = Path(sub_path).expanduser().resolve()
 
-        if local_path != sub_path:
+        if local_path_p != sub_path_p:
             raise ValueError(
-                f'Paths differ for local retrieve: {local_path} and {sub_path}')
+                f'Paths differ for local retrieve: {local_path_p} and {sub_path_p}')
 
-        if not sub_path.is_file():
-            raise FileNotFoundError(f'File does not exist: {sub_path}')
+        if not sub_path_p.is_file():
+            raise FileNotFoundError(f'File does not exist: {sub_path_p}')
 
         # We don't actually do anything for local paths since the file is already in the
         # correct location.
-        return local_path
+        return local_path_p
 
-    def upload(self, sub_path, local_path):
+    def upload(self,
+               sub_path: str,
+               local_path: str | Path) -> Path:
         """Upload a file from the local filesystem to the storage location.
 
         Parameters:
-            sub_path (str or Path): The full path of the destination.
-            local_path (str or Path): The full path of the local file to upload.
+            sub_path: The absolute path of the destination.
+            local_path: The absolute path of the local file to upload. Must be the same as
+                `sub_path`.
 
         Returns:
-            Path: The Path of the filename, which is the same as the `local_path`
-            parameter.
+            The Path of the filename, which is the same as the `local_path` parameter.
 
         Raises:
             ValueError: If `sub_path` and `local_path` are not identical.
             FileNotFoundError: If the file does not exist.
         """
 
-        local_path = Path(local_path).expanduser().resolve()
-        sub_path = Path(sub_path).expanduser().resolve()
+        local_path_p = Path(local_path).expanduser().resolve()
+        sub_path_p = Path(sub_path).expanduser().resolve()
 
-        if local_path != sub_path:
+        if local_path_p != sub_path_p:
             raise ValueError(
-                f'Paths differ for local upload: {local_path} and {sub_path}')
+                f'Paths differ for local upload: {local_path_p} and {sub_path_p}')
 
-        if not local_path.is_file():
-            raise FileNotFoundError(f'File does not exist: {local_path}')
+        if not local_path_p.is_file():
+            raise FileNotFoundError(f'File does not exist: {local_path_p}')
 
         # We don't actually do anything for local paths since the file is already in the
         # correct location.
-        return local_path
+        return local_path_p
 
 
 class FileCacheSourceHTTP(FileCacheSource):
@@ -308,10 +340,10 @@ class FileCacheSourceHTTP(FileCacheSource):
         """Initialization for the FileCacheHTTP class.
 
         Parameters:
-            src_prefix (str): The prefix to all URL accesses, of the form
+            src_prefix: The prefix to all URL accesses, of the form
                 ``http://<hostname>`` or ``https://<hostname>``.
-            anonymous (bool, optional): This parameter is only provided to mirror the
-                signature of the other source classes. It should not be used.
+            anonymous: This parameter is only provided to mirror the signature of the
+                other source classes. It should not be used.
         """
 
         if remote == '':
@@ -325,31 +357,25 @@ class FileCacheSourceHTTP(FileCacheSource):
                               .replace('https://', 'http_'))
 
     @classmethod
-    def schemes(self) -> tuple:
+    def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
         return ('http', 'https')
-
-    @classmethod
-    def scheme(self) -> str:
-        """The primary URL scheme supported by this class."""
-        return 'http'
 
     @classmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
         return False
 
-    def exists(self, sub_path):
+    def exists(self,
+               sub_path: str) -> bool:
         """Check if a file exists without downloading it.
 
         Parameters:
-            sub_path (str): The path of the file on the webserver given by the source
-                prefix.
+            sub_path: The path of the file on the webserver given by the source prefix.
 
         Returns:
-            bool: True if the file (including the webserver) exists. Note that it is
-            possible that a file could exist and still not be downloadable due to
-            permissions.
+            True if the file (including the webserver) exists. Note that it is possible
+            that a file could exist and still not be downloadable due to permissions.
         """
 
         ret = True
@@ -361,17 +387,18 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         return ret
 
-    def retrieve(self, sub_path, local_path):
-        """Retrieve a file from the webserver.
+    def retrieve(self,
+                 sub_path: str,
+                 local_path: str | Path) -> Path:
+        """Retrieve a file from a webserver.
 
         Parameters:
-            sub_path (str): The path of the file to retrieve relative to the source
-                prefix.
-            local_path (str or Path): The path to the destination where the downloaded
-                file will be stored.
+            sub_path: The path of the file to retrieve relative to the source prefix.
+            local_path: The path to the destination where the downloaded file will be
+                stored.
 
         Returns:
-            Path: The Path where the file was stored (same as `local_path`).
+            The Path where the file was stored (same as `local_path`).
 
         Raises:
             FileNotFoundError: If the remote file does not exist or the download fails for
@@ -396,7 +423,7 @@ class FileCacheSourceHTTP(FileCacheSource):
         except requests.exceptions.RequestException as e:
             raise FileNotFoundError(f'Failed to download file: {url}') from e
 
-        temp_local_path = local_path.with_suffix(f'{local_path.suffix}.{uuid.uuid4()}')
+        temp_local_path = local_path.with_suffix(local_path.suffix + str(uuid.uuid4()))
         try:
             with open(temp_local_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024*1024):
@@ -408,7 +435,9 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         return local_path
 
-    def upload(self, sub_path, local_path):
+    def upload(self,
+               sub_path: str,
+               local_path: str | Path) -> Path:
         """Upload a local file to a webserver. Not implemented."""
 
         raise NotImplementedError
@@ -424,11 +453,10 @@ class FileCacheSourceGS(FileCacheSource):
         """Initialization for the FileCacheGS class.
 
         Parameters:
-            src_prefix (str): The prefix for all Google Storage accesses, of the form
+            src_prefix: The prefix for all Google Storage accesses, of the form
                 ``gs://<bucket>``.
-            anonymous (bool, optional): If True, access Google Storage without specifying
-                credentials. Otherwise, credentials must be initialized in the program's
-                environment.
+            anonymous: If True, access Google Storage without specifying credentials.
+                Otherwise, credentials must be initialized in the program's environment.
         """
 
         if remote == '':
@@ -444,52 +472,49 @@ class FileCacheSourceGS(FileCacheSource):
         print('Bucket', self._bucket_name, 'subdir', self._cache_subdir)
 
     @classmethod
-    def schemes(self) -> tuple:
+    def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
         return ('gs',)
-
-    @classmethod
-    def scheme(self) -> str:
-        """The primary URL scheme supported by this class."""
-        return 'gs'
 
     @classmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
         return True
 
-    def exists(self, sub_path, logger=None):
+    def exists(self,
+               sub_path: str) -> bool:
         """Check if a file exists without downloading it.
 
         Parameters:
-            sub_path (str): The path of the file in the Google Storage bucket given by the
+            sub_path: The path of the file in the Google Storage bucket given by the
                 source prefix.
 
         Returns:
-            bool: True if the file (including the bucket) exists. Note that it is possible
-            that a file could exist and still not be downloadable due to permissions.
-            False will also be returned if the bucket itself does not exist or is not
+            True if the file (including the bucket) exists. Note that it is possible that
+            a file could exist and still not be downloadable due to permissions. False
+            will also be returned if the bucket itself does not exist or is not
             accessible.
         """
 
-        print('Bucket', self._bucket_name, 'Path', sub_path)
         blob = self._bucket.blob(sub_path)
         try:
-            return blob.exists()
+            return bool(blob.exists())
         except Exception:
             return False
 
-    def retrieve(self, sub_path, local_path):
+    def retrieve(self,
+                 sub_path: str,
+                 local_path: str | Path) -> Path:
         """Retrieve a file from a Google Storage bucket.
 
         Parameters:
-            sub_path (str): The path of the file in the Google Storage bucket given by the
+            sub_path: The path of the file in the Google Storage bucket given by the
                 source prefix.
-            local_path (str or Path): The path to the destination where the downloaded
-                file will be stored.
+            local_path: The path to the destination where the downloaded file will be
+                stored.
 
         Returns:
-            Path: The Path where the file was stored (same as `local_path`).
+            The Path where the file was stored (same as `local_path`).
 
         Raises:
             FileNotFoundError: If the remote file does not exist or the download fails for
@@ -513,7 +538,6 @@ class FileCacheSourceGS(FileCacheSource):
             blob.download_to_filename(str(temp_local_path))
             temp_local_path.rename(local_path)
         except (google.api_core.exceptions.BadRequest,  # bad bucket name
-                google.resumable_media.common.InvalidResponse,  # bad bucket name
                 google.cloud.exceptions.NotFound):  # bad filename
             # The google API library will still create the file before noticing
             # that it can't be downloaded, so we have to remove it here
@@ -526,17 +550,18 @@ class FileCacheSourceGS(FileCacheSource):
 
         return local_path
 
-    def upload(self, sub_path, local_path):
+    def upload(self,
+               sub_path: str,
+               local_path: str | Path) -> Path:
         """Upload a local file to a Google Storage bucket.
 
         Parameters:
-            sub_path (str): The path of the destination file in the Google Storage bucket
-                given by the source prefix.
-            local_path (str or Path): The full path of the local file to upload.
+            sub_path: The path of the destination file in the Google Storage bucket given
+                by the source prefix.
+            local_path: The absolute path of the local file to upload.
 
         Returns:
-            Path: The Path of the filename, which is the same as the `local_path`
-            parameter.
+            The Path of the filename, which is the same as the `local_path` parameter.
 
         Raises:
             FileNotFoundError: If the local file does not exist.
@@ -563,11 +588,10 @@ class FileCacheSourceS3(FileCacheSource):
         """Initialization for the FileCacheS3 class.
 
         Parameters:
-            src_prefix (str): The prefix for all AWS S3 accesses, of the form
+            src_prefix: The prefix for all AWS S3 accesses, of the form
                 ``s3://<bucket>``.
-            anonymous (bool, optional): If True, access AWS S3 without specifying
-                credentials. Otherwise, credentials must be initialized in the program's
-                environment.
+            anonymous: If True, access AWS S3 without specifying credentials. Otherwise,
+                credentials must be initialized in the program's environment.
         """
 
         if remote == '':
@@ -583,31 +607,27 @@ class FileCacheSourceS3(FileCacheSource):
         self._cache_subdir = self._src_prefix.replace('s3://', 's3_')
 
     @classmethod
-    def schemes(self) -> tuple:
+    def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
         return ('s3',)
-
-    @classmethod
-    def scheme(self) -> str:
-        """The primary URL scheme supported by this class."""
-        return 's3'
 
     @classmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
         return True
 
-    def exists(self, sub_path):
+    def exists(self,
+               sub_path: str) -> bool:
         """Check if a file exists without downloading it.
 
         Parameters:
-            sub_path (str): The path of the file in the AWS S3 bucket given by the
-                source prefix.
+            sub_path: The path of the file in the AWS S3 bucket given by the source
+                prefix.
 
         Returns:
-            bool: True if the file (including the bucket) exists. Note that it is possible
-            that a file could exist and still not be downloadable due to permissions.
-            False will also be returned if the bucket itself does not exist or is not
+            True if the file (including the bucket) exists. Note that it is possible that
+            a file could exist and still not be downloadable due to permissions. False
+            will also be returned if the bucket itself does not exist or is not
             accessible.
         """
 
@@ -622,17 +642,19 @@ class FileCacheSourceS3(FileCacheSource):
 
         return ret
 
-    def retrieve(self, sub_path, local_path):
+    def retrieve(self,
+                 sub_path: str,
+                 local_path: str | Path) -> Path:
         """Retrieve a file from an AWS S3 bucket.
 
         Parameters:
-            sub_path (str): The path of the file in the AWS S3 bucket given by the
-                source prefix.
-            local_path (str or Path): The path to the destination where the downloaded
-                file will be stored.
+            sub_path: The path of the file in the AWS S3 bucket given by the source
+                prefix.
+            local_path: The path to the destination where the downloaded file will be
+                stored.
 
         Returns:
-            Path: The Path where the file was stored (same as `local_path`).
+            The Path where the file was stored (same as `local_path`).
 
         Raises:
             FileNotFoundError: If the remote file does not exist or the download fails for
@@ -664,17 +686,18 @@ class FileCacheSourceS3(FileCacheSource):
 
         return local_path
 
-    def upload(self, sub_path, local_path):
+    def upload(self,
+               sub_path: str,
+               local_path: str | Path) -> Path:
         """Upload a local file to an AWS S3 bucket.
 
         Parameters:
-            sub_path (str): The path of the destination file in the AWS S3 bucket
-                given by the source prefix.
-            local_path (str or Path): The full path of the local file to upload.
+            sub_path: The path of the destination file in the AWS S3 bucket given by the
+                source prefix.
+            local_path: The full path of the local file to upload.
 
         Returns:
-            Path: The Path of the filename, which is the same as the `local_path`
-            parameter.
+            The Path of the filename, which is the same as the `local_path` parameter.
 
         Raises:
             FileNotFoundError: If the local file does not exist.
