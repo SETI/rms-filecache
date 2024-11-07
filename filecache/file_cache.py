@@ -1,5 +1,5 @@
 ##########################################################################################
-# filecache/file_cache.py
+# filecache/filecache.py
 ##########################################################################################
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from .file_cache_source import (FileCacheSource,
                                 FileCacheSourceS3,
                                 )
 from .file_cache_prefix import FileCachePrefix
+from .file_cache_types import UrlToPathFuncType
 
 try:
     from ._version import __version__
@@ -109,6 +110,8 @@ class FileCache:
                  anonymous: bool = False,
                  lock_timeout: int = 60,
                  nthreads: int = 8,
+                 url_to_path: Optional[UrlToPathFuncType |
+                                       Sequence[UrlToPathFuncType]] = None,
                  logger: Optional[Logger | bool] = None):
         r"""Initialization for the FileCache class.
 
@@ -150,6 +153,29 @@ class FileCache:
                 to never time out.
             nthreads: The default value for the maximum number of threads to use when
                 doing multiple-file retrieval or upload.
+            url_to_path: The default function (or list of functions) that is used to
+                translate URLs into local paths. By default, :class:`FileCache` uses a
+                directory hierarchy consisting of
+                ``<cache_dir>/<cache_name>/<source>/<path>``, where ``source`` is the URL
+                prefix converted to a filesystem-friendly format (e.g. ``gs://bucket`` is
+                converted to ``gs_bucket``). A user-specified translator function takes
+                five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache, and `cache_subdir` is the subdirectory specific to
+                this scheme and remote. If the translator wants to override the default
+                translation, it can return a Path. Otherwise, it returns None. If the
+                returned Path is relative, if will be appended to
+                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
+                (be very careful with this, as it has the ability to access files outside
+                of the cache directory). If more than one translator is specified, they
+                are called in order until one returns a Path, or it falls through to the
+                default.
             logger: If False, do not do any logging. If None, use the
                 global logger set with :func:`set_global_logger`. Otherwise use the
                 specified logger.
@@ -197,17 +223,21 @@ class FileCache:
 
         self._delete_on_exit = (delete_on_exit if delete_on_exit is not None
                                 else not is_shared)
+        self._is_mp_safe = mp_safe if mp_safe is not None else is_shared
         self._anonymous = anonymous
         self._lock_timeout = lock_timeout
         if not isinstance(nthreads, int) or nthreads <= 0:
             raise ValueError(f'nthreads {nthreads} must be a positive integer')
         self._nthreads = nthreads
+        if url_to_path is None:
+            self._url_to_path = []
+        elif isinstance(url_to_path, (list, tuple)):
+            self._url_to_path = list(url_to_path)
+        else:
+            self._url_to_path = [url_to_path]
         self._logger = logger
-        self._is_mp_safe = mp_safe if mp_safe is not None else is_shared
         self._upload_counter = 0
         self._download_counter = 0
-        self._filecacheprefixes: dict[tuple[str, bool, int, int],
-                                      FileCachePrefix] = {}
 
         self._cache_dir = cache_root / sub_dir
         self._log_debug(f'Creating cache {self._cache_dir}')
@@ -278,28 +308,54 @@ class FileCache:
 
     @staticmethod
     def _split_url(url: str) -> tuple[str, str, str]:
+        url = url.replace('\\', '/')
         parts = url.split('://')
         if len(parts) == 1:
             # We default to local files
+            if not url.startswith('/'):
+                raise ValueError(f'Local file URL is not absolute: {url}')
             return 'file', '', url
         elif len(parts) == 2:
             remote, sub_path = parts[1].split('/', maxsplit=1)
             scheme = parts[0].lower()
+            if scheme == 'file':
+                # All file accesses are absolute
+                sub_path = f'/{sub_path}'
+                sub_path = str(Path(sub_path).expanduser().resolve())
             if scheme not in _SCHEME_CLASSES:
                 raise ValueError(f'Unknown scheme {scheme} in {url}')
             return scheme, remote, sub_path
         raise ValueError(f'URL {url} has more than one instance of ://')
 
+    @staticmethod
+    def _default_url_to_path(scheme: str,
+                             remote: str,
+                             path: str,
+                             cache_dir: Path,
+                             cache_subdir: str) -> Path:
+        if scheme == 'file':
+            return Path(path).expanduser().resolve()
+        return cache_dir / cache_subdir / path
+
     def _get_source_and_paths(self,
                               url: str,
-                              anonymous: bool | None) -> tuple[FileCacheSource,
-                                                               str, Path]:
+                              anonymous: bool | None,
+                              url_to_path:
+                                  UrlToPathFuncType |
+                                  Sequence[UrlToPathFuncType] |
+                                  None) -> tuple[FileCacheSource, str, Path]:
         if anonymous is None:
             anonymous = self._anonymous
-        url = url.replace('\\', '/')
+        if url_to_path is None:
+            url_to_path = self._url_to_path
+        elif isinstance(url_to_path, Sequence):
+            url_to_path = list(url_to_path)
+        else:
+            url_to_path = [url_to_path]
+
+        url_to_path = url_to_path + [FileCache._default_url_to_path]
+
         scheme, remote, sub_path = self._split_url(url)
-        if scheme == 'file':
-            sub_path = str(Path(sub_path).expanduser().resolve())
         if not _SCHEME_CLASSES[scheme].uses_anonymous():
             # No such thing as needing credentials for a local file or HTTP
             # so don't overconstrain the source cache
@@ -310,10 +366,16 @@ class FileCache:
             _SOURCE_CACHE[key] = _SCHEME_CLASSES[scheme](scheme, remote, anonymous)
 
         source = _SOURCE_CACHE[key]
-        if source.primary_scheme() == 'file':
-            local_path = Path(sub_path).expanduser().resolve()
+
+        for url_to_path_func in url_to_path:
+            local_path = url_to_path_func(scheme, remote, sub_path,
+                                          self.cache_dir, source._cache_subdir)
+            if local_path is not None:
+                if not local_path.is_absolute():
+                    local_path = self.cache_dir / source._cache_subdir / local_path
+                break
         else:
-            local_path = self._cache_dir / source._cache_subdir / sub_path
+            raise ValueError(f'No url to path translator found for {url}')
 
         return source, sub_path, local_path
 
@@ -321,10 +383,84 @@ class FileCache:
         path = Path(path)
         return path.parent / f'{self._LOCK_PREFIX}{path.name}'
 
+    def get_local_path(self,
+                       url: str | Sequence[str],
+                       *,
+                       anonymous: Optional[bool] = None,
+                       create_parents: bool = True,
+                       url_to_path: Optional[UrlToPathFuncType |
+                                             Sequence[UrlToPathFuncType]] = None
+                       ) -> Path | list[Path]:
+        """Return the local path for the given url.
+
+        Parameters:
+            url: The URL of the file, including any source prefix. If `url` is a list or
+                tuple, all URLs are processed.
+            anonymous: If True, access cloud resources without specifying credentials. If
+                False, credentials must be initialized in the program's environment. If
+                None, use the default setting for this :class:`FileCache` instance.
+            create_parents: If True, create all parent directories. This
+                is useful when getting the local path of a file that will be uploaded.
+            url_to_path: The function (or list of functions) that is used to translate
+                URLs into local paths. By default, :class:`FileCache` uses a directory
+                hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
+                where ``source`` is the URL prefix converted to a filesystem-friendly
+                format (e.g. ``gs://bucket`` is converted to ``gs_bucket``). A
+                user-specified translator function takes five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache, and `cache_subdir` is the subdirectory specific to
+                this scheme and remote. If the translator wants to override the default
+                translation, it can return a Path. Otherwise, it returns None. If the
+                returned Path is relative, if will be appended to
+                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
+                (be very careful with this, as it has the ability to access files outside
+                of the cache directory). If more than one translator is specified, they
+                are called in order until one returns a Path, or it falls through to the
+                default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
+
+        Returns:
+            The Path (or list of Paths) of the filename in the temporary directory, or
+            as specified by the `url_to_path` translators. The files do not have to exist
+            because a Path could be used for writing a file to upload. To facilitate
+            this, a side effect of this call (if `create_parents` is True) is that the
+            complete parent directory structure will be created for each returned Path.
+        """
+
+        if isinstance(url, (list, tuple)):
+            url = list(url)
+        else:
+            url = [cast(str, url)]
+
+        ret: list[Path] = []
+
+        for one_url in url:
+            source, sub_path, local_path = self._get_source_and_paths(one_url, anonymous,
+                                                                      url_to_path)
+            ret.append(local_path)
+            if create_parents:
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+            self._log_debug(f'Returning local path for {url} as {local_path}')
+
+        if isinstance(url, (list, tuple)):
+            return local_path
+        return local_path[0]
+
     def exists(self,
                url: str,
                *,
-               anonymous: Optional[bool] = None) -> bool:
+               anonymous: Optional[bool] = None,
+               url_to_path: Optional[UrlToPathFuncType |
+                                     Sequence[UrlToPathFuncType]] = None) -> bool:
         """Check if a file exists without downloading it.
 
         Parameters:
@@ -332,6 +468,32 @@ class FileCache:
             anonymous: If specified, override the default setting for anonymous access.
                 If True, access cloud resources without specifying credentials. If False,
                 credentials must be initialized in the program's environment.
+            url_to_path: The function (or list of functions) that is used to translate
+                URLs into local paths. By default, :class:`FileCache` uses a directory
+                hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
+                where ``source`` is the URL prefix converted to a filesystem-friendly
+                format (e.g. ``gs://bucket`` is converted to ``gs_bucket``). A
+                user-specified translator function takes five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache, and `cache_subdir` is the subdirectory specific to
+                this scheme and remote. If the translator wants to override the default
+                translation, it can return a Path. Otherwise, it returns None. If the
+                returned Path is relative, if will be appended to
+                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
+                (be very careful with this, as it has the ability to access files outside
+                of the cache directory). If more than one translator is specified, they
+                are called in order until one returns a Path, or it falls through to the
+                default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
 
         Returns:
             True if the file exists (note that it is possible that a file could exist and
@@ -343,12 +505,17 @@ class FileCache:
             ValueError: If the URL is invalidly constructed.
         """
 
-        source, sub_path, local_path = self._get_source_and_paths(url, anonymous)
-        if source.primary_scheme() != 'file' and local_path.is_file():
-            # Already in the cache
-            return True
-
         self._log_debug(f'Checking file for existence: {url}')
+
+        source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
+                                                                  url_to_path)
+
+        if local_path.exists():
+            if source.primary_scheme() == 'file':
+                self._log_debug(f'  File exists: {url}')
+            else:
+                self._log_debug(f'  File exists as cached at {local_path}')
+            return True
 
         ret = source.exists(sub_path)
 
@@ -359,48 +526,16 @@ class FileCache:
 
         return ret
 
-    def get_local_path(self,
-                       url: str,
-                       *,
-                       anonymous: Optional[bool] = None,
-                       create_parents: bool = True) -> Path:
-        """Return the local path for the given url.
-
-        Parameters:
-            url: The URL of the file.
-            anonymous: If True, access cloud resources without specifying credentials. If
-                False, credentials must be initialized in the program's environment. If
-                None, use the default setting for this :class:`FileCache` instance.
-            create_parents: If True, create all parent directories. This
-                is useful when getting the local path of a file that will be uploaded.
-
-        Returns:
-            The Path of the filename in the temporary directory, or the absolute path if
-            the file source is local. The file does not have to exist because this path
-            could be used for writing a file to upload. To facilitate this, a side effect
-            of this call (if `create_parents` is True) is that the complete parent
-            directory structure will be created by this function as necessary.
-        """
-
-        source, sub_path, local_path = self._get_source_and_paths(url, anonymous)
-        if create_parents:
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if source.primary_scheme() == 'file':
-            self._log_debug(f'Returning local path for {url} (local file)')
-        else:
-            self._log_debug(f'Returning local path for {url} as {local_path}')
-
-        return local_path
-
     def retrieve(self,
                  url: str | Sequence[str],
                  *,
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
-                 exception_on_fail: bool = True) -> Path | Exception | list[Path |
-                                                                            Exception]:
+                 exception_on_fail: bool = True,
+                 url_to_path: Optional[UrlToPathFuncType |
+                                       Sequence[UrlToPathFuncType]] = None
+                 ) -> Path | Exception | list[Path | Exception]:
         """Retrieve file(s) from the given location(s) and store in the file cache.
 
         Parameters:
@@ -424,6 +559,32 @@ class FileCache:
                 raised. If False, the function returns normally and any failed download is
                 marked with the Exception that caused the failure in place of the returned
                 Path.
+            url_to_path: The function (or list of functions) that is used to translate
+                URLs into local paths. By default, :class:`FileCache` uses a directory
+                hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
+                where ``source`` is the URL prefix converted to a filesystem-friendly
+                format (e.g. ``gs://bucket`` is converted to ``gs_bucket``). A
+                user-specified translator function takes five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache, and `cache_subdir` is the subdirectory specific to
+                this scheme and remote. If the translator wants to override the default
+                translation, it can return a Path. Otherwise, it returns None. If the
+                returned Path is relative, if will be appended to
+                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
+                (be very careful with this, as it has the ability to access files outside
+                of the cache directory). If more than one translator is specified, they
+                are called in order until one returns a Path, or it falls through to the
+                default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
 
         Returns:
             The Path of the filename in the temporary directory (or the original absolute
@@ -462,7 +623,8 @@ class FileCache:
             local_paths = []
             for one_url in url:
                 source, sub_path, local_path = self._get_source_and_paths(one_url,
-                                                                          anonymous)
+                                                                          anonymous,
+                                                                          url_to_path)
                 sources.append(source)
                 sub_paths.append(sub_path)
                 local_paths.append(local_path)
@@ -474,7 +636,8 @@ class FileCache:
                                                  nthreads, exception_on_fail)
 
         url = str(url)
-        source, sub_path, local_path = self._get_source_and_paths(url, anonymous)
+        source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
+                                                                  url_to_path)
 
         if source.primary_scheme() == 'file':
             self._log_debug(f'Accessing local file {sub_path}')
@@ -797,8 +960,10 @@ class FileCache:
                *,
                anonymous: Optional[bool] = None,
                nthreads: Optional[int] = None,
-               exception_on_fail: bool = True) -> Path | Exception | list[Path |
-                                                                          Exception]:
+               exception_on_fail: bool = True,
+               url_to_path: Optional[UrlToPathFuncType |
+                                     Sequence[UrlToPathFuncType]] = None
+               ) -> Path | Exception | list[Path | Exception]:
         """Upload file(s) from the file cache to the storage location(s).
 
         Parameters:
@@ -815,6 +980,32 @@ class FileCache:
                 exception is raised. If False, the function returns normally and any
                 failed upload is marked with the Exception that caused the failure in
                 place of the returned path.
+            url_to_path: The function (or list of functions) that is used to translate
+                URLs into local paths. By default, :class:`FileCache` uses a directory
+                hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
+                where ``source`` is the URL prefix converted to a filesystem-friendly
+                format (e.g. ``gs://bucket`` is converted to ``gs_bucket``). A
+                user-specified translator function takes five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache, and `cache_subdir` is the subdirectory specific to
+                this scheme and remote. If the translator wants to override the default
+                translation, it can return a Path. Otherwise, it returns None. If the
+                returned Path is relative, if will be appended to
+                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
+                (be very careful with this, as it has the ability to access files outside
+                of the cache directory). If more than one translator is specified, they
+                are called in order until one returns a Path, or it falls through to the
+                default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
 
         Returns:
             The Path of the filename in the cache directory (or the original absolute path
@@ -839,7 +1030,8 @@ class FileCache:
             local_paths = []
             for one_url in url:
                 source, sub_path, local_path = self._get_source_and_paths(one_url,
-                                                                          anonymous)
+                                                                          anonymous,
+                                                                          url_to_path)
                 sources.append(source)
                 sub_paths.append(sub_path)
                 local_paths.append(local_path)
@@ -847,7 +1039,8 @@ class FileCache:
                                       exception_on_fail)
 
         url = str(url)
-        source, sub_path, local_path = self._get_source_and_paths(url, anonymous)
+        source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
+                                                                  url_to_path)
 
         if source.primary_scheme() == 'file':
             self._log_debug(f'Uploading {local_path} (local file)')
@@ -951,6 +1144,8 @@ class FileCache:
              *args: Any,
              anonymous: Optional[bool] = None,
              lock_timeout: Optional[int] = None,
+             url_to_path: Optional[UrlToPathFuncType |
+                                   Sequence[UrlToPathFuncType]] = None,
              **kwargs: Any) -> Generator[IO[Any]]:
         """Retrieve+open or open+upload a file as a context manager.
 
@@ -969,21 +1164,49 @@ class FileCache:
                 retrieving the file before raising an exception. 0 means to not wait at
                 all. A negative value means to never time out. If None, use the default
                 value for this :class:`FileCache` instance.
+            url_to_path: The function (or list of functions) that is used to translate
+                URLs into local paths. By default, :class:`FileCache` uses a directory
+                hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
+                where ``source`` is the URL prefix converted to a filesystem-friendly
+                format (e.g. ``gs://bucket`` is converted to ``gs_bucket``). A
+                user-specified translator function takes five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache, and `cache_subdir` is the subdirectory specific to
+                this scheme and remote. If the translator wants to override the default
+                translation, it can return a Path. Otherwise, it returns None. If the
+                returned Path is relative, if will be appended to
+                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
+                (be very careful with this, as it has the ability to access files outside
+                of the cache directory). If more than one translator is specified, they
+                are called in order until one returns a Path, or it falls through to the
+                default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
 
         Returns:
             The same object as would be returned by the normal `open()` function.
         """
 
         if mode[0] == 'r':
-            local_path = self.retrieve(url,
-                                       anonymous=anonymous, lock_timeout=lock_timeout)
-            with open(cast(Path, local_path), mode, *args, **kwargs) as fp:
-                yield fp
-        else:  # 'w', 'x', 'a'
-            local_path = self.get_local_path(url, anonymous=anonymous)
+            local_path = cast(Path, self.retrieve(url, anonymous=anonymous,
+                                                  lock_timeout=lock_timeout,
+                                                  url_to_path=url_to_path))
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
-            self.upload(url, anonymous=anonymous)
+        else:  # 'w', 'x', 'a'
+            local_path = cast(Path, self.get_local_path(url, anonymous=anonymous,
+                                                        url_to_path=url_to_path))
+            with open(local_path, mode, *args, **kwargs) as fp:
+                yield fp
+            self.upload(url, anonymous=anonymous, url_to_path=url_to_path)
 
     def new_prefix(self,
                    prefix: str,
@@ -991,7 +1214,9 @@ class FileCache:
                    anonymous: Optional[bool] = None,
                    lock_timeout: Optional[int] = None,
                    nthreads: Optional[int] = None,
-                   **kwargs: Any) -> FileCachePrefix:
+                   url_to_path: Optional[UrlToPathFuncType |
+                                         Sequence[UrlToPathFuncType]] = None
+                   ) -> FileCachePrefix:
         """Create a new FileCachePrefix with the given prefix.
 
         Parameters:
@@ -1009,6 +1234,30 @@ class FileCache:
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value for this
                 :class:`FileCache` instance.
+            url_to_path: The function (or list of functions) that is used to translate
+                URLs into local paths. By default, :class:`FileCache` uses a directory
+                hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
+                where ``source`` is the URL prefix converted to a filesystem-friendly
+                format (e.g. ``gs://bucket`` is converted to ``gs_bucket``). A
+                user-specified translator function takes five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache, and `cache_subdir` is the subdirectory specific to
+                this scheme and remote. If the translator wants to override the default
+                translation, it can return a Path. Otherwise, it returns None. If the
+                returned Path is relative, if will be appended to
+                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
+                (be very careful with this, as it has the ability to access files outside
+                of the cache directory). If more than one translator is specified, they
+                are called in order until one returns a Path, or it falls through to the
+                default.
+
+                If None, use the default translators for this :class:`FileCache` instance.
         """
 
         if isinstance(prefix, Path):
@@ -1024,12 +1273,11 @@ class FileCache:
             raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
         if nthreads is None:
             nthreads = self.nthreads
-        key = (prefix, anonymous, lock_timeout, nthreads)
-        if key not in self._filecacheprefixes:
-            self._filecacheprefixes[key] = FileCachePrefix(
-                prefix, self, anonymous=anonymous, lock_timeout=lock_timeout,
-                nthreads=nthreads, **kwargs)
-        return self._filecacheprefixes[key]
+        return FileCachePrefix(prefix, self,
+                               anonymous=anonymous,
+                               lock_timeout=lock_timeout,
+                               nthreads=nthreads,
+                               url_to_path=url_to_path)
 
     def _maybe_delete_cache(self) -> None:
         """Delete this cache if delete_on_exit is True."""

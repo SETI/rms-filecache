@@ -1,7 +1,7 @@
 ``filecache`` Module
 ====================
 
-.. automodule:: filecache
+.. automodule:: filecache.file_cache
     :member-order: bysource
     :members:
     :undoc-members:

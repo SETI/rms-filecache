@@ -42,7 +42,7 @@ class FileCacheSource(ABC):
 
         Parameters:
             scheme: The scheme of the source, such as 'gs' or 'file'.
-            anonymous...
+            anonymous... XXX
         """
 
         if scheme not in self.schemes():
@@ -64,8 +64,7 @@ class FileCacheSource(ABC):
     @abstractmethod
     def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
-        ...
-
+        ...  # pragma: no cover
     @classmethod
     def primary_scheme(self) -> str:
         """The primary URL scheme supported by this class."""
@@ -75,18 +74,18 @@ class FileCacheSource(ABC):
     @abstractmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
-        ...
+        ...  # pragma: no cover
 
     @abstractmethod
     def exists(self,
                sub_path: str) -> bool:
-        ...
+        ...  # pragma: no cover
 
     @abstractmethod
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path) -> Path:
-        ...
+        ...  # pragma: no cover
 
     def retrieve_multi(self,
                        sub_paths: Sequence[str],
@@ -154,7 +153,7 @@ class FileCacheSource(ABC):
     def upload(self,
                sub_path: str,
                local_path: str | Path) -> Path:
-        ...
+        ...  # pragma: no cover
 
     def upload_multi(self,
                      sub_paths: Sequence[str],
@@ -341,7 +340,7 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         Parameters:
             src_prefix: The prefix to all URL accesses, of the form
-                ``http://<hostname>`` or ``https://<hostname>``.
+                ``http://<hostname>`` or ``https://<hostname>``. XXX
             anonymous: This parameter is only provided to mirror the signature of the
                 other source classes. It should not be used.
         """

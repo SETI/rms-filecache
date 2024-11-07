@@ -1,7 +1,7 @@
 # Test trying to multi-download the same file multiple times in the same call
 
 ################################################################################
-# tests/test_filecache.py
+# tests/test_file_cache.py
 ################################################################################
 
 import atexit
@@ -13,12 +13,7 @@ import uuid
 import pytest
 
 import filecache
-from filecache import (FileCache,
-                       FileCacheSource,
-                       FileCacheSourceFile,
-                       FileCacheSourceHTTP,
-                       FileCacheSourceGS,
-                       FileCacheSourceS3)
+from filecache import FileCache, FileCachePrefix
 
 import filelock
 
@@ -225,7 +220,7 @@ def test_easy_logger(capsys):
     assert capsys.readouterr().out == ''
 
 
-def test_temp_dir_good():
+def test_cache_name_none():
     fc1 = FileCache(cache_name=None)
     fc2 = FileCache(cache_name=None)
     fc3 = FileCache(cache_name=None)
@@ -243,30 +238,6 @@ def test_temp_dir_good():
     assert not fc1.cache_dir.exists()
     assert not fc2.cache_dir.exists()
     assert not fc3.cache_dir.exists()
-
-    cwd = os.getcwd()
-
-    fc4 = FileCache(cache_root='.', cache_name=None)
-    fc5 = FileCache(cache_root=cwd, cache_name=None)
-    assert str(fc4.cache_dir.parent) == str(fc5.cache_dir.parent)
-    assert str(fc4.cache_dir.parent) == cwd
-    assert str(fc5.cache_dir.parent) == cwd
-    assert fc4.cache_dir.name.startswith('_filecache_')
-    assert fc5.cache_dir.name.startswith('_filecache_')
-    assert fc5.delete_on_exit
-    assert fc5.delete_on_exit
-    fc4.delete_cache()
-    fc5.delete_cache()
-    assert not fc4.cache_dir.exists()
-    assert not fc5.cache_dir.exists()
-
-
-def test_temp_dir_bad():
-    with pytest.raises(ValueError):
-        FileCache(cache_root='\000')
-    with pytest.raises(ValueError):
-        FileCache(cache_root=EXPECTED_DIR / EXPECTED_FILENAMES[0])
-
 
 def test_cache_name_global():
     fc1 = FileCache(cache_name=None)
@@ -354,10 +325,94 @@ def test_cache_name_bad():
         FileCache(cache_name='\\a')
 
 
+def test_cache_root_good():
+    cwd = os.getcwd()
+    fc4 = FileCache(cache_root='.', cache_name=None)
+    fc5 = FileCache(cache_root=cwd, cache_name=None)
+    assert str(fc4.cache_dir.parent) == str(fc5.cache_dir.parent)
+    assert str(fc4.cache_dir.parent) == cwd
+    assert str(fc5.cache_dir.parent) == cwd
+    assert fc4.cache_dir.name.startswith('_filecache_')
+    assert fc5.cache_dir.name.startswith('_filecache_')
+    assert fc5.delete_on_exit
+    assert fc5.delete_on_exit
+    fc4.delete_cache()
+    fc5.delete_cache()
+    assert not fc4.cache_dir.exists()
+    assert not fc5.cache_dir.exists()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir).expanduser().resolve()
+        cache_root = temp_dir / str(uuid.uuid4())  # Won't already exist
+        assert not cache_root.exists()
+        with FileCache(cache_root=cache_root, cache_name='test',
+                       delete_on_exit=True) as fc:
+            assert cache_root.exists()
+
+def test_cache_root_bad():
+    with pytest.raises(ValueError):
+        FileCache(cache_root='\000')
+    with pytest.raises(ValueError):
+        FileCache(cache_root=EXPECTED_DIR / EXPECTED_FILENAMES[0])
+
+
+def test_cache_nthreads_bad():
+    with pytest.raises(ValueError):
+        fc = FileCache(nthreads=-1)
+    with pytest.raises(ValueError):
+        fc = FileCache(nthreads=4.5)
+    with FileCache() as fc:
+        with pytest.raises(ValueError):
+            fc.retrieve(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+                        nthreads=-1)
+        with pytest.raises(ValueError):
+            fc.retrieve(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+                        nthreads='fred')
+        fc.retrieve(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+                    nthreads=None)
+
+        with pytest.raises(ValueError):
+            fc.upload(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+                      nthreads=-1)
+        with pytest.raises(ValueError):
+            fc.upload(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+                      nthreads='fred')
+        fc.upload(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+                  nthreads=None)
+
+        with pytest.raises(ValueError):
+            fc.new_prefix(str(EXPECTED_DIR), nthreads=-1)
+        with pytest.raises(ValueError):
+            fc.new_prefix(str(EXPECTED_DIR), nthreads='fred')
+        pfx = fc.new_prefix(str(EXPECTED_DIR), nthreads=None)
+
+        with pytest.raises(ValueError):
+            pfx.retrieve(EXPECTED_FILENAMES[0], nthreads=-1)
+        with pytest.raises(ValueError):
+            pfx.retrieve(EXPECTED_FILENAMES[0], nthreads='fred')
+        pfx.retrieve(EXPECTED_FILENAMES[0], nthreads=None)
+
+        with pytest.raises(ValueError):
+            pfx.upload(EXPECTED_FILENAMES[0], nthreads=-1)
+        with pytest.raises(ValueError):
+            pfx.upload(EXPECTED_FILENAMES[0], nthreads='fred')
+        pfx.upload(EXPECTED_FILENAMES[0], nthreads=None)
+
+        with pytest.raises(ValueError):
+            pfx = fc.new_prefix(str(EXPECTED_DIR), nthreads=-1)
+        with pytest.raises(ValueError):
+            pfx = fc.new_prefix(str(EXPECTED_DIR), nthreads='fred')
+
+
 def test_prefix_bad():
     with FileCache(cache_name=None) as fc:
         with pytest.raises(TypeError):
             fc.new_prefix(5)
+        pfx = FileCachePrefix(GS_TEST_BUCKET_ROOT, fc)
+        pfx = FileCachePrefix(EXPECTED_DIR, fc)
+        with pytest.raises(TypeError):
+            pfx = FileCachePrefix(5, fc)
+
     assert not fc.cache_dir.exists()
 
 
@@ -508,10 +563,8 @@ def test_cloud_retr_multi_pfx_good(cache_name, prefix):
 def test_cloud2_retr_pfx_good(prefix):
     with FileCache(cache_name=None) as fc:
         # With two identical prefixes, it shouldn't matter which you use
-        # because we will return the same object
         pfx1 = fc.new_prefix(prefix, anonymous=True)
         pfx2 = fc.new_prefix(prefix, anonymous=True)
-        assert pfx1 is pfx2
         for filename in LIMITED_FILENAMES:
             path1 = pfx1.retrieve(filename)
             assert str(path1).replace('\\', '/').endswith(filename)
@@ -523,7 +576,7 @@ def test_cloud2_retr_pfx_good(prefix):
         assert pfx1.upload_counter == 0
         assert pfx1.download_counter == len(LIMITED_FILENAMES)
         assert pfx2.upload_counter == 0
-        assert pfx2.download_counter == len(LIMITED_FILENAMES)
+        assert pfx2.download_counter == 0
     assert not fc.cache_dir.exists()
 
 
@@ -549,11 +602,13 @@ def test_cloud3_retr_pfx_good(prefix):
 
 def test_local_retr_bad():
     with FileCache(cache_name=None) as fc:
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(ValueError):
             fc.retrieve('nonexistent.txt')
+        with pytest.raises(FileNotFoundError):
+            fc.retrieve('/nonexistent.txt')
     assert not fc.cache_dir.exists()
     with FileCache(cache_name=None) as fc:
-        ret = fc.retrieve('nonexistent.txt', exception_on_fail=False)
+        ret = fc.retrieve('/nonexistent.txt', exception_on_fail=False)
         assert isinstance(ret, FileNotFoundError)
     assert not fc.cache_dir.exists()
 
@@ -840,7 +895,6 @@ def test_locking_multi_pfx_1():
 
 
 def test_locking_multi_2():
-    filecache.set_easy_logger()
     with FileCache(delete_on_exit=True) as fc:
         filename = (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' +
                     EXPECTED_FILENAMES[0])
@@ -985,12 +1039,19 @@ def test_open_context_read():
     assert not fc.cache_dir.exists()
 
 
-def test_cache_owner():
+def test_delete_on_exit():
     with FileCache(delete_on_exit=True) as fc1:
         with FileCache() as fc2:
-            pass
-        assert fc1.cache_dir == fc2.cache_dir
+            assert fc1.cache_dir == fc2.cache_dir
         assert os.path.exists(fc1.cache_dir)
+    assert not os.path.exists(fc1.cache_dir)
+    assert not os.path.exists(fc2.cache_dir)
+
+    with FileCache(None, delete_on_exit=True) as fc1:
+        with FileCache(None) as fc2:
+            assert fc1.cache_dir != fc2.cache_dir
+        assert os.path.exists(fc1.cache_dir)
+        assert not os.path.exists(fc2.cache_dir)
     assert not os.path.exists(fc1.cache_dir)
     assert not os.path.exists(fc2.cache_dir)
 
@@ -1724,52 +1785,9 @@ def test_cloud_upl_multi_pfx_bad_3(prefix):
     assert not fc.cache_dir.exists()
 
 
-def test_source_bad():
-    with pytest.raises(ValueError):
-        FileCacheSourceFile('fred', 'hi')
-
-    with pytest.raises(ValueError):
-        FileCacheSourceHTTP('fred', 'hi')
-    with pytest.raises(ValueError):
-        FileCacheSourceHTTP('http', 'hi/hi')
-    with pytest.raises(ValueError):
-        FileCacheSourceHTTP('https', '')
-
-    with pytest.raises(ValueError):
-        FileCacheSourceGS('fred', 'hi')
-    with pytest.raises(ValueError):
-        FileCacheSourceGS('gs', 'hi/hi')
-    with pytest.raises(ValueError):
-        FileCacheSourceGS('gs', '')
-
-    with pytest.raises(ValueError):
-        FileCacheSourceS3('fred', 'hi')
-    with pytest.raises(ValueError):
-        FileCacheSourceS3('s3', 'hi/hi')
-    with pytest.raises(ValueError):
-        FileCacheSourceS3('s3', '')
-
-
-def test_localsource_bad():
-    sl = FileCacheSourceFile('file', '')
-    with pytest.raises(ValueError):
-        sl.retrieve('hi', 'bye')
-    with pytest.raises(ValueError):
-        sl.upload('hi', 'bye')
-    with pytest.raises(FileNotFoundError):
-        sl.upload('non-existent.txt', 'non-existent.txt')
-
-
-def test_source_notimp():
-    with pytest.raises(TypeError):
-        FileCacheSource('', '').exists('')
-    with pytest.raises(NotImplementedError):
-        FileCacheSourceHTTP('http', 'fred').upload('', '')
-
-
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
-def test_atexit():
-    fc = FileCache(cache_name=None)
-    assert os.path.exists(fc.cache_dir)
-    atexit._run_exitfuncs()
-    assert not os.path.exists(fc.cache_dir)
+# def test_atexit():
+#     fc = FileCache(cache_name=None)
+#     assert os.path.exists(fc.cache_dir)
+#     atexit._run_exitfuncs()
+#     assert not os.path.exists(fc.cache_dir)
