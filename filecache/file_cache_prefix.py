@@ -69,14 +69,14 @@ class FileCachePrefix:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If None, use the default translators for the associated :class:`FileCache`
@@ -108,7 +108,7 @@ class FileCachePrefix:
         self._filecache._log_debug(f'Initializing prefix {self._prefix_}')
 
     def get_local_path(self,
-                       sub_path: str,
+                       sub_path: str | Path | Sequence[str | Path],
                        *,
                        create_parents: bool = True,
                        url_to_path: Optional[UrlToPathFuncType |
@@ -134,14 +134,14 @@ class FileCachePrefix:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If None, use the default value given when this :class:`FileCachePrefix`
@@ -154,19 +154,32 @@ class FileCachePrefix:
             complete parent directory structure will be created for each returned Path.
         """
 
+        if isinstance(sub_path, (list, tuple)):
+            new_sub_path = [f'{self._prefix_}{p}' for p in sub_path]
+            return self._filecache.get_local_path(new_sub_path,
+                                                  anonymous=self._anonymous,
+                                                  create_parents=create_parents,
+                                                  url_to_path=url_to_path)
+
         return self._filecache.get_local_path(f'{self._prefix_}{sub_path}',
                                               anonymous=self._anonymous,
                                               create_parents=create_parents,
                                               url_to_path=url_to_path)
 
     def exists(self,
-               sub_path: str,
+               sub_path: str | Path | Sequence[str | Path],
+               *,
+               bypass_cache: bool = False,
                url_to_path: Optional[UrlToPathFuncType |
-                                     Sequence[UrlToPathFuncType]] = None) -> bool:
+                                     Sequence[UrlToPathFuncType]] = None
+               ) -> bool | list[bool]:
         """Check if a file exists without downloading it.
 
         Parameters:
             sub_path: The path of the file relative to the prefix.
+            bypass_cache: If False, check for the file first in the local cache, and if
+                not found there then on the remote server. If True, only check on the
+                remote server.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -180,14 +193,14 @@ class FileCachePrefix:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If None, use the default value given when this :class:`FileCachePrefix`
@@ -202,7 +215,15 @@ class FileCachePrefix:
             ValueError: If the path is invalidly constructed.
         """
 
+        if isinstance(sub_path, (list, tuple)):
+            new_sub_path = [f'{self._prefix_}{p}' for p in sub_path]
+            return self._filecache.exists(new_sub_path,
+                                          bypass_cache=bypass_cache,
+                                          anonymous=self._anonymous,
+                                          url_to_path=url_to_path)
+
         return self._filecache.exists(f'{self._prefix_}{sub_path}',
+                                      bypass_cache=bypass_cache,
                                       anonymous=self._anonymous,
                                       url_to_path=url_to_path)
 
@@ -248,14 +269,14 @@ class FileCachePrefix:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If None, use the default value given when this :class:`FileCachePrefix`
@@ -348,14 +369,14 @@ class FileCachePrefix:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If None, use the default value given when this :class:`FileCachePrefix`
@@ -430,14 +451,14 @@ class FileCachePrefix:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If None, use the default value given when this :class:`FileCachePrefix`

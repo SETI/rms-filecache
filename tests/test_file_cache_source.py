@@ -10,6 +10,8 @@ from filecache import (FileCacheSource,
                        FileCacheSourceGS,
                        FileCacheSourceS3)
 
+from .test_file_cache import EXPECTED_DIR, EXPECTED_FILENAMES
+
 
 def test_source_bad():
     with pytest.raises(ValueError):
@@ -37,14 +39,16 @@ def test_source_bad():
         FileCacheSourceS3('s3', '')
 
 
-def test_localsource_bad():
+def test_filesource_bad():
     sl = FileCacheSourceFile('file', '')
-    with pytest.raises(ValueError):
-        sl.retrieve('hi', 'bye')
-    with pytest.raises(ValueError):
-        sl.upload('hi', 'bye')
     with pytest.raises(FileNotFoundError):
         sl.upload('non-existent.txt', 'non-existent.txt')
+    assert not sl.exists('non-existent.txt')
+
+
+def test_filesource_good():
+    sl = FileCacheSourceFile('file', '')
+    assert sl.exists(EXPECTED_DIR / EXPECTED_FILENAMES[1])
 
 
 def test_source_notimp():

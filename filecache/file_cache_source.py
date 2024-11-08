@@ -65,6 +65,7 @@ class FileCacheSource(ABC):
     def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
         ...  # pragma: no cover
+
     @classmethod
     def primary_scheme(self) -> str:
         """The primary URL scheme supported by this class."""
@@ -80,6 +81,51 @@ class FileCacheSource(ABC):
     def exists(self,
                sub_path: str) -> bool:
         ...  # pragma: no cover
+
+    def exists_multi(self,
+                     sub_paths: Sequence[str],
+                     *,
+                     nthreads: int = 8) -> list[bool]:
+        """Check if multiple files exist using threads without downloading them.
+
+        Parameters:
+            sub_paths: The path of the files relative to the source prefix to check for
+                existence.
+            nthreads: The maximum number of threads to use.
+
+        Returns:
+            For each entry, True if the file exists. Note that it is possible that a file
+            could exist and still not be accessible due to permissions. False if the file
+            does not exist. This includes bad bucket or webserver names, lack of
+            permission to examine a bucket's contents, etc.
+        """
+
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
+        results = {}
+        for sub_path, result in self._exists_object_parallel(sub_paths, nthreads):
+            results[sub_path] = result
+
+        ret = []
+        for sub_path in sub_paths:
+            ret.append(results[sub_path])
+
+        return ret
+
+    def _exists_object(self,
+                       sub_path: str) -> bool:
+        return self.exists(sub_path)
+
+    def _exists_object_parallel(self,
+                                sub_paths: Sequence[str],
+                                nthreads: int) -> Generator[tuple[str, bool]]:
+        with ThreadPoolExecutor(max_workers=nthreads) as executor:
+            future_to_paths = {executor.submit(self._exists_object, x): x
+                               for x in sub_paths}
+            for future in futures.as_completed(future_to_paths):
+                sub_path = future_to_paths[future]
+                yield sub_path, future.result()
 
     @abstractmethod
     def retrieve(self,
@@ -247,7 +293,7 @@ class FileCacheSourceFile(FileCacheSource):
         return False
 
     def exists(self,
-               sub_path: str) -> bool:
+               sub_path: str | Path) -> bool:
         """Check if a file exists without downloading it.
 
         Parameters:
@@ -261,7 +307,7 @@ class FileCacheSourceFile(FileCacheSource):
         return Path(sub_path).is_file()
 
     def retrieve(self,
-                 sub_path: str,
+                 sub_path: str | Path,
                  local_path: str | Path) -> Path:
         """Retrieve a file from the storage location.
 
@@ -283,21 +329,16 @@ class FileCacheSourceFile(FileCacheSource):
         """
 
         local_path_p = Path(local_path).expanduser().resolve()
-        sub_path_p = Path(sub_path).expanduser().resolve()
 
-        if local_path_p != sub_path_p:
-            raise ValueError(
-                f'Paths differ for local retrieve: {local_path_p} and {sub_path_p}')
-
-        if not sub_path_p.is_file():
-            raise FileNotFoundError(f'File does not exist: {sub_path_p}')
+        if not local_path_p.is_file():
+            raise FileNotFoundError(f'File does not exist: {local_path_p}')
 
         # We don't actually do anything for local paths since the file is already in the
         # correct location.
         return local_path_p
 
     def upload(self,
-               sub_path: str,
+               sub_path: str | Path,
                local_path: str | Path) -> Path:
         """Upload a file from the local filesystem to the storage location.
 
@@ -315,11 +356,6 @@ class FileCacheSourceFile(FileCacheSource):
         """
 
         local_path_p = Path(local_path).expanduser().resolve()
-        sub_path_p = Path(sub_path).expanduser().resolve()
-
-        if local_path_p != sub_path_p:
-            raise ValueError(
-                f'Paths differ for local upload: {local_path_p} and {sub_path_p}')
 
         if not local_path_p.is_file():
             raise FileNotFoundError(f'File does not exist: {local_path_p}')

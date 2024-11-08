@@ -8,6 +8,7 @@ google-cloud-storage
 mypy
 myst-parser
 pytest
+pytest-order
 requests
 sphinx
 sphinxcontrib-napoleon

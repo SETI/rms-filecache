@@ -167,14 +167,14 @@ class FileCache:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
             logger: If False, do not do any logging. If None, use the
                 global logger set with :func:`set_global_logger`. Otherwise use the
@@ -240,9 +240,12 @@ class FileCache:
         self._download_counter = 0
 
         self._cache_dir = cache_root / sub_dir
-        self._log_debug(f'Creating cache {self._cache_dir}')
-        # A non-shared cache (which has a unique name) should never already exist
-        self._cache_dir.mkdir(exist_ok=is_shared)
+        if self._cache_dir.is_dir():
+            self._log_info(f'Using existing cache {self._cache_dir}')
+        else:
+            self._log_info(f'Creating cache {self._cache_dir}')
+            # A non-shared cache (which has a unique name) should never already exist
+            self._cache_dir.mkdir(exist_ok=is_shared)
 
         atexit.register(self._maybe_delete_cache)
 
@@ -296,10 +299,10 @@ class FileCache:
         if logger:
             logger.info(msg)  # type: ignore
 
-    def _log_warn(self, msg: str) -> None:
-        logger = _GLOBAL_LOGGER if self._logger is None else self._logger
-        if logger:
-            logger.warning(msg)  # type: ignore
+    # def _log_warn(self, msg: str) -> None:
+    #     logger = _GLOBAL_LOGGER if self._logger is None else self._logger
+    #     if logger:
+    #         logger.warning(msg)  # type: ignore
 
     def _log_error(self, msg: str) -> None:
         logger = _GLOBAL_LOGGER if self._logger is None else self._logger
@@ -316,7 +319,10 @@ class FileCache:
                 raise ValueError(f'Local file URL is not absolute: {url}')
             return 'file', '', url
         elif len(parts) == 2:
-            remote, sub_path = parts[1].split('/', maxsplit=1)
+            slash_split = parts[1].split('/', maxsplit=1)
+            if len(slash_split) != 2:
+                raise ValueError(f'No path after remote: {url}')
+            remote, sub_path = slash_split
             scheme = parts[0].lower()
             if scheme == 'file':
                 # All file accesses are absolute
@@ -338,14 +344,15 @@ class FileCache:
         return cache_dir / cache_subdir / path
 
     def _get_source_and_paths(self,
-                              url: str,
+                              url: str | Path,
                               anonymous: bool | None,
                               url_to_path:
                                   UrlToPathFuncType |
                                   Sequence[UrlToPathFuncType] |
                                   None) -> tuple[FileCacheSource, str, Path]:
+        url = str(url)
         if anonymous is None:
-            anonymous = self._anonymous
+            anonymous = self.anonymous
         if url_to_path is None:
             url_to_path = self._url_to_path
         elif isinstance(url_to_path, Sequence):
@@ -374,8 +381,9 @@ class FileCache:
                 if not local_path.is_absolute():
                     local_path = self.cache_dir / source._cache_subdir / local_path
                 break
-        else:
-            raise ValueError(f'No url to path translator found for {url}')
+        else:  # pragma: no cover - can't happen - there's always a default translator
+            raise ValueError(
+                f'No url to path translator found for {url}')
 
         return source, sub_path, local_path
 
@@ -384,7 +392,7 @@ class FileCache:
         return path.parent / f'{self._LOCK_PREFIX}{path.name}'
 
     def get_local_path(self,
-                       url: str | Sequence[str],
+                       url: str | Path | Sequence[str | Path],
                        *,
                        anonymous: Optional[bool] = None,
                        create_parents: bool = True,
@@ -414,14 +422,14 @@ class FileCache:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If this parameter is specified, it replaces the default translators for
@@ -437,37 +445,49 @@ class FileCache:
         """
 
         if isinstance(url, (list, tuple)):
-            url = list(url)
+            new_url = list(url)
         else:
-            url = [cast(str, url)]
+            new_url = [cast(str, url)]
 
         ret: list[Path] = []
 
-        for one_url in url:
+        for one_url in new_url:
             source, sub_path, local_path = self._get_source_and_paths(one_url, anonymous,
                                                                       url_to_path)
             ret.append(local_path)
             if create_parents:
                 local_path.parent.mkdir(parents=True, exist_ok=True)
-            self._log_debug(f'Returning local path for {url} as {local_path}')
+            self._log_debug(f'Returning local path for {one_url} as {local_path}')
 
         if isinstance(url, (list, tuple)):
-            return local_path
-        return local_path[0]
+            return ret
+        return ret[0]
 
     def exists(self,
-               url: str,
+               url: str | Path | Sequence[str | Path],
                *,
+               bypass_cache: bool = False,
                anonymous: Optional[bool] = None,
+               nthreads: Optional[int] = None,
                url_to_path: Optional[UrlToPathFuncType |
-                                     Sequence[UrlToPathFuncType]] = None) -> bool:
+                                     Sequence[UrlToPathFuncType]] = None
+               ) -> bool | list[bool]:
         """Check if a file exists without downloading it.
 
         Parameters:
-            url: The URL of the file.
+            url: The URL of the file, including any source prefix. If `url` is a list or
+                tuple, all URLs are retrieved. This may be more efficient because files
+                can be downloaded in parallel. It is OK to retrieve files from multiple
+                sources using one call.
+            bypass_cache: If False, check for the file first in the local cache, and if
+                not found there then on the remote server. If True, only check on the
+                remote server.
             anonymous: If specified, override the default setting for anonymous access.
                 If True, access cloud resources without specifying credentials. If False,
                 credentials must be initialized in the program's environment.
+            nthreads: The maximum number of threads to use when doing multiple-file
+                retrieval or upload. If None, use the default value for this
+                :class:`FileCache` instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -481,14 +501,14 @@ class FileCache:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If this parameter is specified, it replaces the default translators for
@@ -499,35 +519,110 @@ class FileCache:
             True if the file exists (note that it is possible that a file could exist and
             still not be downloadable due to permissions). False if the file does not
             exist. This includes bad bucket or webserver names, lack of permission to
-            examine a bucket's contents, etc.
-
-        Raises:
-            ValueError: If the URL is invalidly constructed.
+            examine a bucket's contents, etc. If `url` was a list or tuple, then instead
+            return a list of bools giving the existence of each url in order.
         """
+
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+        if nthreads is None:
+            nthreads = self.nthreads
+
+        if isinstance(url, (list, tuple)):
+            sources = []
+            sub_paths = []
+            local_paths = []
+            for one_url in url:
+                source, sub_path, local_path = self._get_source_and_paths(one_url,
+                                                                          anonymous,
+                                                                          url_to_path)
+                sources.append(source)
+                sub_paths.append(sub_path)
+                local_paths.append(local_path)
+
+            return self._exists_multi(sources, sub_paths, local_paths, nthreads,
+                                      bypass_cache)
 
         self._log_debug(f'Checking file for existence: {url}')
 
-        source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
+        source, sub_path, local_path = self._get_source_and_paths(str(url),
+                                                                  anonymous,
                                                                   url_to_path)
 
-        if local_path.exists():
+        if not bypass_cache and local_path.exists():
             if source.primary_scheme() == 'file':
                 self._log_debug(f'  File exists: {url}')
             else:
                 self._log_debug(f'  File exists as cached at {local_path}')
             return True
 
-        ret = source.exists(sub_path)
+        elif source.primary_scheme() == 'file':
+            return False
 
-        if ret:
+        file_ret = source.exists(sub_path)
+
+        if file_ret:
             self._log_debug(f'  File exists: {url}')
         else:
             self._log_debug(f'  File does not exist: {url}')
 
-        return ret
+        return file_ret
+
+    def _exists_multi(self,
+                      sources: list[FileCacheSource],
+                      sub_paths: list[str],
+                      local_paths: list[Path],
+                      nthreads: int,
+                      bypass_cache: bool) -> list[bool]:
+        """Check for the existence of multiple files in storage locations."""
+
+        # Return bools in the same order as sub_paths
+        func_ret: list[bool | None] = [None] * len(sources)
+
+        source_dict: dict[str, list[tuple[int, FileCacheSource, str, Path]]] = {}
+
+        # First find all the files that are either local or that we have already cached.
+        # For other files, create a list of just the files we need to check and
+        # organize them by source; we use the source prefix to distinguish among them.
+        self._log_debug('Performing multi-file existence check of:')
+        for idx, (source, sub_path, local_path) in enumerate(zip(sources,
+                                                                 sub_paths, local_paths)):
+            pfx = source._src_prefix_
+            if not bypass_cache and local_path.is_file():
+                self._log_debug(f'    Cached file  {pfx}{sub_path} at {local_path}')
+                func_ret[idx] = True
+                continue
+            if source.primary_scheme() == 'file':
+                self._log_debug(f'    Local file   {pfx}{sub_path}')
+                func_ret[idx] = source.exists(sub_path)
+                continue
+            assert '://' in pfx
+            if pfx not in source_dict:
+                source_dict[pfx] = []
+            source_dict[pfx].append((idx, source, sub_path, local_path))
+            self._log_debug(f'    To check {pfx}{sub_path}')
+
+        # Now go through the sources, package up the paths to check, and check
+        # them all at once
+        for source_pfx in source_dict:
+            source = source_dict[source_pfx][0][1]  # All the same
+            source_idxes, _, source_sub_paths, source_local_paths = list(
+                zip(*source_dict[source_pfx]))
+            self._log_debug(
+                f'  Performing multi-file exists check for prefix {source_pfx}:')
+            for sub_path in source_sub_paths:
+                self._log_debug(f'    {sub_path}')
+            rets = source.exists_multi(source_sub_paths, nthreads=nthreads)
+            assert len(source_idxes) == len(rets)
+            for source_ret, source_idx in zip(rets, source_idxes):
+                func_ret[source_idx] = source_ret
+
+        self._log_debug('Multi-file exists check complete')
+
+        return cast(list[bool], func_ret)
 
     def retrieve(self,
-                 url: str | Sequence[str],
+                 url: str | Path | Sequence[str | Path],
                  *,
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
@@ -572,14 +667,14 @@ class FileCache:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If this parameter is specified, it replaces the default translators for
@@ -640,7 +735,7 @@ class FileCache:
                                                                   url_to_path)
 
         if source.primary_scheme() == 'file':
-            self._log_debug(f'Accessing local file {sub_path}')
+            self._log_debug(f'Retrieving {sub_path} (local file)')
             try:
                 return source.retrieve(sub_path, local_path)
             except Exception as e:
@@ -956,7 +1051,7 @@ class FileCache:
         return cast(list[Path | Exception], func_ret)
 
     def upload(self,
-               url: str | Sequence[str],
+               url: str | Path | Sequence[str | Path],
                *,
                anonymous: Optional[bool] = None,
                nthreads: Optional[int] = None,
@@ -993,14 +1088,14 @@ class FileCache:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If this parameter is specified, it replaces the default translators for
@@ -1139,7 +1234,7 @@ class FileCache:
 
     @contextlib.contextmanager
     def open(self,
-             url: str,
+             url: str | Path,
              mode: str = 'r',
              *args: Any,
              anonymous: Optional[bool] = None,
@@ -1177,14 +1272,14 @@ class FileCache:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If this parameter is specified, it replaces the default translators for
@@ -1247,14 +1342,14 @@ class FileCache:
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
                 file, `path` is the rest of the URL, `cache_dir` is the top-level
-                directory of the cache, and `cache_subdir` is the subdirectory specific to
-                this scheme and remote. If the translator wants to override the default
-                translation, it can return a Path. Otherwise, it returns None. If the
-                returned Path is relative, if will be appended to
-                ``<cache_dir>/<cache_name>``; if it is absolute, it will be used directly
-                (be very careful with this, as it has the ability to access files outside
-                of the cache directory). If more than one translator is specified, they
-                are called in order until one returns a Path, or it falls through to the
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
                 default.
 
                 If None, use the default translators for this :class:`FileCache` instance.
@@ -1266,7 +1361,7 @@ class FileCache:
             raise TypeError('prefix is not a str or Path')
         prefix = prefix.replace('\\', '/').rstrip('/')
         if anonymous is None:
-            anonymous = self._anonymous
+            anonymous = self.anonymous
         if lock_timeout is None:
             lock_timeout = self.lock_timeout
         if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
@@ -1314,7 +1409,7 @@ class FileCache:
             for name in files:
                 if name.startswith(self._LOCK_PREFIX):
                     self._log_error(
-                        'Deleting cache that has an active lock file: {root}/{name}')
+                        f'Deleting cache that has an active lock file: {root}/{name}')
                 self._log_debug(f'  Removing file {root}/{name}')
                 try:
                     os.remove(os.path.join(root, name))

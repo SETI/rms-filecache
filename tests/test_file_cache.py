@@ -91,6 +91,9 @@ class MyLogger:
     def debug(self, msg, *args, **kwargs):
         self.messages.append(msg)
 
+    def info(self, msg, *args, **kwargs):
+        self.messages.append(f'INFO {msg}')
+
     def error(self, msg, *args, **kwargs):
         self.messages.append(f'ERROR {msg}')
 
@@ -125,7 +128,7 @@ def test_logger():
 #   Removing rms-filecache-tests
 #   Removing http_storage.googleapis.com
 #   Removing /tmp/.file_cache_424b280b-e62c-4582-8560-211f54cabc23
-    logger.has_prefix_list(['Creating', 'Initializing', 'Checking', 'File exists',
+    logger.has_prefix_list(['INFO Creating', 'Initializing', 'Checking', 'File exists',
                             'Checking', 'File does not', 'Downloading', 'Deleting',
                             'Removing', 'Removing', 'Removing', 'Removing'])
 
@@ -144,7 +147,7 @@ def test_logger():
 #   Removing http_storage.googleapis.com
 #   Removing /tmp/.file_cache_global
 # Cleaning up cache /tmp/.file_cache_global
-    logger.has_prefix_list(['Creating', 'Initializing', 'Downloading', 'Deleting',
+    logger.has_prefix_list(['INFO Creating', 'Initializing', 'Downloading', 'Deleting',
                             'Removing', 'Removing', 'Removing', 'Removing',
                             'Deleting'])
     logger.messages = []
@@ -171,7 +174,7 @@ def test_logger():
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
-    logger.has_prefix_list(['Creating', 'Initializing', 'Downloading', 'Accessing',
+    logger.has_prefix_list(['INFO Creating', 'Initializing', 'Downloading', 'Accessing',
                             'Deleting', 'Removing', 'Removing', 'Removing', 'Removing'])
 
     # Specified logger
@@ -184,7 +187,7 @@ def test_logger():
 # Accessing local file lorem1.txt
 # Cleaning up cache /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
 #   Removing /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
-    logger.has_prefix_list(['Creating', 'Initializing', 'Accessing', 'Deleting',
+    logger.has_prefix_list(['INFO Creating', 'Initializing', 'Retrieving', 'Deleting',
                             'Removing'])
 
     # Uploading
@@ -200,7 +203,7 @@ def test_logger():
 # Returning local path for test_file.txt as /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819/gs_rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt
 # Uploading /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819/gs_rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt to gs://rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt
 # Cleaning up cache /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819
-    logger.has_prefix_list(['Creating', 'Initializing', 'Returning', 'Uploading',
+    logger.has_prefix_list(['INFO Creating', 'Initializing', 'Returning', 'Uploading',
                             'Deleting'])
 
 
@@ -238,6 +241,7 @@ def test_cache_name_none():
     assert not fc1.cache_dir.exists()
     assert not fc2.cache_dir.exists()
     assert not fc3.cache_dir.exists()
+
 
 def test_cache_name_global():
     fc1 = FileCache(cache_name=None)
@@ -346,8 +350,9 @@ def test_cache_root_good():
         cache_root = temp_dir / str(uuid.uuid4())  # Won't already exist
         assert not cache_root.exists()
         with FileCache(cache_root=cache_root, cache_name='test',
-                       delete_on_exit=True) as fc:
+                       delete_on_exit=True):
             assert cache_root.exists()
+
 
 def test_cache_root_bad():
     with pytest.raises(ValueError):
@@ -363,21 +368,30 @@ def test_cache_nthreads_bad():
         fc = FileCache(nthreads=4.5)
     with FileCache() as fc:
         with pytest.raises(ValueError):
-            fc.retrieve(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+            fc.exists([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
+                      nthreads=-1)
+        with pytest.raises(ValueError):
+            fc.exists([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
+                      nthreads='fred')
+        fc.exists([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
+                  nthreads=None)
+
+        with pytest.raises(ValueError):
+            fc.retrieve([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
                         nthreads=-1)
         with pytest.raises(ValueError):
-            fc.retrieve(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+            fc.retrieve([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
                         nthreads='fred')
-        fc.retrieve(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+        fc.retrieve([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
                     nthreads=None)
 
         with pytest.raises(ValueError):
-            fc.upload(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+            fc.upload([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
                       nthreads=-1)
         with pytest.raises(ValueError):
-            fc.upload(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+            fc.upload([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
                       nthreads='fred')
-        fc.upload(str(EXPECTED_DIR / EXPECTED_FILENAMES[0]),
+        fc.upload([str(EXPECTED_DIR / EXPECTED_FILENAMES[0])],
                   nthreads=None)
 
         with pytest.raises(ValueError):
@@ -387,31 +401,36 @@ def test_cache_nthreads_bad():
         pfx = fc.new_prefix(str(EXPECTED_DIR), nthreads=None)
 
         with pytest.raises(ValueError):
-            pfx.retrieve(EXPECTED_FILENAMES[0], nthreads=-1)
+            pfx.retrieve([EXPECTED_FILENAMES[0]], nthreads=-1)
         with pytest.raises(ValueError):
-            pfx.retrieve(EXPECTED_FILENAMES[0], nthreads='fred')
-        pfx.retrieve(EXPECTED_FILENAMES[0], nthreads=None)
+            pfx.retrieve([EXPECTED_FILENAMES[0]], nthreads='fred')
+        pfx.retrieve([EXPECTED_FILENAMES[0]], nthreads=None)
 
         with pytest.raises(ValueError):
-            pfx.upload(EXPECTED_FILENAMES[0], nthreads=-1)
+            pfx.upload([EXPECTED_FILENAMES[0]], nthreads=-1)
         with pytest.raises(ValueError):
-            pfx.upload(EXPECTED_FILENAMES[0], nthreads='fred')
-        pfx.upload(EXPECTED_FILENAMES[0], nthreads=None)
+            pfx.upload([EXPECTED_FILENAMES[0]], nthreads='fred')
+        pfx.upload([EXPECTED_FILENAMES[0]], nthreads=None)
 
         with pytest.raises(ValueError):
             pfx = fc.new_prefix(str(EXPECTED_DIR), nthreads=-1)
         with pytest.raises(ValueError):
             pfx = fc.new_prefix(str(EXPECTED_DIR), nthreads='fred')
 
+        with pytest.raises(ValueError):
+            FileCachePrefix(str(EXPECTED_DIR), fc, nthreads=-1)
+        with pytest.raises(ValueError):
+            FileCachePrefix(str(EXPECTED_DIR), fc, nthreads='fred')
+
 
 def test_prefix_bad():
     with FileCache(cache_name=None) as fc:
         with pytest.raises(TypeError):
             fc.new_prefix(5)
-        pfx = FileCachePrefix(GS_TEST_BUCKET_ROOT, fc)
-        pfx = FileCachePrefix(EXPECTED_DIR, fc)
+        FileCachePrefix(GS_TEST_BUCKET_ROOT, fc)
+        FileCachePrefix(EXPECTED_DIR, fc)
         with pytest.raises(TypeError):
-            pfx = FileCachePrefix(5, fc)
+            FileCachePrefix(5, fc)
 
     assert not fc.cache_dir.exists()
 
@@ -523,7 +542,7 @@ def test_cloud_retr_multi_good(cache_name, prefix):
             assert str(path).replace('\\', '/').endswith(filename)
             _compare_to_expected_path(path, filename)
             # Retrieving the same thing a second time should do nothing
-            paths = fc.retrieve((f'{prefix}/{filename}',))
+            paths = fc.retrieve((f'{prefix}/{filename}',), nthreads=5, lock_timeout=5)
             assert len(paths) == 1
             path = paths[0]
             assert str(path).replace('\\', '/').endswith(filename)
@@ -538,7 +557,7 @@ def test_cloud_retr_multi_good(cache_name, prefix):
 @pytest.mark.parametrize('prefix', CLOUD_PREFIXES)
 def test_cloud_retr_multi_pfx_good(cache_name, prefix):
     with FileCache(cache_name=cache_name) as fc:
-        pfx = fc.new_prefix(prefix, anonymous=True)
+        pfx = FileCachePrefix(prefix, fc, anonymous=True, nthreads=4)
         for filename in LIMITED_FILENAMES:
             paths = pfx.retrieve((filename,))
             assert len(paths) == 1
@@ -546,7 +565,7 @@ def test_cloud_retr_multi_pfx_good(cache_name, prefix):
             assert str(path).replace('\\', '/').endswith(filename)
             _compare_to_expected_path(path, filename)
             # Retrieving the same thing a second time should do nothing
-            paths = pfx.retrieve([filename])
+            paths = pfx.retrieve([filename], nthreads=5, lock_timeout=5)
             assert len(paths) == 1
             path = paths[0]
             assert str(path).replace('\\', '/').endswith(filename)
@@ -735,6 +754,49 @@ def test_multi_prefixes_cache_name_retr(prefix):
                 assert str(path1) == str(path2)
     assert not fc1.cache_dir.exists()
     assert not fc2.cache_dir.exists()
+
+
+def test_exists_multi():
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        filenames = ([EXPECTED_DIR / f for f in EXPECTED_FILENAMES] +
+                     [f'{HTTP_TEST_ROOT}/{f}' for f in EXPECTED_FILENAMES] +
+                     [f'{GS_TEST_BUCKET_ROOT}/{f}' for f in EXPECTED_FILENAMES] +
+                     ['/non-existent.txt'] +
+                     [EXPECTED_DIR / f for f in EXPECTED_FILENAMES] +
+                     [f'{BAD_HTTP_TEST_ROOT}/{EXPECTED_FILENAMES[0]}'])
+        expected = (([True] * len(EXPECTED_FILENAMES) * 3) +
+                    [False] +
+                    ([True] * len(EXPECTED_FILENAMES)) +
+                    [False])
+        assert fc.exists(filenames, nthreads=4) == expected
+    assert not fc.cache_dir.exists()
+
+
+def test_exists_multi_pfx():
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_prefix(HTTP_TEST_ROOT)
+        filenames = list(EXPECTED_FILENAMES) + ['non-existent.txt']
+        expected = ([True] * len(EXPECTED_FILENAMES)) + [False]
+        assert pfx.exists(filenames, nthreads=4) == expected
+    assert not fc.cache_dir.exists()
+
+
+def test_local_path_multi():
+    with FileCache(cache_name=None) as fc:
+        filenames = [f'{HTTP_TEST_ROOT}/{f}' for f in EXPECTED_FILENAMES]
+        http_root = HTTP_TEST_ROOT.replace('https://', 'http_')
+        expected = [fc.cache_dir / f'{http_root}/{f}' for f in EXPECTED_FILENAMES]
+        local_paths = fc.get_local_path(filenames)
+        assert local_paths == expected
+
+
+def test_local_path_multi_pfx():
+    with FileCache(cache_name=None) as fc:
+        pfx = fc.new_prefix(HTTP_TEST_ROOT)
+        http_root = HTTP_TEST_ROOT.replace('https://', 'http_')
+        expected = [fc.cache_dir / f'{http_root}/{f}' for f in EXPECTED_FILENAMES]
+        local_paths = pfx.get_local_path(EXPECTED_FILENAMES)
+        assert local_paths == expected
 
 
 def test_locking_1():
@@ -942,8 +1004,8 @@ def test_cleanup_locking_bad():
         local_path = fc.get_local_path('gs://test/test.txt')
         with open(local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}', 'w') as fp:
             fp.write('A')
-    logger.has_prefix_list(['Creating', 'Returning', 'Deleting', 'ERROR', 'Removing',
-                            'Removing', 'Removing'])
+    logger.has_prefix_list(['INFO Creating', 'Returning', 'Deleting', 'ERROR Deleting',
+                            'Removing', 'Removing', 'Removing'])
     with FileCache(cache_name=None) as fc:
         local_path = fc.get_local_path('gs://test/test.txt')
         with open(local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}', 'w') as fp:
@@ -1496,7 +1558,7 @@ def test_local_upl_multi_good():
             local_paths_str = [str(x) for x in local_paths]
             for lp in local_paths:
                 _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
-            ret = fc.upload(local_paths_str)
+            ret = fc.upload(local_paths_str, nthreads=4)
             assert ret == local_paths
             for lp in local_paths:
                 assert lp.is_file()
@@ -1512,12 +1574,12 @@ def test_local_upl_multi_pfx_good():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
         with FileCache(cache_name=None) as fc:
-            pfx = fc.new_prefix(temp_dir)
+            pfx = fc.new_prefix(temp_dir, nthreads=2)
             paths = [f'dir1/test_file{x}' for x in range(10)]
             local_paths = [pfx.get_local_path(x) for x in paths]
             for lp in local_paths:
                 _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
-            ret = pfx.upload(paths)
+            ret = pfx.upload(paths, nthreads=4)
             assert ret == local_paths
             for lp in local_paths:
                 assert lp.is_file()
@@ -1785,9 +1847,36 @@ def test_cloud_upl_multi_pfx_bad_3(prefix):
     assert not fc.cache_dir.exists()
 
 
+def test_prefix_nthreads_bad():
+    with FileCache(None) as fc:
+        pfx = fc.new_prefix(HTTP_TEST_ROOT)
+        with pytest.raises(ValueError):
+            pfx.retrieve(EXPECTED_FILENAMES[0], nthreads=-1)
+        with pytest.raises(ValueError):
+            pfx.retrieve(EXPECTED_FILENAMES[0], nthreads=4.5)
+
+
+def test_url_bad():
+    with FileCache(None) as fc:
+        with pytest.raises(FileNotFoundError):
+            fc.retrieve('/non-existent.txt')
+        with pytest.raises(FileNotFoundError):
+            fc.retrieve('file:///non-existent.txt')
+        assert not fc.exists('file://' + str(EXPECTED_DIR) + '/' +
+                             EXPECTED_FILENAMES[0] + '-bad')
+        assert fc.exists('file://' + str(EXPECTED_DIR) + '/' + EXPECTED_FILENAMES[0])
+        with pytest.raises(ValueError):
+            fc.retrieve('file://xxx://yyy')
+        with pytest.raises(ValueError):
+            fc.retrieve('bad://bad-bucket/file.txt')
+        with pytest.raises(ValueError):
+            fc.retrieve('bad://non-existent.txt')
+
+
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
-# def test_atexit():
-#     fc = FileCache(cache_name=None)
-#     assert os.path.exists(fc.cache_dir)
-#     atexit._run_exitfuncs()
-#     assert not os.path.exists(fc.cache_dir)
+@pytest.mark.order(-1)
+def test_atexit():
+    fc = FileCache(cache_name=None)
+    assert os.path.exists(fc.cache_dir)
+    atexit._run_exitfuncs()
+    assert not os.path.exists(fc.cache_dir)
