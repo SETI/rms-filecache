@@ -50,9 +50,9 @@ ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
 if platform.system() == 'Windows':
-    ROOT_PREFIX = 'c:'
+    WINDOWS_PREFIX = 'c:'
 else:
-    ROOT_PREFIX = ''
+    WINDOWS_PREFIX = ''
 
 
 # This has to be first to clean up any global directory from a previous failed run
@@ -630,10 +630,10 @@ def test_local_retr_bad():
         with pytest.raises(ValueError):
             fc.retrieve('nonexistent.txt')
         with pytest.raises(FileNotFoundError):
-            fc.retrieve(f'{ROOT_PREFIX}/nonexistent.txt')
+            fc.retrieve(f'{WINDOWS_PREFIX}/nonexistent.txt')
     assert not fc.cache_dir.exists()
     with FileCache(cache_name=None) as fc:
-        ret = fc.retrieve(f'{ROOT_PREFIX}/nonexistent.txt', exception_on_fail=False)
+        ret = fc.retrieve(f'{WINDOWS_PREFIX}/nonexistent.txt', exception_on_fail=False)
         assert isinstance(ret, FileNotFoundError)
     assert not fc.cache_dir.exists()
 
@@ -767,7 +767,7 @@ def test_exists_multi():
         filenames = ([EXPECTED_DIR / f for f in EXPECTED_FILENAMES] +
                      [f'{HTTP_TEST_ROOT}/{f}' for f in EXPECTED_FILENAMES] +
                      [f'{GS_TEST_BUCKET_ROOT}/{f}' for f in EXPECTED_FILENAMES] +
-                     [f'{ROOT_PREFIX}/non-existent.txt'] +
+                     [f'{WINDOWS_PREFIX}/non-existent.txt'] +
                      [EXPECTED_DIR / f for f in EXPECTED_FILENAMES] +
                      [f'{BAD_HTTP_TEST_ROOT}/{EXPECTED_FILENAMES[0]}'])
         expected = (([True] * len(EXPECTED_FILENAMES) * 3) +
@@ -1869,7 +1869,7 @@ def test_prefix_nthreads_bad():
 def test_url_bad():
     with FileCache(None) as fc:
         with pytest.raises(FileNotFoundError):
-            fc.retrieve('/non-existent.txt')
+            fc.retrieve(f'{WINDOWS_PREFIX}/non-existent.txt')
         with pytest.raises(FileNotFoundError):
             fc.retrieve('file:///non-existent.txt')
         assert not fc.exists('file://' + str(EXPECTED_DIR) + '/' +
