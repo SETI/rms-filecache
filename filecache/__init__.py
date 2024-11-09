@@ -141,6 +141,14 @@ locations without invoking any caching behavior: :class:`FileCacheSourceFile`,
     src.retrieve('subdir1/subdir2a/binary1.bin', 'local_file.bin')
 """
 
+import typing
+
+if not typing.TYPE_CHECKING:
+    try:
+        from ._version import __version__
+    except ImportError:  # pragma: no cover - only present when building a package
+        __version__ = 'Version unspecified'
+
 from .file_cache import (get_global_logger,    # noqa: ignore E401
                          register_filecachesource,
                          set_easy_logger,

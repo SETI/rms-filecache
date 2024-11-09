@@ -49,7 +49,7 @@ WRITABLE_CLOUD_PREFIXES = (GS_WRITABLE_TEST_BUCKET_ROOT, S3_WRITABLE_TEST_BUCKET
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
-if platform.system() == 'win32':
+if platform.system() == 'Windows':
     ROOT_PREFIX = 'c:'
 else:
     ROOT_PREFIX = ''

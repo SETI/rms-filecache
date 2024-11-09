@@ -37,11 +37,6 @@ from .file_cache_source import (FileCacheSource,
 from .file_cache_prefix import FileCachePrefix
 from .file_cache_types import UrlToPathFuncType
 
-try:
-    from ._version import __version__
-except ImportError:  # pragma: no cover - only present when building a package
-    __version__ = 'Version unspecified'
-
 
 # Global cache of all instantiated FileCacheSource since they may involve opening
 # a connection and are not specific to a particular FileCache
