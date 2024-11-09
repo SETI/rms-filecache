@@ -324,11 +324,15 @@ class FileCache:
             if scheme == 'file':
                 # All file accesses are absolute
                 if platform.system() == 'Windows':
-                    # Must be file://A:/dir/dir/file
-                    if len(remote) != 2 or not remote[0].isalpha() or remote[1] != ':':
+                    # file:///c:/dir/file
+                    # sub_path will be c:/dir/file so it's already absolute.
+                    # If the drive isn't specified, we have a problem and is_absolute
+                    # will fail.
+                    if not Path(sub_path).is_absolute():
                         raise ValueError(f'Local file URL is not absolute: {url}')
-                    sub_path = f'{remote}/{sub_path}'
                 else:
+                    # file:///dir/file
+                    # We have to add the / back on the beginning
                     sub_path = f'/{sub_path}'
                 sub_path = str(Path(sub_path).expanduser().resolve())
             if scheme not in _SCHEME_CLASSES:
