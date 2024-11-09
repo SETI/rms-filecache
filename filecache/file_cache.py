@@ -21,8 +21,9 @@ from typing import (cast,
                     IO,
                     Literal,
                     Optional,
-                    Self,
-                    Type)
+                    Type,
+                    Union)
+from typing_extensions import Self
 import uuid
 
 import filelock
@@ -315,7 +316,7 @@ class FileCache:
         parts = url.split('://')
         if len(parts) == 1:
             # We default to local files
-            if not url.startswith('/'):
+            if not Path(url).is_absolute():
                 raise ValueError(f'Local file URL is not absolute: {url}')
             return 'file', '', url
         elif len(parts) == 2:
@@ -885,7 +886,7 @@ class FileCache:
         else:
             self._log_debug('Multi-file retrieval complete')
 
-        return cast(list[Path | Exception], func_ret)
+        return cast(list[Union[Path, Exception]], func_ret)
 
     def _retrieve_multi_locked(self,
                                sources: list[FileCacheSource],
@@ -1049,7 +1050,7 @@ class FileCache:
         else:
             self._log_debug('Multi-file retrieval complete')
 
-        return cast(list[Path | Exception], func_ret)
+        return cast(list[Union[Path, Exception]], func_ret)
 
     def upload(self,
                url: str | Path | Sequence[str | Path],
@@ -1231,7 +1232,7 @@ class FileCache:
             if exc_str:
                 raise FileNotFoundError(exc_str)
 
-        return cast(list[Path | Exception], func_ret)
+        return cast(list[Union[Path, Exception]], func_ret)
 
     @contextlib.contextmanager
     def open(self,
