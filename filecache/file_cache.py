@@ -162,7 +162,7 @@ class FileCache:
                 five arguments::
 
                     func(scheme: str, remote: str, path: str, cache_dir: Path,
-                         cache_subdir: str) -> Path
+                         cache_subdir: str) -> str | Path
 
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
@@ -378,6 +378,7 @@ class FileCache:
             local_path = url_to_path_func(scheme, remote, sub_path,
                                           self.cache_dir, source._cache_subdir)
             if local_path is not None:
+                local_path = Path(local_path)
                 if not local_path.is_absolute():
                     local_path = self.cache_dir / source._cache_subdir / local_path
                 break
@@ -417,7 +418,7 @@ class FileCache:
                 user-specified translator function takes five arguments::
 
                     func(scheme: str, remote: str, path: str, cache_dir: Path,
-                         cache_subdir: str) -> Path
+                         cache_subdir: str) -> str | Path
 
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
@@ -496,7 +497,7 @@ class FileCache:
                 user-specified translator function takes five arguments::
 
                     func(scheme: str, remote: str, path: str, cache_dir: Path,
-                         cache_subdir: str) -> Path
+                         cache_subdir: str) -> str | Path
 
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
@@ -662,7 +663,7 @@ class FileCache:
                 user-specified translator function takes five arguments::
 
                     func(scheme: str, remote: str, path: str, cache_dir: Path,
-                         cache_subdir: str) -> Path
+                         cache_subdir: str) -> str | Path
 
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
@@ -1083,7 +1084,7 @@ class FileCache:
                 user-specified translator function takes five arguments::
 
                     func(scheme: str, remote: str, path: str, cache_dir: Path,
-                         cache_subdir: str) -> Path
+                         cache_subdir: str) -> str | Path
 
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
@@ -1267,7 +1268,7 @@ class FileCache:
                 user-specified translator function takes five arguments::
 
                     func(scheme: str, remote: str, path: str, cache_dir: Path,
-                         cache_subdir: str) -> Path
+                         cache_subdir: str) -> str | Path
 
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local
@@ -1337,7 +1338,7 @@ class FileCache:
                 user-specified translator function takes five arguments::
 
                     func(scheme: str, remote: str, path: str, cache_dir: Path,
-                         cache_subdir: str) -> Path
+                         cache_subdir: str) -> str | Path
 
                 where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
                 is the name of the bucket or webserver or the empty string for a local

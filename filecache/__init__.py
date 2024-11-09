@@ -152,3 +152,14 @@ from .file_cache_source import (FileCacheSource,  # noqa: ignore E401
                                 FileCacheSourceHTTP,
                                 FileCacheSourceGS,
                                 FileCacheSourceS3)
+
+__all__ = ['get_global_logger',
+           'register_filecachesource',
+           'set_easy_logger',
+           'set_global_logger',
+           'FileCache',
+           'FileCachePrefix',
+           'FileCacheSource',
+           'FileCacheSourceFile',
+           'FileCacheSourceHTTP',
+           'FileCacheSourceGS']

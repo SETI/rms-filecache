@@ -1851,9 +1851,13 @@ def test_prefix_nthreads_bad():
     with FileCache(None) as fc:
         pfx = fc.new_prefix(HTTP_TEST_ROOT)
         with pytest.raises(ValueError):
-            pfx.retrieve(EXPECTED_FILENAMES[0], nthreads=-1)
+            pfx.retrieve(EXPECTED_FILENAMES, nthreads=-1)
         with pytest.raises(ValueError):
-            pfx.retrieve(EXPECTED_FILENAMES[0], nthreads=4.5)
+            pfx.retrieve(EXPECTED_FILENAMES, nthreads=4.5)
+        with pytest.raises(ValueError):
+            pfx.exists(EXPECTED_FILENAMES, nthreads=-1)
+        with pytest.raises(ValueError):
+            pfx.exists(EXPECTED_FILENAMES, nthreads=4.5)
 
 
 def test_url_bad():

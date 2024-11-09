@@ -67,3 +67,7 @@ def test_source_nthreads_bad():
         FileCacheSourceFile('file', '').upload_multi(['/test'], ['/test'], nthreads=-1)
     with pytest.raises(ValueError):
         FileCacheSourceFile('file', '').upload_multi(['/test'], ['/test'], nthreads=4.5)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').exists_multi(['/test'], nthreads=-1)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').exists_multi(['/test'], nthreads=4.5)
