@@ -11,6 +11,7 @@ import logging
 from logging import Logger
 import os
 from pathlib import Path
+import platform
 import sys
 import tempfile
 import time
@@ -322,7 +323,13 @@ class FileCache:
             scheme = parts[0].lower()
             if scheme == 'file':
                 # All file accesses are absolute
-                sub_path = f'/{sub_path}'
+                if platform.system() == 'Windows':
+                    # Must be file://A:/dir/dir/file
+                    if len(remote) != 2 or not remote[0].isalpha() or remote[1] != ':':
+                        raise ValueError(f'Local file URL is not absolute: {url}')
+                    sub_path = f'{remote}/{sub_path}'
+                else:
+                    sub_path = f'/{sub_path}'
                 sub_path = str(Path(sub_path).expanduser().resolve())
             if scheme not in _SCHEME_CLASSES:
                 raise ValueError(f'Unknown scheme {scheme} in {url}')

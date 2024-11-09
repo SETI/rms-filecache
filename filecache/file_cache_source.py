@@ -276,7 +276,7 @@ class FileCacheSourceFile(FileCacheSource):
         """
 
         if remote != '':
-            raise ValueError('UNC shares are not supported: {remote}')
+            raise ValueError(f'UNC shares are not supported: {remote}')
 
         super().__init__(scheme, remote, anonymous)
 
