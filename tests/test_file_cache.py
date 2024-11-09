@@ -51,10 +51,10 @@ ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
 
 if platform.system() == 'Windows':
     WINDOWS_PREFIX = 'c:'
-    WINDOWS_PREFIX_ = 'c:/'
+    WINDOWS_SLASH = '/'
 else:
     WINDOWS_PREFIX = ''
-    WINDOWS_PREFIX_ = ''
+    WINDOWS_SLASH = ''
 
 
 # This has to be first to clean up any global directory from a previous failed run
@@ -1873,10 +1873,11 @@ def test_url_bad():
         with pytest.raises(FileNotFoundError):
             fc.retrieve(f'{WINDOWS_PREFIX}/non-existent.txt')
         with pytest.raises(FileNotFoundError):
-            fc.retrieve(f'file:///{WINDOWS_PREFIX_}non-existent.txt')
-        assert not fc.exists('file://' + str(EXPECTED_DIR) + '/' +
+            fc.retrieve(f'file:///{WINDOWS_PREFIX}{WINDOWS_SLASH}non-existent.txt')
+        assert not fc.exists(f'file://{WINDOWS_SLASH}' + str(EXPECTED_DIR) + '/' +
                              EXPECTED_FILENAMES[0] + '-bad')
-        assert fc.exists('file://' + str(EXPECTED_DIR) + '/' + EXPECTED_FILENAMES[0])
+        assert fc.exists(f'file://{WINDOWS_SLASH}' + str(EXPECTED_DIR) + '/' +
+                         EXPECTED_FILENAMES[0])
         with pytest.raises(ValueError):
             fc.retrieve('file://xxx://yyy')
         with pytest.raises(ValueError):
