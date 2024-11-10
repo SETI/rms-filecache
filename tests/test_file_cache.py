@@ -382,6 +382,7 @@ def test_cache_root_env():
             assert fc.cache_dir == cache_dir
         del os.environ['FILECACHE_CACHE_ROOT']
 
+
 def test_cache_nthreads_bad():
     with pytest.raises(ValueError):
         fc = FileCache(nthreads=-1)
