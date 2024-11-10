@@ -511,7 +511,6 @@ class FileCacheSourceGS(FileCacheSource):
         self._bucket_name = remote
         self._bucket = self._client.bucket(self._bucket_name)
         self._cache_subdir = self._src_prefix.replace('gs://', 'gs_')
-        print('Bucket', self._bucket_name, 'subdir', self._cache_subdir)
 
     @classmethod
     def schemes(self) -> tuple[str, ...]:
