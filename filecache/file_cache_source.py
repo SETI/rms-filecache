@@ -41,8 +41,11 @@ class FileCacheSource(ABC):
             :class:`FileCacheSourceGS`, and :class:`FileCacheSourceS3`).
 
         Parameters:
-            scheme: The scheme of the source, such as 'gs' or 'file'.
-            anonymous... XXX
+            scheme: The scheme of the source, such as ``"gs"`` or ``"file"``.
+            remote: The bucket or remote server name. Must be an empty string for
+                ``file``.
+            anonymous: If True, access cloud resources without specifying credentials. If
+                False, credentials must be initialized in the program's environment.
         """
 
         if scheme not in self.schemes():
@@ -269,10 +272,12 @@ class FileCacheSourceFile(FileCacheSource):
         """Initialization for the FileCacheLocal class.
 
         Parameters:
-            scheme: Must be ``"file"`` or ``""``.
-            remote: Must be ``""`` since UNC shares are not supported.
-            anonymous: This parameter is only provided to mirror the signature of the
-                other source classes. It should not be used.
+            scheme: The scheme of the source. Must be ``"file"`` or ``""``.
+            remote: The remote server name. Must be ``""`` since UNC shares are not
+                supported.
+            anonymous: If True, access cloud resources without specifying credentials. If
+                False, credentials must be initialized in the program's environment. Not
+                used for this class.
         """
 
         if remote != '':
@@ -375,10 +380,11 @@ class FileCacheSourceHTTP(FileCacheSource):
         """Initialization for the FileCacheHTTP class.
 
         Parameters:
-            src_prefix: The prefix to all URL accesses, of the form
-                ``http://<hostname>`` or ``https://<hostname>``. XXX
-            anonymous: This parameter is only provided to mirror the signature of the
-                other source classes. It should not be used.
+            scheme: The scheme of the source. Must be ``"http"`` or ``"https"``.
+            remote: The remote server name.
+            anonymous: If True, access cloud resources without specifying credentials. If
+                False, credentials must be initialized in the program's environment. Not
+                used for this class.
         """
 
         if remote == '':
@@ -488,10 +494,11 @@ class FileCacheSourceGS(FileCacheSource):
         """Initialization for the FileCacheGS class.
 
         Parameters:
-            src_prefix: The prefix for all Google Storage accesses, of the form
-                ``gs://<bucket>``.
-            anonymous: If True, access Google Storage without specifying credentials.
-                Otherwise, credentials must be initialized in the program's environment.
+            scheme: The scheme of the source. Must be ``"gs"``.
+            remote: The bucket name.
+            anonymous: If True, access cloud resources without specifying credentials. If
+                False, credentials must be initialized in the program's environment. Not
+                used for this class.
         """
 
         if remote == '':
@@ -623,10 +630,11 @@ class FileCacheSourceS3(FileCacheSource):
         """Initialization for the FileCacheS3 class.
 
         Parameters:
-            src_prefix: The prefix for all AWS S3 accesses, of the form
-                ``s3://<bucket>``.
-            anonymous: If True, access AWS S3 without specifying credentials. Otherwise,
-                credentials must be initialized in the program's environment.
+            scheme: The scheme of the source. Must be ``"s3"``.
+            remote: The bucket name.
+            anonymous: If True, access cloud resources without specifying credentials. If
+                False, credentials must be initialized in the program's environment. Not
+                used for this class.
         """
 
         if remote == '':

@@ -474,8 +474,8 @@ class FileCachePrefix:
                 If None, use the default value given when this :class:`FileCachePrefix`
                 was created.
         Returns:
-            file-like object: The same object as would be returned by the normal `open()`
-            function. XXX
+            IO object: The same object as would be returned by the normal `open()`
+            function.
         """
 
         if mode[0] == 'r':

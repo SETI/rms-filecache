@@ -58,9 +58,12 @@ else:
 
 
 # This has to be first to clean up any global directory from a previous failed run
+@pytest.mark.order(0)
 def test_cleanup_global_dir():
     with FileCache(delete_on_exit=True):
         pass
+    if 'FILECACHE_CACHE_ROOT' in os.environ:
+        del os.environ['FILECACHE_CACHE_ROOT']
 
 
 def _compare_to_expected_path(cache_path, filename):
@@ -368,6 +371,16 @@ def test_cache_root_bad():
     with pytest.raises(ValueError):
         FileCache(cache_root=EXPECTED_DIR / EXPECTED_FILENAMES[0])
 
+
+def test_cache_root_env():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir).expanduser().resolve()
+        cache_root = temp_dir / str(uuid.uuid4())  # Won't already exist
+        cache_dir = cache_root / '_filecache_global'
+        os.environ['FILECACHE_CACHE_ROOT'] = str(cache_root)
+        with FileCache() as fc:
+            assert fc.cache_dir == cache_dir
+        del os.environ['FILECACHE_CACHE_ROOT']
 
 def test_cache_nthreads_bad():
     with pytest.raises(ValueError):

@@ -23,7 +23,7 @@ bandwidth.
 
 A :class:`FileCache` can be instantiated either directly or as a context manager. When
 instantiated directly, the programmer is responsible for calling
-:meth:`FileCache.clean_up` directly to delete the cache when finished. In addition, a
+:meth:`FileCache.delete_cache` directly to delete the cache when finished. In addition, a
 non-shared cache will be deleted on program exit. When instantiated as a context manager,
 a non-shared cache is deleted on exit from the context. See the class documentation for
 full details.
@@ -31,7 +31,8 @@ full details.
 Usage examples::
 
     from filecache import FileCache
-    with FileCache() as fc:  # Use as context manager
+    # Create a cache with a unique name that will be deleted on exit
+    with FileCache(None) as fc:  # Use as context manager
         # Also use open() as a context manager
         with fc.open('gs://rms-filecache-tests/subdir1/subdir2a/binary1.bin', 'rb',
                      anonymous=True) as fp:
@@ -42,7 +43,7 @@ Usage examples::
         assert bin1 == bin2
     # Cache automatically deleted here
 
-    fc = FileCache()  # Use without context manager
+    fc = FileCache(None)  # Use without context manager
     # Also retrieve file without using open context manager
     path1 = fc.retrieve('gs://rms-filecache-tests/subdir1/subdir2a/binary1.bin',
                         anonymous=True)
@@ -52,15 +53,15 @@ Usage examples::
                         anonymous=True)
     with open(path2, 'rb') as fp:
         bin2 = fp.read()
-    fc.clean_up()  # Cache manually deleted here
+    fc.delete_cache()  # Cache manually deleted here
     assert bin1 == bin2
 
     # Write a file to a bucket and read it back
-    with FileCache() as fc:
+    with FileCache(None) as fc:
         with fc.open('gs://my-writable-bucket/output.txt', 'w') as fp:
             fp.write('A')
     # The cache will be deleted here so the file will have to be downloaded
-    with FileCache() as fc:
+    with FileCache(None) as fc:
         with fc.open('gs://my-writable-bucket/output.txt', 'r') as fp:
             print(fp.read())
 
@@ -74,7 +75,7 @@ other parameters at each method call site.
 Compare this example to the one above::
 
     from filecache import FileCache
-    with FileCache() as fc:  # Use as context manager
+    with FileCache(None) as fc:  # Use as context manager
         # Use GS by specifying the bucket name and one directory level
         pfx1 = fc.new_prefix('gs://rms-filecache-tests/subdir1', anonymous=True)
         # Use S3 by specifying the bucket name and two directory levels
@@ -111,7 +112,7 @@ Then the program could be written as::
 
     from filecache import FileCache
     import os
-    with FileCache() as fc:
+    with FileCache(None) as fc:
         pfx = fc.new_prefix(os.getenv('PDS3_HOLDINGS_SRC'))
         with pfx.open('volumes/COISS_2xxx/COISS_2001/voldesc.cat', 'r') as fp:
             contents = fp.read()
@@ -120,15 +121,16 @@ Then the program could be written as::
 If the program was going to be run multiple times in a row, or multiple copies were going
 to be run simultaneously, marking the cache as shared would allow all of the processes to
 share the same copy, thus requiring only a single download no matter how many times the
-program was run::
+program was run. A shared cache is indicated by giving the cache a name (or no argument,
+which defaults to ``"global"``):
 
     from filecache import FileCache
     import os
-    with FileCache(shared=True) as fc:
+    with FileCache('my_name') as fc:
         pfx = fc.new_prefix(os.getenv('PDS3_HOLDINGS_DIR'))
         with pfx.open('volumes/COISS_2xxx/COISS_2001/voldesc.cat', 'r') as fp:
             contents = fp.read()
-    # Cache not deleted here; must be deleted manually using fc.clean_up(final=True)
+    # Cache not deleted here; must be deleted manually using fc.delete_cache()
     # If not deleted manually, the shared cache will persist until the temporary
     # directory is purged by the operating system (which may be never)
 
@@ -143,7 +145,7 @@ locations without invoking any caching behavior: :class:`FileCacheSourceFile`,
 
 import typing
 
-if not typing.TYPE_CHECKING:
+if not typing.TYPE_CHECKING:  # pragma: no cover
     try:
         from ._version import __version__
     except ImportError:  # pragma: no cover - only present when building a package

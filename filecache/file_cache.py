@@ -123,13 +123,15 @@ class FileCache:
                 persistent on exit. If you pass in ``None``, the cache will instead be
                 stored in a uniquely-named subdirectory with the prefix ``_filecache_``
                 and by default will be deleted on exit.
-            cache_root: The directory in which to place caches. By default, the system
-                temporary directory is used, which involves checking the environment
-                variables ``TMPDIR``, ``TEMP``, and ``TMP``, and if none of those are set
-                then using ``C:\TEMP``, ``C:\TMP``, ``\TEMP``, or ``\TMP`` on Windows and
-                ``/tmp``, ``/var/tmp``, or ``/usr/tmp`` on other platforms. The cache will
-                be stored in a sub-directory within this directory (see `cache_name`). If
-                `cache_root` is specified and the directory does not exist, it is created.
+            cache_root: The directory in which to place caches. By default,
+                :class:`FileCache` uses the contents of the environment variable
+                ``FILECACHE_CACHE_ROOT``; if not set, then the system temporary directory
+                is used, which involves checking the environment variables ``TMPDIR``,
+                ``TEMP``, and ``TMP``, and if none of those are set then using
+                ``C:\TEMP``, ``C:\TMP``, ``\TEMP``, or ``\TMP`` on Windows and ``/tmp``,
+                ``/var/tmp``, or ``/usr/tmp`` on other platforms. The cache will be stored
+                in a sub-directory within this directory (see `cache_name`). If
+                `cache_root` is specified but the directory does not exist, it is created.
             delete_on_exit: If True, the cache directory and its contents
                 are always deleted on program exit or exit from a :class:`FileCache`
                 context manager. If False, the cache is never deleted. By default, an
@@ -198,6 +200,8 @@ class FileCache:
         # prefix, and we do not allow the directory name to have additional directory
         # components like "..".
 
+        if cache_root is None:
+            cache_root = os.environ.get('FILECACHE_CACHE_ROOT')
         if cache_root is None:
             cache_root = tempfile.gettempdir()
         cache_root = Path(cache_root).expanduser().resolve()
@@ -323,7 +327,7 @@ class FileCache:
             scheme = parts[0].lower()
             if scheme == 'file':
                 # All file accesses are absolute
-                if platform.system() == 'Windows':
+                if platform.system() == 'Windows':  # pragma: no cover
                     # file:///c:/dir/file
                     # sub_path will be c:/dir/file so it's already absolute.
                     # If the drive isn't specified, we have a problem and is_absolute
