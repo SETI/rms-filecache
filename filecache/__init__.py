@@ -156,7 +156,7 @@ from .file_cache import (get_global_logger,    # noqa: ignore E401
                          set_easy_logger,
                          set_global_logger,
                          FileCache)
-from .file_cache_prefix import FileCachePrefix  # noqa: ignore E401
+from .file_cache_path import FCPath  # noqa: ignore E401
 from .file_cache_source import (FileCacheSource,  # noqa: ignore E401
                                 FileCacheSourceFile,
                                 FileCacheSourceHTTP,
