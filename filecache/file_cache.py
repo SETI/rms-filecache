@@ -1,5 +1,5 @@
 ##########################################################################################
-# filecache/filecache.py
+# filecache/file_cache.py
 ##########################################################################################
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from .file_cache_source import (FileCacheSource,
                                 FileCacheSourceGS,
                                 FileCacheSourceS3,
                                 )
-from .file_cache_prefix import FileCachePrefix
+from .file_cache_path import FCPath
 from .file_cache_types import UrlToPathFuncType
 
 
@@ -249,6 +249,10 @@ class FileCache:
             self._cache_dir.mkdir(exist_ok=is_shared)
 
         atexit.register(self._maybe_delete_cache)
+
+    @classmethod
+    def registered_scheme_prefixes(self):
+        return tuple([x + '://' for x in _SCHEME_CLASSES])
 
     @property
     def cache_dir(self) -> Path:
@@ -1315,21 +1319,21 @@ class FileCache:
                 yield fp
             self.upload(url, anonymous=anonymous, url_to_path=url_to_path)
 
-    def new_prefix(self,
-                   prefix: str,
-                   *,
-                   anonymous: Optional[bool] = None,
-                   lock_timeout: Optional[int] = None,
-                   nthreads: Optional[int] = None,
-                   url_to_path: Optional[UrlToPathFuncType |
-                                         Sequence[UrlToPathFuncType]] = None
-                   ) -> FileCachePrefix:
-        """Create a new FileCachePrefix with the given prefix.
+    def new_path(self,
+                 prefix: str,
+                 *,
+                 anonymous: Optional[bool] = None,
+                 lock_timeout: Optional[int] = None,
+                 nthreads: Optional[int] = None,
+                 url_to_path: Optional[UrlToPathFuncType |
+                                       Sequence[UrlToPathFuncType]] = None
+                 ) -> FCPath:
+        """Create a new FCPath with the given prefix.
 
         Parameters:
             prefix: The prefix for the storage location, which may include the source
                 prefix was well as any top-level directories. All accesses made through
-                this :class:`FileCachePrefix` instance will have this prefix prepended to
+                this :class:`FCPath` instance will have this prefix prepended to
                 their file path.
             anonymous: If True, access cloud resources without specifying credentials. If
                 False, credentials must be initialized in the program's environment. If
@@ -1380,11 +1384,12 @@ class FileCache:
             raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
         if nthreads is None:
             nthreads = self.nthreads
-        return FileCachePrefix(prefix, self,
-                               anonymous=anonymous,
-                               lock_timeout=lock_timeout,
-                               nthreads=nthreads,
-                               url_to_path=url_to_path)
+        return FCPath(prefix,
+                      filecache=self,
+                      anonymous=anonymous,
+                      lock_timeout=lock_timeout,
+                      nthreads=nthreads,
+                      url_to_path=url_to_path)
 
     def _maybe_delete_cache(self) -> None:
         """Delete this cache if delete_on_exit is True."""
