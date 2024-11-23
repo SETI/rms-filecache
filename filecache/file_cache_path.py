@@ -119,6 +119,14 @@ class FCPath:
         self._upload_counter = 0
         self._download_counter = 0
 
+    def _validate_nthreads(self,
+                           nthreads: Optional[int]) -> int | None:
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+        if nthreads is None:
+            nthreads = self._nthreads
+        return nthreads
+
     @staticmethod
     def _split_parts(path: str | Path) -> tuple[str, str, str]:
         """Split a path into drive, root, and remainder of path."""
@@ -661,10 +669,7 @@ class FCPath:
             ValueError: If the derived path is not absolute.
         """
 
-        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
-            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
-        if nthreads is None:
-            nthreads = self._nthreads
+        nthreads = self._validate_nthreads(nthreads)
 
         if isinstance(sub_path, (list, tuple)):
             new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
@@ -767,10 +772,7 @@ class FCPath:
 
         old_download_counter = self._filecache_to_use.download_counter
 
-        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
-            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
-        if nthreads is None:
-            nthreads = self._nthreads
+        nthreads = self._validate_nthreads(nthreads)
 
         if lock_timeout is None:
             lock_timeout = self._lock_timeout
@@ -866,11 +868,7 @@ class FCPath:
 
         old_upload_counter = self._filecache_to_use.upload_counter
 
-        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
-            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
-
-        if nthreads is None:
-            nthreads = self._nthreads
+        nthreads = self._validate_nthreads(nthreads)
 
         try:
             if isinstance(sub_path, (list, tuple)):
@@ -978,24 +976,24 @@ class FCPath:
         """Whether this path is a regular file."""
         return cast(bool, self.exists())
 
-    def read_bytes(self, **kwargs: Any) -> Any:
+    def read_bytes(self, **kwargs: Any) -> bytearray:
         """Open the file in bytes mode, read it, and close the file."""
         with self.open(mode='rb', **kwargs) as f:
-            return f.read()
+            return cast(bytearray, f.read())
 
-    def read_text(self, **kwargs: Any) -> Any:
+    def read_text(self, **kwargs: Any) -> str:
         """Open the file in text mode, read it, and close the file."""
         with self.open(mode='r', **kwargs) as f:
-            return f.read()
+            return cast(str, f.read())
 
-    def write_bytes(self, data: Any, **kwargs: Any) -> int | None:
+    def write_bytes(self, data: Any, **kwargs: Any) -> int:
         """Open the file in bytes mode, write to it, and close the file."""
         # type-check for the buffer interface before truncating the file
         view = memoryview(data)
         with self.open(mode='wb', **kwargs) as f:
             return f.write(view)
 
-    def write_text(self, data: Any, **kwargs: Any) -> int | None:
+    def write_text(self, data: Any, **kwargs: Any) -> int:
         """Open the file in text mode, write to it, and close the file."""
         if not isinstance(data, str):
             raise TypeError('data must be str, not %s' %
