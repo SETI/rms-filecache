@@ -609,7 +609,7 @@ class FCPath:
         new_sub_path = FCPath._join(self._path, sub_path)
         if not FCPath._is_absolute(str(new_sub_path)):
             raise ValueError(
-                'Derived path must be absolute, got {new_sub_path}')
+                f'Derived path must be absolute, got {new_sub_path}')
         return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
                                                           new_sub_path),
                                                      anonymous=self._anonymous,
@@ -686,7 +686,7 @@ class FCPath:
         new_sub_path = FCPath._join(self._path, sub_path)
         if not FCPath._is_absolute(str(new_sub_path)):
             raise ValueError(
-                'Derived path must be absolute, got {new_sub_path}')
+                f'Derived path must be absolute, got {new_sub_path}')
         return self._filecache_to_use.exists(cast(StrOrPathOrSeqType,
                                                   new_sub_path),
                                              bypass_cache=bypass_cache,
@@ -794,7 +794,7 @@ class FCPath:
                 new_sub_path2 = FCPath._join(self._path, sub_path)
                 if not FCPath._is_absolute(str(new_sub_path2)):
                     raise ValueError(
-                        'Derived path must be absolute, got {new_sub_path2}')
+                        f'Derived path must be absolute, got {new_sub_path2}')
                 ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
                                                            new_sub_path2),
                                                       anonymous=self._anonymous,
@@ -886,7 +886,7 @@ class FCPath:
                 new_sub_path = FCPath._join(self._path, sub_path)
                 if not FCPath._is_absolute(str(new_sub_path)):
                     raise ValueError(
-                        'Derived path must be absolute, got {new_sub_path}')
+                        f'Derived path must be absolute, got {new_sub_path}')
                 ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
                                                          new_sub_path),
                                                     anonymous=self._anonymous,
