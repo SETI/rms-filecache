@@ -103,31 +103,40 @@ with FileCache(None) as fc:
         print(fp.read())
 ```
 
-A `FileCachePrefix` instance can be used to encapsulate the storage prefix string,
-as well as any subdirectories, plus various arguments such as `anonymous` and `time_out`
-that can be specified to each `exists`, `retrieve`, or `upload` method. Thus using one
-of these instances can simplify the use of a `FileCache` by allowing the user to
-only specify the relative part of the path to be operated on, and to not specify various
-other parameters at each method call site.
+The `FCPath` class is a reimplementation of the Python `Path` class to support remote
+acess using `FileCache`. Like `Path`, a `FCPath` instance can contain any part of a URI,
+but only an absolute URI can be used when actually accessing the file specified by the
+`FCPath`. In addition, an `FCPath` can encapsulate various arguments such as `anonymous`
+and `time_out` that can be specified to each `exists`, `retrieve`, or `upload` method.
+Thus using one of these instances can simplify the use of a `FileCache` by allowing the
+user to only specify the relative part of the path to be operated on, and to not specify
+various other parameters at each method call site. If an `FCPath` instance is created
+without an explicitly-associated `FileCache`, then the default `FileCache()` is used,
+which specifies a shared cache named `"global"`.
 
 Compare this example to the one above:
 
 ```python
-from filecache import FileCache
+from filecache import FileCache, FCPath
 # Create a cache with a unique name that will be deleted on exit
 with FileCache(None) as fc:  # Use as context manager
     # Use GS by specifying the bucket name and one directory level
-    pfx1 = fc.new_prefix('gs://rms-filecache-tests/subdir1', anonymous=True)
+    p1 = fc.new_path('gs://rms-filecache-tests/subdir1', anonymous=True)
     # Use S3 by specifying the bucket name and two directory levels
-    pfx2 = fc.new_prefix('s3://rms-filecache-tests/subdir1/subdir2a', anonymous=True)
+    # Alternative creation method
+    p2 = FCPath('s3://rms-filecache-tests/subdir1/subdir2a', filecache=fc,
+                anonymous=True)
     # Access GS using a directory + filename (since only one directory level
-    # was specified by the prefix)
+    # was specified by the FCPath)
+    # The additional directory and filename are specified as an argument to open()
     # Also use open() as a context manager
-    with pfx1.open('subdir2a/binary1.bin', 'rb') as fp:
+    with p1.open('subdir2a/binary1.bin', 'rb') as fp:
         bin1 = fp.read()
     # Access S3 using a filename only (since two directory levels were already
-    # specified by the prefix))
-    with pfx2.open('binary1.bin', 'rb') as fp:
+    # specified by the FCPath)
+    # The additional filename is specified by using the / operator to create a new
+    # FCPath instance; anonymous=True is inherited
+    with (p2 / 'binary1.bin').open(mode='rb') as fp:
         bin2 = fp.read()
     assert bin1 == bin2
 # Cache automatically deleted here
@@ -157,9 +166,9 @@ Then the program could be written as:
 from filecache import FileCache
 import os
 with FileCache(None) as fc:
-    pfx = fc.new_prefix(os.getenv('PDS3_HOLDINGS_SRC'))
-    with pfx.open('volumes/COISS_2xxx/COISS_2001/voldesc.cat', 'r') as fp:
-        contents = fp.read()
+    p = fc.new_path(os.getenv('PDS3_HOLDINGS_SRC'))
+    voldesc_path = p / 'volumes/COISS_2xxx/COISS_2001/voldesc.cat'
+    contents = voldesc_path.read_text()
 # Cache automatically deleted here
 ```
 
@@ -173,9 +182,9 @@ defaults to ``"global"``):
 from filecache import FileCache
 import os
 with FileCache('my_name') as fc:
-    pfx = fc.new_prefix(os.getenv('PDS3_HOLDINGS_DIR'))
-    with pfx.open('volumes/COISS_2xxx/COISS_2001/voldesc.cat', 'r') as fp:
-        contents = fp.read()
+    p = fc.new_path(os.getenv('PDS3_HOLDINGS_DIR'))
+    voldesc_path = p / 'volumes/COISS_2xxx/COISS_2001/voldesc.cat'
+    contents = voldesc_path.read_text()
 # Cache not deleted here; must be deleted manually using fc.delete_cache()
 # If not deleted manually, the shared cache will persist until the temporary
 # directory is purged by the operating system (which may be never)

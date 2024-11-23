@@ -506,7 +506,7 @@ class FCPath:
             return False
         if len(path_parts) > len(pattern_parts) and path_pattern.anchor:
             return False
-        globber = StringGlobber('/', True)
+        globber = StringGlobber()
         for path_part, pattern_part in zip(path_parts, pattern_parts):
             match = globber.compile(pattern_part)
             if match(path_part) is None:
@@ -522,7 +522,7 @@ class FCPath:
 
         if not isinstance(pattern, FCPath):
             pattern = FCPath(pattern)
-        globber = StringGlobber('/', True, recursive=True)
+        globber = StringGlobber(recursive=True)
         match = globber.compile(str(pattern))
         return match(self._path) is not None
 

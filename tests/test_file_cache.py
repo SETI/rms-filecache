@@ -219,7 +219,7 @@ def test_easy_logger(capsys):
     filecache.set_easy_logger()
     with FileCache(cache_name=None) as fc:
         fc.get_local_path(f'{WINDOWS_PREFIX}/')
-    assert 'Returning local path for / as /\n' in capsys.readouterr().out
+    assert f'Returning local path for {WINDOWS_PREFIX}/ as /\n' in capsys.readouterr().out
     filecache.set_global_logger(None)
     with FileCache(cache_name=None) as fc:
         fc.new_path('gs://test')

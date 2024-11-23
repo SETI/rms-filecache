@@ -1,8 +1,9 @@
 ##########################################################################################
 # filecache/my_glob.py
 #
-# This code is copied directly from the Python 3.12 version of cpython/Lib/glob.py
-# and is distributed under the Python Software Foundation License Version 2
+# This code is copied directly (with minor modifications) from the Python 3.12 version of
+# cpython/Lib/glob.py and is distributed under the Python Software Foundation License
+# Version 2
 ##########################################################################################
 
 import contextlib
@@ -376,7 +377,7 @@ _dir_open_flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0)
 _no_recurse_symlinks = object()
 
 
-def translate(pat, *, recursive=False, include_hidden=False, seps=None):
+def translate(pat, *, recursive=False, include_hidden=False):
     """Translate a pathname with shell wildcards to a regular expression.
 
     If `recursive` is true, the pattern segment '**' will match any number of
@@ -384,18 +385,9 @@ def translate(pat, *, recursive=False, include_hidden=False, seps=None):
 
     If `include_hidden` is true, wildcards can match path segments beginning
     with a dot ('.').
-
-    If a sequence of separator characters is given to `seps`, they will be
-    used to split the pattern into segments and match path separators. If not
-    given, os.path.sep and os.path.altsep (where available) are used.
     """
-    if not seps:
-        if os.path.altsep:
-            seps = (os.path.sep, os.path.altsep)
-        else:
-            seps = os.path.sep
-    escaped_seps = ''.join(map(re.escape, seps))
-    any_sep = f'[{escaped_seps}]' if len(seps) > 1 else escaped_seps
+    escaped_seps = ''.join(map(re.escape, '/'))
+    any_sep = escaped_seps
     not_sep = f'[^{escaped_seps}]'
     if include_hidden:
         one_last_segment = f'{not_sep}+'
@@ -432,22 +424,18 @@ def translate(pat, *, recursive=False, include_hidden=False, seps=None):
 
 
 @functools.lru_cache(maxsize=512)
-def _compile_pattern(pat, sep, case_sensitive, recursive=True):
+def _compile_pattern(pat, recursive=True):
     """Compile given glob pattern to a re.Pattern object (observing case
     sensitivity)."""
-    flags = re.NOFLAG if case_sensitive else re.IGNORECASE
-    regex = translate(pat, recursive=recursive, include_hidden=True, seps=sep)
-    return re.compile(regex, flags=flags).match
+    regex = translate(pat, recursive=recursive, include_hidden=True)
+    return re.compile(regex).match
 
 
 class _Globber:
     """Class providing shell-style pattern matching and globbing.
     """
 
-    def __init__(self, sep, case_sensitive, case_pedantic=False, recursive=False):
-        self.sep = sep
-        self.case_sensitive = case_sensitive
-        self.case_pedantic = case_pedantic
+    def __init__(self, recursive=False):
         self.recursive = recursive
 
     # Low-level methods
@@ -477,7 +465,7 @@ class _Globber:
     # High-level methods
 
     def compile(self, pat):
-        return _compile_pattern(pat, self.sep, self.case_sensitive, self.recursive)
+        return _compile_pattern(pat, self.recursive)
 
     def selector(self, parts):
         """Returns a function that selects from a given path, walking and
@@ -490,8 +478,8 @@ class _Globber:
             selector = self.recursive_selector
         elif part in _special_parts:
             selector = self.special_selector
-        elif not self.case_pedantic and magic_check.search(part) is None:
-            selector = self.literal_selector
+        # elif not self.case_pedantic and magic_check.search(part) is None:  XXX
+        #     selector = self.literal_selector
         else:
             selector = self.wildcard_selector
         return selector(part, parts)
@@ -514,7 +502,7 @@ class _Globber:
         # rather than leaving them for the next selector. This reduces the
         # number of string concatenation operations and calls to add_slash().
         while parts and magic_check.search(parts[-1]) is None:
-            part += self.sep + parts.pop()
+            part += '/' + parts.pop()
 
         select_next = self.selector(parts)
 
@@ -574,7 +562,7 @@ class _Globber:
         follow_symlinks = self.recursive is not _no_recurse_symlinks
         if follow_symlinks:
             while parts and parts[-1] not in _special_parts:
-                part += self.sep + parts.pop()
+                part += '/' + parts.pop()
 
         match = None if part == '**' else self.compile(part)
         dir_only = bool(parts)
