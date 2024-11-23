@@ -35,8 +35,7 @@ from .file_cache_source import (FileCacheSource,
                                 FileCacheSourceS3,
                                 )
 from .file_cache_path import FCPath
-from .file_cache_types import (StrOrPathType,
-                               StrOrPathOrSeqType,
+from .file_cache_types import (StrOrPathOrSeqType,
                                UrlToPathFuncOrSeqType)
 
 

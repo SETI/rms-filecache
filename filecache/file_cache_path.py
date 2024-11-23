@@ -106,8 +106,7 @@ class FCPath:
             self._anonymous: Optional[bool] = copy_from._anonymous
             self._lock_timeout: Optional[int] = copy_from._lock_timeout
             self._nthreads: Optional[int] = copy_from._nthreads
-            self._url_to_path: Optional[UrlToPathFuncOrSeqType] = \
-                                            copy_from._url_to_path
+            self._url_to_path: Optional[UrlToPathFuncOrSeqType] = copy_from._url_to_path
         else:
             self._filecache = filecache
             self._anonymous = anonymous
