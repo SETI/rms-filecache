@@ -7,7 +7,6 @@ from __future__ import annotations
 # See cpython/Lib/pathlib/_local.py
 from .my_glob import StringGlobber
 
-from collections.abc import Sequence
 import contextlib
 from pathlib import Path
 from typing import (cast,
@@ -20,7 +19,9 @@ from typing import (cast,
 if TYPE_CHECKING:  # pragma: no cover
     from .file_cache import FileCache  # Circular import
 
-from .file_cache_types import UrlToPathFuncType
+from .file_cache_types import (StrOrPathOrSeqType,
+                               StrOrSeqType,
+                               UrlToPathFuncOrSeqType)
 
 
 # This FileCache is used when an FCPath is created without specifying a particular
@@ -44,8 +45,7 @@ class FCPath:
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
-                 url_to_path: Optional[UrlToPathFuncType |
-                                       Sequence[UrlToPathFuncType]] = None,
+                 url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
                  copy_from: Optional[FCPath] = None
                  ):
         """Initialization for the FCPath class.
@@ -102,11 +102,12 @@ class FCPath:
         self._path = self._join(*paths)
 
         if copy_from is not None:
-            self._filecache = copy_from._filecache
-            self._anonymous = copy_from._anonymous
-            self._lock_timeout = copy_from._lock_timeout
-            self._nthreads = copy_from._nthreads
-            self._url_to_path = copy_from._url_to_path
+            self._filecache: Optional["FileCache"] = copy_from._filecache
+            self._anonymous: Optional[bool] = copy_from._anonymous
+            self._lock_timeout: Optional[int] = copy_from._lock_timeout
+            self._nthreads: Optional[int] = copy_from._nthreads
+            self._url_to_path: Optional[UrlToPathFuncOrSeqType] = \
+                                            copy_from._url_to_path
         else:
             self._filecache = filecache
             self._anonymous = anonymous
@@ -489,7 +490,7 @@ class FCPath:
         return FCPath._is_absolute(self._path)
 
     def match(self,
-              path_pattern: str | FCPath) -> bool:
+              path_pattern: str | Path | FCPath) -> bool:
         """Return True if this path matches the given pattern.
 
         If the pattern is relative, matching is done from the right; otherwise, the entire
@@ -514,7 +515,7 @@ class FCPath:
         return True
 
     def full_match(self,
-                   pattern: str | FCPath) -> bool:
+                   pattern: str | Path | FCPath) -> bool:
         """Return True if this path matches the given glob-style pattern.
 
         The pattern is matched against the entire path.
@@ -527,7 +528,7 @@ class FCPath:
         return match(self._path) is not None
 
     @property
-    def _filecache_to_use(self):
+    def _filecache_to_use(self) -> "FileCache":
         from .file_cache import FileCache
         global _DEFAULT_FILECACHE
         if self._filecache is None:
@@ -537,11 +538,10 @@ class FCPath:
         return self._filecache
 
     def get_local_path(self,
-                       sub_path: Optional[str | Path | Sequence[str | Path]] = None,
+                       sub_path: Optional[StrOrPathOrSeqType] = None,
                        *,
                        create_parents: bool = True,
-                       url_to_path: Optional[UrlToPathFuncType |
-                                             Sequence[UrlToPathFuncType]] = None,
+                       url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
                        ) -> Path | list[Path]:
         """Return the local path for the given sub_path relative to the prefix.
 
@@ -584,7 +584,8 @@ class FCPath:
         """
 
         if isinstance(sub_path, (list, tuple)):
-            new_sub_path = [FCPath._join(self._path, p) for p in sub_path]
+            new_sub_path: StrOrPathOrSeqType = [FCPath._join(self._path, p)
+                                                for p in sub_path]
             return self._filecache_to_use.get_local_path(new_sub_path,
                                                          anonymous=self._anonymous,
                                                          create_parents=create_parents,
@@ -596,12 +597,11 @@ class FCPath:
                                                      url_to_path=url_to_path)
 
     def exists(self,
-               sub_path: Optional[str | Path | Sequence[str | Path]] = None,
+               sub_path: Optional[StrOrPathOrSeqType] = None,
                *,
                bypass_cache: bool = False,
                nthreads: Optional[int] = None,
-               url_to_path: Optional[UrlToPathFuncType |
-                                     Sequence[UrlToPathFuncType]] = None
+               url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> bool | list[bool]:
         """Check if a file exists without downloading it.
 
@@ -654,7 +654,8 @@ class FCPath:
             nthreads = self._nthreads
 
         if isinstance(sub_path, (list, tuple)):
-            new_sub_path = [FCPath._join(self._path, p) for p in sub_path]
+            new_sub_path: StrOrPathOrSeqType = [FCPath._join(self._path, p)
+                                                for p in sub_path]
             return self._filecache_to_use.exists(new_sub_path,
                                                  bypass_cache=bypass_cache,
                                                  nthreads=nthreads,
@@ -667,13 +668,12 @@ class FCPath:
                                              url_to_path=url_to_path)
 
     def retrieve(self,
-                 sub_path: Optional[str | Sequence[str]] = None,
+                 sub_path: Optional[StrOrSeqType] = None,
                  *,
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
                  exception_on_fail: bool = True,
-                 url_to_path: Optional[UrlToPathFuncType |
-                                       Sequence[UrlToPathFuncType]] = None
+                 url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                  ) -> Path | Exception | list[Path | Exception]:
         """Retrieve a file(s) from the given sub_path and store it in the file cache.
 
@@ -755,7 +755,8 @@ class FCPath:
 
         try:
             if isinstance(sub_path, (list, tuple)):
-                new_sub_path = [FCPath._join(self._path, p) for p in sub_path]
+                new_sub_path: StrOrPathOrSeqType = [FCPath._join(self._path, p)
+                                                    for p in sub_path]
                 ret = self._filecache_to_use.retrieve(new_sub_path,
                                                       anonymous=self._anonymous,
                                                       lock_timeout=lock_timeout,
@@ -763,7 +764,8 @@ class FCPath:
                                                       exception_on_fail=exception_on_fail,
                                                       url_to_path=url_to_path)
             else:
-                ret = self._filecache_to_use.retrieve(FCPath._join(self._path, sub_path),
+                new_sub_path2: StrOrPathOrSeqType = FCPath._join(self._path, sub_path)
+                ret = self._filecache_to_use.retrieve(new_sub_path2,
                                                       anonymous=self._anonymous,
                                                       lock_timeout=lock_timeout,
                                                       exception_on_fail=exception_on_fail,
@@ -775,12 +777,11 @@ class FCPath:
         return ret
 
     def upload(self,
-               sub_path: Optional[str | Sequence[str]] = None,
+               sub_path: Optional[StrOrSeqType] = None,
                *,
                nthreads: Optional[int] = None,
                exception_on_fail: bool = True,
-               url_to_path: Optional[UrlToPathFuncType |
-                                     Sequence[UrlToPathFuncType]] = None
+               url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> Path | Exception | list[Path | Exception]:
         """Upload file(s) from the file cache to the storage location(s).
 
@@ -842,14 +843,16 @@ class FCPath:
 
         try:
             if isinstance(sub_path, (list, tuple)):
-                new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
+                new_sub_paths: StrOrPathOrSeqType = [FCPath._join(self._path, p)
+                                                     for p in sub_path]
                 ret = self._filecache_to_use.upload(new_sub_paths,
                                                     anonymous=self._anonymous,
                                                     nthreads=nthreads,
                                                     exception_on_fail=exception_on_fail,
                                                     url_to_path=url_to_path)
             else:
-                ret = self._filecache_to_use.upload(FCPath._join(self._path, sub_path),
+                new_sub_path2: StrOrPathOrSeqType = FCPath._join(self._path, sub_path)
+                ret = self._filecache_to_use.upload(new_sub_path2,
                                                     anonymous=self._anonymous,
                                                     exception_on_fail=exception_on_fail,
                                                     url_to_path=url_to_path)
@@ -864,8 +867,7 @@ class FCPath:
              sub_path: Optional[str] = None,
              mode: str = 'r',
              *args: Any,
-             url_to_path: Optional[UrlToPathFuncType |
-                                   Sequence[UrlToPathFuncType]] = None,
+             url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
              **kwargs: Any) -> Generator[IO[Any]]:
         """Retrieve+open or open+upload a file as a context manager.
 
@@ -935,26 +937,26 @@ class FCPath:
 
     def is_file(self) -> bool:
         """Whether this path is a regular file."""
-        return self.exists()
+        return cast(bool, self.exists())
 
-    def read_bytes(self, **kwargs):
+    def read_bytes(self, **kwargs: Any) -> Any:
         """Open the file in bytes mode, read it, and close the file."""
         with self.open(mode='rb', **kwargs) as f:
             return f.read()
 
-    def read_text(self, **kwargs):
+    def read_text(self, **kwargs: Any) -> Any:
         """Open the file in text mode, read it, and close the file."""
         with self.open(mode='r', **kwargs) as f:
             return f.read()
 
-    def write_bytes(self, data, **kwargs):
+    def write_bytes(self, data: Any, **kwargs: Any) -> int | None:
         """Open the file in bytes mode, write to it, and close the file."""
         # type-check for the buffer interface before truncating the file
         view = memoryview(data)
         with self.open(mode='wb', **kwargs) as f:
             return f.write(view)
 
-    def write_text(self, data, **kwargs):
+    def write_text(self, data: Any, **kwargs: Any) -> int | None:
         """Open the file in text mode, write to it, and close the file."""
         if not isinstance(data, str):
             raise TypeError('data must be str, not %s' %
@@ -962,87 +964,87 @@ class FCPath:
         with self.open(mode='w', **kwargs) as f:
             return f.write(data)
 
-    def iterdir(self):  # XXX
-        """Yield path objects of the directory contents.
+    # def iterdir(self):  # XXX
+    #     """Yield path objects of the directory contents.
 
-        The children are yielded in arbitrary order, and the
-        special entries '.' and '..' are not included.
-        """
-        raise NotImplementedError
+    #     The children are yielded in arbitrary order, and the
+    #     special entries '.' and '..' are not included.
+    #     """
+    #     raise NotImplementedError
 
-    def _glob_selector(self, parts):  # XXX
-        return
-        # if case_sensitive is None:
-        #     case_sensitive = True
-        #     case_pedantic = False
-        # else:
-        #     # The user has expressed a case sensitivity choice, but we don't
-        #     # know the case sensitivity of the underlying filesystem, so we
-        #     # must use scandir() for everything, including non-wildcard parts.
-        #     case_pedantic = True
-        # recursive = True if recurse_symlinks else _no_recurse_symlinks
-        # globber = self._globber(self.parser.sep, case_sensitive, case_pedantic,
-        # recursive)
-        # return globber.selector(parts)
+    # def _glob_selector(self, parts):  # XXX
+    #     return
+    #     # if case_sensitive is None:
+    #     #     case_sensitive = True
+    #     #     case_pedantic = False
+    #     # else:
+    #     #     # The user has expressed a case sensitivity choice, but we don't
+    #     #     # know the case sensitivity of the underlying filesystem, so we
+    #     #     # must use scandir() for everything, including non-wildcard parts.
+    #     #     case_pedantic = True
+    #     # recursive = True if recurse_symlinks else _no_recurse_symlinks
+    #     # globber = self._globber(self.parser.sep, case_sensitive, case_pedantic,
+    #     # recursive)
+    #     # return globber.selector(parts)
 
-    def glob(self, pattern):  # XXX
-        """Iterate over this subtree and yield all existing files (of any
-        kind, including directories) matching the given relative pattern.
-        """
-        if not isinstance(pattern, FCPath):
-            pattern = FCPath(pattern)
-        anchor, parts = pattern._stack
-        if anchor:
-            raise NotImplementedError("Non-relative patterns are unsupported")
-        select = self._glob_selector(parts, True, False)
-        return select(self)
+    # def glob(self, pattern):  # XXX
+    #     """Iterate over this subtree and yield all existing files (of any
+    #     kind, including directories) matching the given relative pattern.
+    #     """
+    #     if not isinstance(pattern, FCPath):
+    #         pattern = FCPath(pattern)
+    #     anchor, parts = pattern._stack
+    #     if anchor:
+    #         raise NotImplementedError("Non-relative patterns are unsupported")
+    #     select = self._glob_selector(parts)
+    #     return select(self)
 
-    def rglob(self, pattern):  # XXX
-        """Recursively yield all existing files (of any kind, including
-        directories) matching the given relative pattern, anywhere in
-        this subtree.
-        """
-        if not isinstance(pattern, FCPath):
-            pattern = FCPath(pattern)
-        pattern = '**' / pattern
-        return self.glob(pattern)
+    # def rglob(self, pattern):  # XXX
+    #     """Recursively yield all existing files (of any kind, including
+    #     directories) matching the given relative pattern, anywhere in
+    #     this subtree.
+    #     """
+    #     if not isinstance(pattern, FCPath):
+    #         pattern = FCPath(pattern)
+    #     pattern = '**' / pattern
+    #     return self.glob(pattern)
 
-    def walk(self, top_down=True, on_error=None, follow_symlinks=False):  # XXX
-        """Walk the directory tree from this directory, similar to os.walk()."""
-        paths = [self]
-        while paths:
-            path = paths.pop()
-            if isinstance(path, tuple):
-                yield path
-                continue
-            dirnames = []
-            filenames = []
-            if not top_down:
-                paths.append((path, dirnames, filenames))
-            try:
-                for child in path.iterdir():
-                    try:
-                        if child.is_dir(follow_symlinks=follow_symlinks):
-                            if not top_down:
-                                paths.append(child)
-                            dirnames.append(child.name)
-                        else:
-                            filenames.append(child.name)
-                    except OSError:
-                        filenames.append(child.name)
-            except OSError as error:
-                if on_error is not None:
-                    on_error(error)
-                if not top_down:
-                    while not isinstance(paths.pop(), tuple):
-                        pass
-                continue
-            if top_down:
-                yield path, dirnames, filenames
-                paths += [path.joinpath(d) for d in reversed(dirnames)]
+    # def walk(self, top_down=True, on_error=None, follow_symlinks=False):  # XXX
+    #     """Walk the directory tree from this directory, similar to os.walk()."""
+    #     paths: list[FCPath | tuple[FCPath, list[str], list[str]]] = [self]
+    #     while paths:
+    #         path = paths.pop()
+    #         if isinstance(path, tuple):
+    #             yield path
+    #             continue
+    #         dirnames: list[str] = []
+    #         filenames: list[str] = []
+    #         if not top_down:
+    #             paths.append((path, dirnames, filenames))
+    #         try:
+    #             for child in path.iterdir():
+    #                 try:
+    #                     if child.is_dir(follow_symlinks=follow_symlinks):
+    #                         if not top_down:
+    #                             paths.append(child)
+    #                         dirnames.append(child.name)
+    #                     else:
+    #                         filenames.append(child.name)
+    #                 except OSError:
+    #                     filenames.append(child.name)
+    #         except OSError as error:
+    #             if on_error is not None:
+    #                 on_error(error)
+    #             if not top_down:
+    #                 while not isinstance(paths.pop(), tuple):
+    #                     pass
+    #             continue
+    #         if top_down:
+    #             yield path, dirnames, filenames
+    #             paths += [path.joinpath(d) for d in reversed(dirnames)]
 
     def rename(self,
-               target: str) -> None:
+               target: str | FCPath) -> None:
         """
         Rename this path to the target path.
 
@@ -1052,9 +1054,9 @@ class FCPath:
 
         Returns the new Path instance pointing to the target path.
         """
-        raise NotImplementedError(self._not_implemented_msg('rename()'))
+        raise NotImplementedError
 
-    def replace(self, target) -> None:
+    def replace(self, target: str | FCPath) -> None:
         """
         Rename this path to the target path, overwriting if that path exists.
 
@@ -1064,7 +1066,7 @@ class FCPath:
 
         Returns the new Path instance pointing to the target path.
         """
-        raise NotImplementedError(self._not_implemented_msg('replace()'))
+        raise NotImplementedError
 
     # Operations not supported by FCPath
 

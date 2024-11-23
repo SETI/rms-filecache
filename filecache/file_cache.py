@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import atexit
-from collections.abc import Sequence
 import contextlib
 import logging
 from logging import Logger
@@ -36,7 +35,9 @@ from .file_cache_source import (FileCacheSource,
                                 FileCacheSourceS3,
                                 )
 from .file_cache_path import FCPath
-from .file_cache_types import UrlToPathFuncType
+from .file_cache_types import (StrOrPathType,
+                               StrOrPathOrSeqType,
+                               UrlToPathFuncOrSeqType)
 
 
 # Global cache of all instantiated FileCacheSource since they may involve opening
@@ -107,8 +108,7 @@ class FileCache:
                  anonymous: bool = False,
                  lock_timeout: int = 60,
                  nthreads: int = 8,
-                 url_to_path: Optional[UrlToPathFuncType |
-                                       Sequence[UrlToPathFuncType]] = None,
+                 url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
                  logger: Optional[Logger | bool] = None):
         r"""Initialization for the FileCache class.
 
@@ -259,7 +259,7 @@ class FileCache:
         return nthreads
 
     @classmethod
-    def registered_scheme_prefixes(self) -> tuple(str):
+    def registered_scheme_prefixes(self) -> tuple[str, ...]:
         return tuple([x + '://' for x in _SCHEME_CLASSES])
 
     @property
@@ -369,16 +369,14 @@ class FileCache:
     def _get_source_and_paths(self,
                               url: str | Path,
                               anonymous: bool | None,
-                              url_to_path:
-                                  UrlToPathFuncType |
-                                  Sequence[UrlToPathFuncType] |
-                                  None) -> tuple[FileCacheSource, str, Path]:
+                              url_to_path: UrlToPathFuncOrSeqType | None
+                              ) -> tuple[FileCacheSource, str, Path]:
         url = str(url)
         if anonymous is None:
             anonymous = self.anonymous
         if url_to_path is None:
             url_to_path = self._url_to_path
-        elif isinstance(url_to_path, Sequence):
+        elif isinstance(url_to_path, (list, tuple)):
             url_to_path = list(url_to_path)
         else:
             url_to_path = [url_to_path]
@@ -416,12 +414,11 @@ class FileCache:
         return path.parent / f'{self._LOCK_PREFIX}{path.name}'
 
     def get_local_path(self,
-                       url: str | Path | Sequence[str | Path],
+                       url: StrOrPathOrSeqType,
                        *,
                        anonymous: Optional[bool] = None,
                        create_parents: bool = True,
-                       url_to_path: Optional[UrlToPathFuncType |
-                                             Sequence[UrlToPathFuncType]] = None
+                       url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                        ) -> Path | list[Path]:
         """Return the local path for the given url.
 
@@ -488,13 +485,12 @@ class FileCache:
         return ret[0]
 
     def exists(self,
-               url: str | Path | Sequence[str | Path],
+               url: StrOrPathOrSeqType,
                *,
                bypass_cache: bool = False,
                anonymous: Optional[bool] = None,
                nthreads: Optional[int] = None,
-               url_to_path: Optional[UrlToPathFuncType |
-                                     Sequence[UrlToPathFuncType]] = None
+               url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> bool | list[bool]:
         """Check if a file exists without downloading it.
 
@@ -643,14 +639,13 @@ class FileCache:
         return cast(list[bool], func_ret)
 
     def retrieve(self,
-                 url: str | Path | Sequence[str | Path],
+                 url: StrOrPathOrSeqType,
                  *,
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
                  exception_on_fail: bool = True,
-                 url_to_path: Optional[UrlToPathFuncType |
-                                       Sequence[UrlToPathFuncType]] = None
+                 url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                  ) -> Path | Exception | list[Path | Exception]:
         """Retrieve file(s) from the given location(s) and store in the file cache.
 
@@ -1069,13 +1064,12 @@ class FileCache:
         return cast(list[Union[Path, Exception]], func_ret)
 
     def upload(self,
-               url: str | Path | Sequence[str | Path],
+               url: StrOrPathOrSeqType,
                *,
                anonymous: Optional[bool] = None,
                nthreads: Optional[int] = None,
                exception_on_fail: bool = True,
-               url_to_path: Optional[UrlToPathFuncType |
-                                     Sequence[UrlToPathFuncType]] = None
+               url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> Path | Exception | list[Path | Exception]:
         """Upload file(s) from the file cache to the storage location(s).
 
@@ -1254,8 +1248,7 @@ class FileCache:
              *args: Any,
              anonymous: Optional[bool] = None,
              lock_timeout: Optional[int] = None,
-             url_to_path: Optional[UrlToPathFuncType |
-                                   Sequence[UrlToPathFuncType]] = None,
+             url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
              **kwargs: Any) -> Generator[IO[Any]]:
         """Retrieve+open or open+upload a file as a context manager.
 
@@ -1324,8 +1317,7 @@ class FileCache:
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
-                 url_to_path: Optional[UrlToPathFuncType |
-                                       Sequence[UrlToPathFuncType]] = None
+                 url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                  ) -> FCPath:
         """Create a new FCPath with the given prefix.
 

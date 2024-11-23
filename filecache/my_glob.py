@@ -6,6 +6,8 @@
 # Version 2
 ##########################################################################################
 
+# mypy: ignore-errors
+
 import contextlib
 import os
 import re
