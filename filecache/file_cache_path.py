@@ -130,7 +130,7 @@ class FCPath:
         root = ''
         if len(path) >= 2 and path[0].isalpha() and path[1] == ':':
             # Windows C:
-            drive = path[0:2]
+            drive = path[0:2].upper()
             path = path[2:]
 
         elif path.startswith('//'):
@@ -489,9 +489,7 @@ class FCPath:
         return FCPath._is_absolute(self._path)
 
     def match(self,
-              path_pattern: str | FCPath,
-              *,
-              case_sensitive: bool = True) -> bool:
+              path_pattern: str | FCPath) -> bool:
         """Return True if this path matches the given pattern.
 
         If the pattern is relative, matching is done from the right; otherwise, the entire
@@ -508,7 +506,7 @@ class FCPath:
             return False
         if len(path_parts) > len(pattern_parts) and path_pattern.anchor:
             return False
-        globber = StringGlobber('/', case_sensitive)
+        globber = StringGlobber('/', True)
         for path_part, pattern_part in zip(path_parts, pattern_parts):
             match = globber.compile(pattern_part)
             if match(path_part) is None:
@@ -516,9 +514,7 @@ class FCPath:
         return True
 
     def full_match(self,
-                   pattern: str | FCPath,
-                   *,
-                   case_sensitive: bool = True) -> bool:
+                   pattern: str | FCPath) -> bool:
         """Return True if this path matches the given glob-style pattern.
 
         The pattern is matched against the entire path.
@@ -526,7 +522,7 @@ class FCPath:
 
         if not isinstance(pattern, FCPath):
             pattern = FCPath(pattern)
-        globber = StringGlobber('/', case_sensitive, recursive=True)
+        globber = StringGlobber('/', True, recursive=True)
         match = globber.compile(str(pattern))
         return match(self._path) is not None
 
@@ -974,41 +970,42 @@ class FCPath:
         """
         raise NotImplementedError
 
-    def _glob_selector(self, parts, case_sensitive, recurse_symlinks):  # XXX
-        if case_sensitive is None:
-            case_sensitive = True
-            case_pedantic = False
-        else:
-            # The user has expressed a case sensitivity choice, but we don't
-            # know the case sensitivity of the underlying filesystem, so we
-            # must use scandir() for everything, including non-wildcard parts.
-            case_pedantic = True
-        recursive = True if recurse_symlinks else _no_recurse_symlinks
-        globber = self._globber(self.parser.sep, case_sensitive, case_pedantic, recursive)
-        return globber.selector(parts)
+    def _glob_selector(self, parts):  # XXX
+        return
+        # if case_sensitive is None:
+        #     case_sensitive = True
+        #     case_pedantic = False
+        # else:
+        #     # The user has expressed a case sensitivity choice, but we don't
+        #     # know the case sensitivity of the underlying filesystem, so we
+        #     # must use scandir() for everything, including non-wildcard parts.
+        #     case_pedantic = True
+        # recursive = True if recurse_symlinks else _no_recurse_symlinks
+        # globber = self._globber(self.parser.sep, case_sensitive, case_pedantic,
+        # recursive)
+        # return globber.selector(parts)
 
-    def glob(self, pattern, *, case_sensitive=None, recurse_symlinks=True):  # XXX
+    def glob(self, pattern):  # XXX
         """Iterate over this subtree and yield all existing files (of any
         kind, including directories) matching the given relative pattern.
         """
-        if not isinstance(pattern, PurePathBase):
-            pattern = self.with_segments(pattern)
+        if not isinstance(pattern, FCPath):
+            pattern = FCPath(pattern)
         anchor, parts = pattern._stack
         if anchor:
             raise NotImplementedError("Non-relative patterns are unsupported")
-        select = self._glob_selector(parts, case_sensitive, recurse_symlinks)
+        select = self._glob_selector(parts, True, False)
         return select(self)
 
-    def rglob(self, pattern, *, case_sensitive=None, recurse_symlinks=True):  # XXX
+    def rglob(self, pattern):  # XXX
         """Recursively yield all existing files (of any kind, including
         directories) matching the given relative pattern, anywhere in
         this subtree.
         """
-        if not isinstance(pattern, PurePathBase):
-            pattern = self.with_segments(pattern)
+        if not isinstance(pattern, FCPath):
+            pattern = FCPath(pattern)
         pattern = '**' / pattern
-        return self.glob(pattern, case_sensitive=case_sensitive,
-                         recurse_symlinks=recurse_symlinks)
+        return self.glob(pattern)
 
     def walk(self, top_down=True, on_error=None, follow_symlinks=False):  # XXX
         """Walk the directory tree from this directory, similar to os.walk()."""

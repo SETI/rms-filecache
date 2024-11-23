@@ -250,6 +250,14 @@ class FileCache:
 
         atexit.register(self._maybe_delete_cache)
 
+    def _validate_nthreads(self,
+                           nthreads: Optional[int]) -> int:
+        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+        if nthreads is None:
+            nthreads = self.nthreads
+        return nthreads
+
     @classmethod
     def registered_scheme_prefixes(self) -> tuple(str):
         return tuple([x + '://' for x in _SCHEME_CLASSES])
@@ -539,10 +547,7 @@ class FileCache:
             return a list of bools giving the existence of each url in order.
         """
 
-        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
-            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
-        if nthreads is None:
-            nthreads = self.nthreads
+        nthreads = self._validate_nthreads(nthreads)
 
         if isinstance(url, (list, tuple)):
             sources = []
@@ -721,10 +726,7 @@ class FileCache:
 
         if lock_timeout is None:
             lock_timeout = self.lock_timeout
-        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
-            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
-        if nthreads is None:
-            nthreads = self.nthreads
+        nthreads = self._validate_nthreads(nthreads)
 
         # Technically we could just do everything as a locked multi-download, but we
         # separate out the cases for efficiency
@@ -1130,12 +1132,9 @@ class FileCache:
                 and exception_on_fail is True.
         """
 
-        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
-            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+        nthreads = self._validate_nthreads(nthreads)
 
         if isinstance(url, (list, tuple)):
-            if nthreads is None:
-                nthreads = self.nthreads
             sources = []
             sub_paths = []
             local_paths = []
@@ -1380,10 +1379,7 @@ class FileCache:
             anonymous = self.anonymous
         if lock_timeout is None:
             lock_timeout = self.lock_timeout
-        if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
-            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
-        if nthreads is None:
-            nthreads = self.nthreads
+        nthreads = self._validate_nthreads(nthreads)
         return FCPath(prefix,
                       filecache=self,
                       anonymous=anonymous,

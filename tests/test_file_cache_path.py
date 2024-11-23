@@ -94,11 +94,16 @@ def test__split_parts():
     assert FCPath._split_parts('file:///a') == ('file://', '/', '/a')
 
     # Windows
-    assert FCPath._split_parts('c:') == ('c:', '', '')
-    assert FCPath._split_parts('c:/') == ('c:', '/', '/')
-    assert FCPath._split_parts('c:a/b') == ('c:', '', 'a/b')
-    assert FCPath._split_parts('c:/a/b') == ('c:', '/', '/a/b')
-    assert FCPath._split_parts(r'c:\a\b') == ('c:', '/', '/a/b')
+    assert FCPath._split_parts('C:') == ('C:', '', '')
+    assert FCPath._split_parts('C:/') == ('C:', '/', '/')
+    assert FCPath._split_parts('C:a/b') == ('C:', '', 'a/b')
+    assert FCPath._split_parts('C:/a/b') == ('C:', '/', '/a/b')
+    assert FCPath._split_parts(r'C:\a\b') == ('C:', '/', '/a/b')
+    assert FCPath._split_parts('c:') == ('C:', '', '')
+    assert FCPath._split_parts('c:/') == ('C:', '/', '/')
+    assert FCPath._split_parts('c:a/b') == ('C:', '', 'a/b')
+    assert FCPath._split_parts('c:/a/b') == ('C:', '/', '/a/b')
+    assert FCPath._split_parts(r'c:\a\b') == ('C:', '/', '/a/b')
 
 
 def test_split():
@@ -116,13 +121,14 @@ def test_is_absolute():
     assert not FCPath._is_absolute('')
     assert not FCPath._is_absolute('a')
     assert not FCPath._is_absolute('a/b')
-    assert not FCPath._is_absolute('c:')
-    assert not FCPath._is_absolute('c:a')
-    assert not FCPath._is_absolute('c:a/b')
+    assert not FCPath._is_absolute('C:')
+    assert not FCPath._is_absolute('C:a')
+    assert not FCPath._is_absolute('C:a/b')
     assert FCPath._is_absolute('/')
     assert FCPath._is_absolute('/a')
+    assert FCPath._is_absolute('C:/')
     assert FCPath._is_absolute('c:/')
-    assert FCPath._is_absolute('c:/a')
+    assert FCPath._is_absolute('C:/a')
     assert FCPath._is_absolute('gs://bucket')
     assert FCPath._is_absolute('gs://bucket/')
     assert FCPath._is_absolute('gs://bucket/a')
@@ -131,13 +137,14 @@ def test_is_absolute():
     assert not FCPath('').is_absolute()
     assert not FCPath('a').is_absolute()
     assert not FCPath('a/b').is_absolute()
-    assert not FCPath('c:').is_absolute()
-    assert not FCPath('c:a').is_absolute()
-    assert not FCPath('c:a/b').is_absolute()
+    assert not FCPath('C:').is_absolute()
+    assert not FCPath('C:a').is_absolute()
+    assert not FCPath('C:a/b').is_absolute()
     assert FCPath('/').is_absolute()
     assert FCPath('/a').is_absolute()
+    assert FCPath('C:/').is_absolute()
     assert FCPath('c:/').is_absolute()
-    assert FCPath('c:/a').is_absolute()
+    assert FCPath('C:/a').is_absolute()
     assert FCPath('gs://bucket').is_absolute()
     assert FCPath('gs://bucket/').is_absolute()
     assert FCPath('gs://bucket/a').is_absolute()
@@ -150,7 +157,8 @@ def test__join():
     assert FCPath._join(None) == ''
     assert FCPath._join('') == ''
     assert FCPath._join('/') == '/'
-    assert FCPath._join('c:/') == 'c:/'
+    assert FCPath._join('C:/') == 'C:/'
+    assert FCPath._join('c:/') == 'C:/'
     assert FCPath._join('a') == 'a'
     assert FCPath._join('a/') == 'a'
     assert FCPath._join('/a/b') == '/a/b'
@@ -163,7 +171,7 @@ def test__join():
     assert FCPath._join('/', 'a', 'b') == '/a/b'
     assert FCPath._join('/a', '/b') == '/b'
     assert FCPath._join('/a', 'gs://bucket/a/b') == 'gs://bucket/a/b'
-    assert FCPath._join('/a', 'c:/a/b') == 'c:/a/b'
+    assert FCPath._join('/a', 'C:/a/b') == 'C:/a/b'
     assert FCPath._join('/a', '/b/') == '/b'
     assert FCPath._join('/a', '') == '/a'
     assert FCPath._join('/a', Path('b', 'c'), FCPath('d/e')) == '/a/b/c/d/e'
@@ -172,8 +180,8 @@ def test__join():
 def test__filename():
     assert FCPath._filename('') == ''
     assert FCPath._filename('a') == 'a'
-    assert FCPath._filename('c:') == ''
-    assert FCPath._filename('c:/') == ''
+    assert FCPath._filename('C:') == ''
+    assert FCPath._filename('C:/') == ''
     assert FCPath._filename('/') == ''
     assert FCPath._filename('a/b') == 'b'
     assert FCPath._filename('/a/b') == 'b'
@@ -196,18 +204,18 @@ def test_as_posix():
 
 def test_drive():
     assert FCPath('/a/b').drive == ''
-    assert FCPath('c:').drive == 'c:'
-    assert FCPath('c:/').drive == 'c:'
+    assert FCPath('C:').drive == 'C:'
+    assert FCPath('C:/').drive == 'C:'
     assert FCPath('gs://bucket/a/b').drive == 'gs://bucket'
 
 
 def test_root():
     assert FCPath('').root == ''
     assert FCPath('a/b').root == ''
-    assert FCPath('c:a/b').root == ''
+    assert FCPath('C:a/b').root == ''
     assert FCPath('/').root == '/'
     assert FCPath('/a/b').root == '/'
-    assert FCPath('c:/a/b').root == '/'
+    assert FCPath('C:/a/b').root == '/'
     assert FCPath('gs://bucket/a/b').root == '/'
 
 
@@ -216,10 +224,11 @@ def test_anchor():
     assert FCPath('/').anchor == '/'
     assert FCPath('a/b').anchor == ''
     assert FCPath('/a/b').anchor == '/'
-    assert FCPath('c:').anchor == 'c:'
-    assert FCPath('c:a/b').anchor == 'c:'
-    assert FCPath('c:/').anchor == 'c:/'
-    assert FCPath('c:/a/b').anchor == 'c:/'
+    assert FCPath('C:').anchor == 'C:'
+    assert FCPath('c:').anchor == 'C:'
+    assert FCPath('C:a/b').anchor == 'C:'
+    assert FCPath('C:/').anchor == 'C:/'
+    assert FCPath('C:/a/b').anchor == 'C:/'
     assert FCPath('gs://bucket').anchor == 'gs://bucket/'
     assert FCPath('gs://bucket/').anchor == 'gs://bucket/'
     assert FCPath('gs://bucket/a/b').anchor == 'gs://bucket/'
@@ -282,9 +291,9 @@ def test_with_name():
     with pytest.raises(ValueError):
         FCPath('a/b/c').with_name('/')
     with pytest.raises(ValueError):
-        FCPath('a/b/c').with_name('c:')
+        FCPath('a/b/c').with_name('C:')
     with pytest.raises(ValueError):
-        FCPath('a/b/c').with_name('c:a')
+        FCPath('a/b/c').with_name('C:a')
     with pytest.raises(ValueError):
         FCPath('a/b/c').with_name('gs://bucket')
     with pytest.raises(ValueError):
@@ -293,7 +302,8 @@ def test_with_name():
     assert str(FCPath('/').with_name('d')) == '/d'
     assert str(FCPath('a/b/c').with_name('d')) == 'a/b/d'
     assert str(FCPath('a/b/c').with_name('c.txt')) == 'a/b/c.txt'
-    assert str(FCPath('c:/a/b/c').with_name('d')) == 'c:/a/b/d'
+    assert str(FCPath('C:/a/b/c').with_name('d')) == 'C:/a/b/d'
+    assert str(FCPath('c:/a/b/c').with_name('d')) == 'C:/a/b/d'
     assert str(FCPath('gs://bucket/a/b/c').with_name('d')) == 'gs://bucket/a/b/d'
 
 
@@ -307,9 +317,9 @@ def test_with_stem():
     with pytest.raises(ValueError):
         FCPath('a/b/c').with_stem('/a')
     with pytest.raises(ValueError):
-        FCPath('a/b/c').with_stem('c:')
+        FCPath('a/b/c').with_stem('C:')
     with pytest.raises(ValueError):
-        FCPath('a/b/c').with_stem('c:a')
+        FCPath('a/b/c').with_stem('C:a')
     with pytest.raises(ValueError):
         FCPath('a/b/c').with_stem('gs://bucket')
     with pytest.raises(ValueError):
@@ -318,10 +328,11 @@ def test_with_stem():
     assert str(FCPath('/').with_stem('d')) == '/d'
     assert str(FCPath('a/b/c').with_stem('d')) == 'a/b/d'
     assert str(FCPath('a/b/c.zip').with_stem('d')) == 'a/b/d.zip'
-    assert str(FCPath('c:/a/b/c').with_stem('d')) == 'c:/a/b/d'
-    assert str(FCPath('c:/a/b/c.zip').with_stem('d')) == 'c:/a/b/d.zip'
-    assert str(FCPath('c:/a/b/c.txt.zip').with_stem('d')) == 'c:/a/b/d.zip'
-    assert str(FCPath('c:/a/b/.zip').with_stem('d')) == 'c:/a/b/d'
+    assert str(FCPath('C:/a/b/c').with_stem('d')) == 'C:/a/b/d'
+    assert str(FCPath('C:/a/b/c.zip').with_stem('d')) == 'C:/a/b/d.zip'
+    assert str(FCPath('C:/a/b/c.txt.zip').with_stem('d')) == 'C:/a/b/d.zip'
+    assert str(FCPath('C:/a/b/.zip').with_stem('d')) == 'C:/a/b/d'
+    assert str(FCPath('c:/a/b/.zip').with_stem('d')) == 'C:/a/b/d'
     assert str(FCPath('gs://bucket/a/b/c.zip').with_stem('d')) == 'gs://bucket/a/b/d.zip'
 
 
@@ -335,9 +346,9 @@ def test_with_suffix():
     with pytest.raises(ValueError):
         FCPath('a/b/c').with_suffix('/a')
     with pytest.raises(ValueError):
-        FCPath('a/b/c').with_suffix('c:')
+        FCPath('a/b/c').with_suffix('C:')
     with pytest.raises(ValueError):
-        FCPath('a/b/c').with_suffix('c:a')
+        FCPath('a/b/c').with_suffix('C:a')
     with pytest.raises(ValueError):
         FCPath('a/b/c').with_suffix('gs://bucket')
     with pytest.raises(ValueError):
@@ -346,10 +357,11 @@ def test_with_suffix():
     assert str(FCPath('a/b/c.txt').with_suffix('')) == 'a/b/c'
     assert str(FCPath('a/b/c').with_suffix('.txt')) == 'a/b/c.txt'
     assert str(FCPath('a/b/c.zip').with_suffix('.txt')) == 'a/b/c.txt'
-    assert str(FCPath('c:/a/b/c').with_suffix('.txt')) == 'c:/a/b/c.txt'
-    assert str(FCPath('c:/a/b/c.zip').with_suffix('.txt')) == 'c:/a/b/c.txt'
-    assert str(FCPath('c:/a/b/c.txt.zip').with_suffix('.txt')) == 'c:/a/b/c.txt.txt'
-    assert str(FCPath('c:/a/b/.zip').with_suffix('.txt')) == 'c:/a/b/.zip.txt'
+    assert str(FCPath('C:/a/b/c').with_suffix('.txt')) == 'C:/a/b/c.txt'
+    assert str(FCPath('C:/a/b/c.zip').with_suffix('.txt')) == 'C:/a/b/c.txt'
+    assert str(FCPath('C:/a/b/c.txt.zip').with_suffix('.txt')) == 'C:/a/b/c.txt.txt'
+    assert str(FCPath('C:/a/b/.zip').with_suffix('.txt')) == 'C:/a/b/.zip.txt'
+    assert str(FCPath('c:/a/b/.zip').with_suffix('.txt')) == 'C:/a/b/.zip.txt'
     assert str(FCPath(
         'gs://bucket/a/b/c.zip').with_suffix('.txt')) == 'gs://bucket/a/b/c.txt'
 
@@ -359,7 +371,8 @@ def test_parts():
     assert FCPath('a').parts == ('a',)
     assert FCPath('a/b').parts == ('a', 'b')
     assert FCPath('/a/b').parts == ('a', 'b')
-    assert FCPath('c:/a/b').parts == ('c:', 'a', 'b')
+    assert FCPath('C:/a/b').parts == ('C:', 'a', 'b')
+    assert FCPath('c:/a/b').parts == ('C:', 'a', 'b')
     assert FCPath('gs://bucket/a/b').parts == ('gs://bucket', 'a', 'b')
 
 
@@ -455,6 +468,7 @@ def test_match():
     with pytest.raises(ValueError):
         p.match('')
     assert p.match('def')
+    assert not p.match('deF')
     assert p.match(FCPath('def'))
     assert not p.match('f')
     assert p.match('*f')
@@ -464,11 +478,21 @@ def test_match():
     assert not p.match('/def')
     assert p.match('/*/def')
     assert p.match('/abc/def')
+    assert not p.match('/ABC/def')
     assert not p.match('/zz/abc/def')
+    p = FCPath('C:/a/b')
+    assert p.match('b')
+    assert p.match('a/b')
+    assert p.match('c:/a/b')
+    assert p.match('C:/a/b')
+    assert p.match('C:/a/b')
+    assert not p.match('d:/a/b')
     p = FCPath('c:/a/b')
     assert p.match('b')
     assert p.match('a/b')
     assert p.match('c:/a/b')
+    assert p.match('C:/a/b')
+    assert p.match('C:/a/b')
     assert not p.match('d:/a/b')
     p = FCPath('http://server.name/a/b')
     assert p.match('b')
@@ -489,10 +513,17 @@ def test_full_match():
     assert not p.full_match('/def')
     assert not p.full_match('/*/def')
     assert not p.full_match('/abc/def')
+    p = FCPath('C:/a/b')
+    assert not p.full_match('b')
+    assert not p.full_match('a/b')
+    assert p.full_match('c:/a/b')
+    assert p.full_match('C:/a/b')
+    assert not p.full_match('d:/a/b')
     p = FCPath('c:/a/b')
     assert not p.full_match('b')
     assert not p.full_match('a/b')
     assert p.full_match('c:/a/b')
+    assert p.full_match('C:/a/b')
     assert not p.full_match('d:/a/b')
     p = FCPath('http://server.name/a/b')
     assert not p.full_match('b')
