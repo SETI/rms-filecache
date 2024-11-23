@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+# See cpython/Lib/pathlib/_local.py
+from .my_glob import StringGlobber
+
 from collections.abc import Sequence
 import contextlib
 from pathlib import Path
@@ -20,18 +23,23 @@ if TYPE_CHECKING:  # pragma: no cover
 from .file_cache_types import UrlToPathFuncType
 
 
+# This FileCache is used when an FCPath is created without specifying a particular
+# FileCache and the FCPath is actually used to perform an operation that needs that
+# FileCache.
+_DEFAULT_FILECACHE: Optional[FileCache] = None
+
+
 class FCPath:
-    """Class for interfacing to a FileCache using a URL prefix.
+    """Rewrite of the Python pathlib.Path class that supports URLs and FileCache.
 
     This class provides a simpler way to abstract away remote access in a FileCache by
-    collecting common parameters (`anonymous`, `lock_timeout`, `nthreads`) and a more
-    complete prefix (not just the bucket name or URL, but the first part of the access
-    path as well) into a single location.
+    emulating the Python pathlib.Path class. At the same time, it can collect common
+    parameters (`anonymous`, `lock_timeout`, `nthreads`) into a single location so that
+    they do not have to be specified on every method call.
     """
 
     def __init__(self,
-                 path: str | Path,
-                 *paths: list[str | Path],
+                 *paths: str | Path | FCPath | None,
                  filecache: Optional["FileCache"] = None,
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
@@ -40,12 +48,15 @@ class FCPath:
                                        Sequence[UrlToPathFuncType]] = None,
                  copy_from: Optional[FCPath] = None
                  ):
-        """Initialization for the FileCachePrefix class.
+        """Initialization for the FCPath class.
 
         Parameters:
-            prefix: The prefix for the storage location and any top-level directories.
+            paths: The path(s). These may be absolute or relative paths. They are joined
+                together to form a final path. File operations can only be performed on
+                absolute paths.
             file_cache: The :class:`FileCache` in which to store files retrieved from this
-                prefix.
+                prefix. If not specified, the default global :class:`FileCache` will be
+                used.
             anonymous: If True, access cloud resources without specifying credentials. If
                 False, credentials must be initialized in the program's environment. If
                 None, use the default setting for the associated :class:`FileCache`
@@ -82,16 +93,13 @@ class FCPath:
 
                 If None, use the default translators for the associated :class:`FileCache`
                 instance.
-        Notes:
-            Within a given :class:`FileCache`, :class:`FileCachePrefix` instances that
-            reference the same local/remote source will be stored in the same location on
-            the local disk. Files downloaded into one instance will thus be visible in the
-            other instance.
-
-            Any logging will be made to the `file_cache`'s logger.
+            copy_from: An FCPath instance to copy internal parameters (`file_cache`,
+                `anonymous`, `lock_timeout`, `nthreads`, and `url_to_path`) from. If
+                specified, any values for these parameters in this constructor are
+                ignored. Used internally and should not be used by external programmers.
         """
 
-        self._path = self._join(path, *paths)
+        self._path = self._join(*paths)
 
         if copy_from is not None:
             self._filecache = copy_from._filecache
@@ -179,18 +187,33 @@ class FCPath:
         return drive, root, path
 
     @staticmethod
+    def _split(path: str) -> tuple[str, str]:
+        """Split a path into head,tail similarly to os.path.split."""
+
+        if path == '':
+            return '', ''
+        drive, root, subpath = FCPath._split_parts(path)
+        if '/' not in subpath:
+            return drive, subpath
+        if root == '/' and subpath == root:
+            return drive, ''
+        idx = subpath.rindex('/')
+        return drive + subpath[:idx].rstrip('/'), subpath[idx+1:]
+
+    @staticmethod
     def _is_absolute(path: str) -> bool:
         """Check if a path string is an absolute path."""
 
         return FCPath._split_parts(path)[1] == '/'
 
     @staticmethod
-    def _join(*paths: list[str | None]) -> str:
+    def _join(*paths: str | Path | FCPath | None) -> str:
         """Join multiple strings together into a single path.
 
         Any time an absolute path is found in the path list, the new path starts
         over.
         """
+
         ret = ''
         for path in paths:
             if path is None:
@@ -214,42 +237,75 @@ class FCPath:
 
     @staticmethod
     def _filename(path: str) -> str:
+        """Return just the filename part of a path."""
+
         _, _, subpath = FCPath._split_parts(path)
         if '/' not in subpath:
             return subpath
         return subpath[subpath.rfind('/') + 1:]
 
+    @property
+    def _stack(self) -> tuple[str, list[str]]:
+        """Split the path into a 2-tuple (anchor, parts).
+
+        *anchor* is the uppermost parent of the path (equivalent to path.parents[-1]), and
+        *parts* is a reversed list of parts following the anchor.
+        """
+        path = self._path
+        parent, name = FCPath._split(path)
+        names = []
+        while path != parent:
+            names.append(name)
+            path = parent
+            parent, name = FCPath._split(path)
+        return path, names
+
     def __str__(self) -> str:
         return self._path
 
     def as_posix(self) -> str:
+        """Return this FCPath as a POSIX path.
+
+        Notes:
+            Because URLs are not really supported in POSIX format, we just return the
+            URL as-is, including any scheme and remote.
+
+        Returns:
+            This path as a POSIX path.
+        """
+
         return self._path
 
     @property
     def drive(self) -> str:
-        # Windows c: (if any)
-        # UNC //host/share
-        # Cloud gs://bucket
-        # '' otherwise
+        """The drive associated with this FCPath.
+
+        Notes:
+            Examples:
+
+                For a Windows path: '' or 'c:'
+                For a UNC share: '//host/share'
+                For a cloud resource: 'ss://bucket'
+        """
+
         return self._split_parts(self._path)[0]
 
     @property
     def root(self) -> str:
-        # / if absolute, otherwise ''
+        """The root of this FCPath; '/' if absolute, '' otherwise."""
+
         return self._split_parts(self._path)[1]
 
     @property
     def anchor(self) -> str:
-        # drive + root
+        """The anchor of this FCPath, which is drive + root."""
+
         return ''.join(self._split_parts(self._path)[0:2])
 
     @property
     def suffix(self) -> str:
-        """
-        The final component's last suffix, if any.
+        """The final component's last suffix, if any, including the leading period."""
 
-        This includes the leading period. For example: '.txt'
-        """
         name = FCPath._filename(self._path)
         i = name.rfind('.')
         if 0 < i < len(name) - 1:
@@ -259,11 +315,8 @@ class FCPath:
 
     @property
     def suffixes(self) -> list[str]:
-        """
-        A list of the final component's suffixes, if any.
+        """A list of the final component's suffixes, including the leading periods."""
 
-        These include the leading periods. For example: ['.tar', '.gz']
-        """
         name = FCPath._filename(self._path)
         if name.endswith('.'):
             return []
@@ -273,6 +326,7 @@ class FCPath:
     @property
     def stem(self) -> str:
         """The final path component, minus its last suffix."""
+
         name = FCPath._filename(self._path)
         i = name.rfind('.')
         if 0 < i < len(name) - 1:
@@ -281,7 +335,16 @@ class FCPath:
             return name
 
     def with_name(self, name: str) -> FCPath:
-        """Return a new path with the file name changed."""
+        """Return a new FCPath with the filename changed.
+
+        Parameters:
+            name: The new filename to replace the final path component with.
+
+        Returns:
+            A new FCPath with the final component replaced. The new FCPath will have
+            the same parameters (`filecache`, etc.) as the source FCPath.
+        """
+
         drive, root, subpath = FCPath._split_parts(self._path)
         drive2, root2, subpath2 = FCPath._split_parts(name)
         if drive2 != '' or root2 != '' or subpath2 == '' or '/' in subpath2:
@@ -294,7 +357,16 @@ class FCPath:
                       copy_from=self)
 
     def with_stem(self, stem: str) -> FCPath:
-        """Return a new path with the stem changed."""
+        """Return a new FCPath with the stem (the filename minus the suffix) changed.
+
+        Parameters:
+            stem: The new stem.
+
+        Returns:
+            A new FCPath with the final component's stem replaced. The new FCPath will
+            have the same parameters (`filecache`, etc.) as the source FCPath.
+        """
+
         suffix = self.suffix
         if not suffix:
             return self.with_name(stem)
@@ -305,10 +377,19 @@ class FCPath:
             return self.with_name(stem + suffix)
 
     def with_suffix(self, suffix: str) -> FCPath:
-        """Return a new path with the file suffix changed.  If the path
-        has no suffix, add given suffix.  If the given suffix is an empty
+        """Return a new FCPath with the file suffix changed.
+
+        If the path has no suffix, add the given suffix. If the given suffix is an empty
         string, remove the suffix from the path.
+
+        Parameters:
+            suffix: The new suffix to use.
+
+        Returns:
+            A new FCPath with the final component's suffix replaced. The new FCPath will
+            have the same parameters (`filecache`, etc.) as the source FCPath.
         """
+
         stem = self.stem
         if not stem:
             # If the stem is empty, we can't make the suffix non-empty.
@@ -318,159 +399,146 @@ class FCPath:
         else:
             return self.with_name(stem + suffix)
 
-    def relative_to(self, other, *, walk_up=False):  # XXX
-        """Return the relative path to another path identified by the passed
-        arguments.  If the operation is not possible (because this is not
-        related to the other path), raise ValueError.
-
-        The *walk_up* parameter controls whether `..` may be used to resolve
-        the path.
-        """
-        if not isinstance(other, PurePathBase):
-            other = self.with_segments(other)
-        anchor0, parts0 = self._stack
-        anchor1, parts1 = other._stack
-        if anchor0 != anchor1:
-            raise ValueError(f'{self._raw_path!r} and {other._raw_path!r} have different anchors')
-        while parts0 and parts1 and parts0[-1] == parts1[-1]:
-            parts0.pop()
-            parts1.pop()
-        for part in parts1:
-            if not part or part == '.':
-                pass
-            elif not walk_up:
-                raise ValueError(f'{self._raw_path!r} is not in the subpath of {other._raw_path!r}')
-            elif part == '..':
-                raise ValueError(f"'..' segment in {other._raw_path!r} cannot be walked")
-            else:
-                parts0.append('..')
-        return self.with_segments('', *reversed(parts0))
-
-    def is_relative_to(self, other):  # XXX
-        """Return True if the path is relative to another path or False.
-        """
-        if not isinstance(other, PurePathBase):
-            other = self.with_segments(other)
-        anchor0, parts0 = self._stack
-        anchor1, parts1 = other._stack
-        if anchor0 != anchor1:
-            return False
-        while parts0 and parts1 and parts0[-1] == parts1[-1]:
-            parts0.pop()
-            parts1.pop()
-        for part in parts1:
-            if part and part != '.':
-                return False
-        return True
-
     @property
-    def parts(self):  # XXX
-        """An object providing sequence-like access to the
-        components in the filesystem path."""
+    def parts(self) -> tuple[str, ...]:
+        """An object providing sequence-like access to the components in the path."""
+
         anchor, parts = self._stack
         if anchor:
             parts.append(anchor)
         return tuple(reversed(parts))
 
-    def joinpath(self, *pathsegments: list[str | Path | FCPath]) -> FCPath:
-        """Combine this path with one or several arguments, and return a
-        new path representing either a subpath (if all arguments are relative
-        paths) or a totally different path (if one of the arguments is
-        anchored).
+    def joinpath(self,
+                 *pathsegments: str | Path | FCPath | None) -> FCPath:
+        """Combine this path with additional paths.
+
+        Parameters:
+            pathsegments: One or more additional paths to join with this path.
+
+        Returns:
+            A new FCPath that is a combination of this path and the additional paths. The
+            new FCPath will have the same parameters (`filecache`, etc.) as the source
+            FCPath.
         """
+
         return FCPath(self._path, *pathsegments, copy_from=self)
 
-    def __truediv__(self, other: str | Path | FCPath) -> FCPath:
+    def __truediv__(self,
+                    other: str | Path | FCPath | None) -> FCPath:
+        """Combine this path with an additional path.
+
+        Parameters:
+            other: The path to join with this path.
+
+        Returns:
+            A new FCPath that is a combination of this path and the other path. The new
+            FCPath will have the same parameters (`filecache`, etc.) as the current
+            FCPath.
+        """
+
         return FCPath(self._path, other, copy_from=self)
 
     def __rtruediv__(self, other: str | Path | FCPath) -> FCPath:
-        if isinstance(other, FCPath):
+        """Combine an additional path with this path.
+
+        Parameters:
+            other: The path to join with this path.
+
+        Returns:
+            A new FCPath that is a combination of the other path and this path. The new
+            FCPath will have the same parameters (`filecache`, etc.) as the other path if
+            the other path is an FCPath; otherwise it will have the same parameters as
+            the current FCPath.
+        """
+
+        if isinstance(other, FCPath):  # pragma: no cover
+            # This shouldn't be possible to hit because __truediv__ will catch it
             return FCPath(other, self._path, copy_from=other)
         else:
             return FCPath(other, self._path, copy_from=self)
 
     @property
-    def _stack(self):
-        """
-        Split the path into a 2-tuple (anchor, parts), where *anchor* is the
-        uppermost parent of the path (equivalent to path.parents[-1]), and
-        *parts* is a reversed list of parts following the anchor.
-        """
-        split = self.parser.split
-        path = self._raw_path
-        parent, name = split(path)
-        names = []
-        while path != parent:
-            names.append(name)
-            path = parent
-            parent, name = split(path)
-        return path, names
+    def parent(self) -> FCPath:
+        """The logical parent of the path.
 
-    @property
-    def parent(self):
-        """The logical parent of the path."""
-        path = self._raw_path
-        parent = self.parser.split(path)[0]
-        if path != parent:
-            parent = self.with_segments(parent)
-            parent._resolving = self._resolving
-            return parent
+        The new FCPath will have the same parameters (`filecache`, etc.) as the original
+        path.
+        """
+
+        parent = FCPath._split(self._path)[0]
+        if self._path != parent:
+            return FCPath(parent, copy_from=self)
         return self
 
     @property
-    def parents(self):
+    def parents(self) -> tuple[FCPath, ...]:
         """A sequence of this path's logical parents."""
-        split = self.parser.split
-        path = self._raw_path
-        parent = split(path)[0]
+
+        path = self._path
+        parent = FCPath._split(path)[0]
         parents = []
         while path != parent:
-            parents.append(self.with_segments(parent))
+            parents.append(FCPath(parent, copy_from=self))
             path = parent
-            parent = split(path)[0]
+            parent = FCPath._split(path)[0]
         return tuple(parents)
 
-    def is_absolute(self):
-        """True if the path is absolute (has both a root and, if applicable,
-        a drive)."""
+    def is_absolute(self) -> bool:
+        """True if the path is absolute."""
+
         return FCPath._is_absolute(self._path)
 
-    def match(self, path_pattern, *, case_sensitive=None):
+    def match(self,
+              path_pattern: str | FCPath,
+              *,
+              case_sensitive: bool = True) -> bool:
+        """Return True if this path matches the given pattern.
+
+        If the pattern is relative, matching is done from the right; otherwise, the entire
+        path is matched. The recursive wildcard '**' is *not* supported by this method.
         """
-        Return True if this path matches the given pattern. If the pattern is
-        relative, matching is done from the right; otherwise, the entire path
-        is matched. The recursive wildcard '**' is *not* supported by this
-        method.
-        """
-        if not isinstance(path_pattern, PurePathBase):
-            path_pattern = self.with_segments(path_pattern)
+
+        if not isinstance(path_pattern, FCPath):
+            path_pattern = FCPath(path_pattern)
         path_parts = self.parts[::-1]
         pattern_parts = path_pattern.parts[::-1]
         if not pattern_parts:
-            raise ValueError("empty pattern")
+            raise ValueError('empty pattern')
         if len(path_parts) < len(pattern_parts):
             return False
         if len(path_parts) > len(pattern_parts) and path_pattern.anchor:
             return False
-        globber = self._globber(sep, case_sensitive)
+        globber = StringGlobber('/', case_sensitive)
         for path_part, pattern_part in zip(path_parts, pattern_parts):
             match = globber.compile(pattern_part)
             if match(path_part) is None:
                 return False
         return True
 
-    def full_match(self, pattern, *, case_sensitive=None):
+    def full_match(self,
+                   pattern: str | FCPath,
+                   *,
+                   case_sensitive: bool = True) -> bool:
+        """Return True if this path matches the given glob-style pattern.
+
+        The pattern is matched against the entire path.
         """
-        Return True if this path matches the given glob-style pattern. The
-        pattern is matched against the entire path.
-        """
-        if not isinstance(pattern, PurePathBase):
-            pattern = self.with_segments(pattern)
-        if case_sensitive is None:
-            case_sensitive = _is_case_sensitive(self.parser)
-        globber = self._globber(pattern.parser.sep, case_sensitive, recursive=True)
-        match = globber.compile(pattern._pattern_str)
+
+        if not isinstance(pattern, FCPath):
+            pattern = FCPath(pattern)
+        globber = StringGlobber('/', case_sensitive, recursive=True)
+        match = globber.compile(str(pattern))
         return match(self._path) is not None
+
+    @property
+    def _filecache_to_use(self):
+        from .file_cache import FileCache
+        global _DEFAULT_FILECACHE
+        if self._filecache is None:
+            if _DEFAULT_FILECACHE is None:
+                _DEFAULT_FILECACHE = FileCache()
+            return _DEFAULT_FILECACHE
+        return self._filecache
 
     def get_local_path(self,
                        sub_path: Optional[str | Path | Sequence[str | Path]] = None,
@@ -521,15 +589,15 @@ class FCPath:
 
         if isinstance(sub_path, (list, tuple)):
             new_sub_path = [FCPath._join(self._path, p) for p in sub_path]
-            return self._filecache.get_local_path(new_sub_path,
-                                                  anonymous=self._anonymous,
-                                                  create_parents=create_parents,
-                                                  url_to_path=url_to_path)
+            return self._filecache_to_use.get_local_path(new_sub_path,
+                                                         anonymous=self._anonymous,
+                                                         create_parents=create_parents,
+                                                         url_to_path=url_to_path)
 
-        return self._filecache.get_local_path(FCPath._join(self._path, sub_path),
-                                              anonymous=self._anonymous,
-                                              create_parents=create_parents,
-                                              url_to_path=url_to_path)
+        return self._filecache_to_use.get_local_path(FCPath._join(self._path, sub_path),
+                                                     anonymous=self._anonymous,
+                                                     create_parents=create_parents,
+                                                     url_to_path=url_to_path)
 
     def exists(self,
                sub_path: Optional[str | Path | Sequence[str | Path]] = None,
@@ -591,16 +659,16 @@ class FCPath:
 
         if isinstance(sub_path, (list, tuple)):
             new_sub_path = [FCPath._join(self._path, p) for p in sub_path]
-            return self._filecache.exists(new_sub_path,
-                                          bypass_cache=bypass_cache,
-                                          nthreads=nthreads,
-                                          anonymous=self._anonymous,
-                                          url_to_path=url_to_path)
+            return self._filecache_to_use.exists(new_sub_path,
+                                                 bypass_cache=bypass_cache,
+                                                 nthreads=nthreads,
+                                                 anonymous=self._anonymous,
+                                                 url_to_path=url_to_path)
 
-        return self._filecache.exists(FCPath._join(self._path, sub_path),
-                                      bypass_cache=bypass_cache,
-                                      anonymous=self._anonymous,
-                                      url_to_path=url_to_path)
+        return self._filecache_to_use.exists(FCPath._join(self._path, sub_path),
+                                             bypass_cache=bypass_cache,
+                                             anonymous=self._anonymous,
+                                             url_to_path=url_to_path)
 
     def retrieve(self,
                  sub_path: Optional[str | Sequence[str]] = None,
@@ -679,7 +747,7 @@ class FCPath:
             many files as possible are downloaded before an exception is raised.
         """
 
-        old_download_counter = self._filecache.download_counter
+        old_download_counter = self._filecache_to_use.download_counter
 
         if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
             raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
@@ -692,20 +760,20 @@ class FCPath:
         try:
             if isinstance(sub_path, (list, tuple)):
                 new_sub_path = [FCPath._join(self._path, p) for p in sub_path]
-                ret = self._filecache.retrieve(new_sub_path,
-                                               anonymous=self._anonymous,
-                                               lock_timeout=lock_timeout,
-                                               nthreads=nthreads,
-                                               exception_on_fail=exception_on_fail,
-                                               url_to_path=url_to_path)
+                ret = self._filecache_to_use.retrieve(new_sub_path,
+                                                      anonymous=self._anonymous,
+                                                      lock_timeout=lock_timeout,
+                                                      nthreads=nthreads,
+                                                      exception_on_fail=exception_on_fail,
+                                                      url_to_path=url_to_path)
             else:
-                ret = self._filecache.retrieve(FCPath._join(self._path, sub_path),
-                                               anonymous=self._anonymous,
-                                               lock_timeout=lock_timeout,
-                                               exception_on_fail=exception_on_fail,
-                                               url_to_path=url_to_path)
+                ret = self._filecache_to_use.retrieve(FCPath._join(self._path, sub_path),
+                                                      anonymous=self._anonymous,
+                                                      lock_timeout=lock_timeout,
+                                                      exception_on_fail=exception_on_fail,
+                                                      url_to_path=url_to_path)
         finally:
-            self._download_counter += (self._filecache.download_counter -
+            self._download_counter += (self._filecache_to_use.download_counter -
                                        old_download_counter)
 
         return ret
@@ -768,7 +836,7 @@ class FCPath:
             and exception_on_fail is True.
         """
 
-        old_upload_counter = self._filecache.upload_counter
+        old_upload_counter = self._filecache_to_use.upload_counter
 
         if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
             raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
@@ -779,18 +847,18 @@ class FCPath:
         try:
             if isinstance(sub_path, (list, tuple)):
                 new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
-                ret = self._filecache.upload(new_sub_paths,
-                                             anonymous=self._anonymous,
-                                             nthreads=nthreads,
-                                             exception_on_fail=exception_on_fail,
-                                             url_to_path=url_to_path)
+                ret = self._filecache_to_use.upload(new_sub_paths,
+                                                    anonymous=self._anonymous,
+                                                    nthreads=nthreads,
+                                                    exception_on_fail=exception_on_fail,
+                                                    url_to_path=url_to_path)
             else:
-                ret = self._filecache.upload(FCPath._join(self._path, sub_path),
-                                             anonymous=self._anonymous,
-                                             exception_on_fail=exception_on_fail,
-                                             url_to_path=url_to_path)
+                ret = self._filecache_to_use.upload(FCPath._join(self._path, sub_path),
+                                                    anonymous=self._anonymous,
+                                                    exception_on_fail=exception_on_fail,
+                                                    url_to_path=url_to_path)
         finally:
-            self._upload_counter += (self._filecache.upload_counter -
+            self._upload_counter += (self._filecache_to_use.upload_counter -
                                      old_upload_counter)
 
         return ret
@@ -869,137 +937,33 @@ class FCPath:
         """A bool indicating whether or not the prefix refers to the local filesystem."""
         return self._path.startswith('file:///') or '://' not in self._path
 
-    ### Unsupported operations
+    def is_file(self) -> bool:
+        """Whether this path is a regular file."""
+        return self.exists()
 
-    def _not_implemented_msg(cls, attribute):
-        return f"{cls.__name__}.{attribute} is unsupported"
-
-    def stat(self, *, follow_symlinks=True):
-        """
-        Return the result of the stat() system call on this path, like
-        os.stat() does.
-        """
-        raise NotImplementedError(self._not_implemented_msg('stat()'))
-
-    def lstat(self):
-        """
-        Like stat(), except if the path points to a symlink, the symlink's
-        status information is returned, rather than its target's.
-        """
-        raise NotImplementedError(self._not_implemented_msg('lstat()'))
-
-    def is_dir(self, *, follow_symlinks=True):
-        """
-        Whether this path is a directory.
-        """
-        try:
-            return S_ISDIR(self.stat(follow_symlinks=follow_symlinks).st_mode)
-        except OSError as e:
-            if not _ignore_error(e):
-                raise
-            # Path doesn't exist or is a broken symlink
-            # (see http://web.archive.org/web/20200623061726/https://bitbucket.org/pitrou/pathlib/issues/12/ )
-            return False
-        except ValueError:
-            # Non-encodable path
-            return False
-
-    def is_file(self, *, follow_symlinks=True):
-        """
-        Whether this path is a regular file (also True for symlinks pointing
-        to regular files).
-        """
-        try:
-            return S_ISREG(self.stat(follow_symlinks=follow_symlinks).st_mode)
-        except OSError as e:
-            if not _ignore_error(e):
-                raise
-            # Path doesn't exist or is a broken symlink
-            # (see http://web.archive.org/web/20200623061726/https://bitbucket.org/pitrou/pathlib/issues/12/ )
-            return False
-        except ValueError:
-            # Non-encodable path
-            return False
-
-    def is_mount(self):
-        """
-        Check if this path is a mount point
-        """
-        raise NotImplementedError(self._not_implemented_msg('is_mount()'))
-
-    def is_symlink(self):
-        """
-        Whether this path is a symbolic link.
-        """
-        raise NotImplementedError(self._not_implemented_msg('is_symlink()'))
-
-    def is_junction(self):
-        """
-        Whether this path is a junction.
-        """
-        raise NotImplementedError(self._not_implemented_msg('is_junction()'))
-
-    def is_block_device(self):
-        """
-        Whether this path is a block device.
-        """
-        raise NotImplementedError(self._not_implemented_msg('is_block_device()'))
-
-    def is_char_device(self):
-        """
-        Whether this path is a character device.
-        """
-        raise NotImplementedError(self._not_implemented_msg('is_char_device()'))
-
-    def is_fifo(self):
-        """
-        Whether this path is a FIFO.
-        """
-        raise NotImplementedError(self._not_implemented_msg('is_fifo()'))
-
-    def is_socket(self):
-        """
-        Whether this path is a socket.
-        """
-        raise NotImplementedError(self._not_implemented_msg('is_socket()'))
-
-    def samefile(self, other_path):
-        """Return whether other_path is the same or not as this file
-        (as returned by os.path.samefile()).
-        """
-        raise NotImplementedError(self._not_implemented_msg('samefile()'))
-
-    def read_bytes(self):  # XXX
-        """
-        Open the file in bytes mode, read it, and close the file.
-        """
-        with self.open(mode='rb') as f:
+    def read_bytes(self, **kwargs):
+        """Open the file in bytes mode, read it, and close the file."""
+        with self.open(mode='rb', **kwargs) as f:
             return f.read()
 
-    def read_text(self, encoding=None, errors=None, newline=None):  # XXX
-        """
-        Open the file in text mode, read it, and close the file.
-        """
-        with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+    def read_text(self, **kwargs):
+        """Open the file in text mode, read it, and close the file."""
+        with self.open(mode='r', **kwargs) as f:
             return f.read()
 
-    def write_bytes(self, data):  # XXX
-        """
-        Open the file in bytes mode, write to it, and close the file.
-        """
+    def write_bytes(self, data, **kwargs):
+        """Open the file in bytes mode, write to it, and close the file."""
         # type-check for the buffer interface before truncating the file
         view = memoryview(data)
-        with self.open(mode='wb') as f:
+        with self.open(mode='wb', **kwargs) as f:
             return f.write(view)
 
-    def write_text(self, data, encoding=None, errors=None, newline=None):
-        """
-        Open the file in text mode, write to it, and close the file.
-        """
+    def write_text(self, data, **kwargs):
+        """Open the file in text mode, write to it, and close the file."""
         if not isinstance(data, str):
             raise TypeError('data must be str, not %s' %
                             data.__class__.__name__)
-        with self.open(mode='w', encoding=encoding, errors=errors, newline=newline) as f:
+        with self.open(mode='w', **kwargs) as f:
             return f.write(data)
 
     def iterdir(self):  # XXX
@@ -1008,11 +972,11 @@ class FCPath:
         The children are yielded in arbitrary order, and the
         special entries '.' and '..' are not included.
         """
-        raise NotImplementedError(self._not_implemented_msg('iterdir()'))
+        raise NotImplementedError
 
     def _glob_selector(self, parts, case_sensitive, recurse_symlinks):  # XXX
         if case_sensitive is None:
-            case_sensitive = _is_case_sensitive(self.parser)
+            case_sensitive = True
             case_pedantic = False
         else:
             # The user has expressed a case sensitivity choice, but we don't
@@ -1043,7 +1007,8 @@ class FCPath:
         if not isinstance(pattern, PurePathBase):
             pattern = self.with_segments(pattern)
         pattern = '**' / pattern
-        return self.glob(pattern, case_sensitive=case_sensitive, recurse_symlinks=recurse_symlinks)
+        return self.glob(pattern, case_sensitive=case_sensitive,
+                         recurse_symlinks=recurse_symlinks)
 
     def walk(self, top_down=True, on_error=None, follow_symlinks=False):  # XXX
         """Walk the directory tree from this directory, similar to os.walk()."""
@@ -1079,76 +1044,8 @@ class FCPath:
                 yield path, dirnames, filenames
                 paths += [path.joinpath(d) for d in reversed(dirnames)]
 
-    def absolute(self):
-        """Return an absolute version of this path
-        No normalization or symlink resolution is performed.
-
-        Use resolve() to resolve symlinks and remove '..' segments.
-        """
-        raise NotImplementedError(self._not_implemented_msg('absolute()'))
-
-    @classmethod
-    def cwd(cls):
-        """Return a new path pointing to the current working directory."""
-        # We call 'absolute()' rather than using 'os.getcwd()' directly to
-        # enable users to replace the implementation of 'absolute()' in a
-        # subclass and benefit from the new behaviour here. This works because
-        # os.path.abspath('.') == os.getcwd().
-        raise NotImplementedError(self._not_implemented_msg('cwd()'))
-
-    def expanduser(self):
-        """ Return a new path with expanded ~ and ~user constructs
-        (as returned by os.path.expanduser)
-        """
-        raise NotImplementedError(self._not_implemented_msg('expanduser()'))
-
-    @classmethod
-    def home(cls):
-        """Return a new path pointing to expanduser('~').
-        """
-        raise NotImplementedError(self._not_implemented_msg('home()'))
-
-    def readlink(self):
-        """
-        Return the path to which the symbolic link points.
-        """
-        raise NotImplementedError(self._not_implemented_msg('readlink()'))
-
-    def resolve(self, strict=False):
-        """
-        Make the path absolute, resolving all symlinks on the way and also
-        normalizing it.
-        """
-        raise NotImplementedError(self._not_implemented_msg('resolve()'))
-
-    def symlink_to(self, target, target_is_directory=False):
-        """
-        Make this path a symlink pointing to the target path.
-        Note the order of arguments (link, target) is the reverse of os.symlink.
-        """
-        raise NotImplementedError(self._not_implemented_msg('symlink_to()'))
-
-    def hardlink_to(self, target):
-        """
-        Make this path a hard link pointing to the same file as *target*.
-
-        Note the order of arguments (self, target) is the reverse of os.link's.
-        """
-        raise NotImplementedError(self._not_implemented_msg('hardlink_to()'))
-
-    def touch(self, mode=0o666, exist_ok=True):
-        """
-        Create this file with the given access mode, if it doesn't exist.
-        """
-        raise NotImplementedError(self._not_implemented_msg('touch()'))
-
-    def mkdir(self, mode=0o777, parents=False, exist_ok=False):
-        """
-        Create a new directory at this given path.
-        """
-        raise NotImplementedError(self._not_implemented_msg('mkdir()'))
-
-    def rename(self, target):
+    def rename(self,
+               target: str) -> None:
         """
         Rename this path to the target path.
 
@@ -1160,7 +1057,7 @@ class FCPath:
         """
         raise NotImplementedError(self._not_implemented_msg('rename()'))
 
-    def replace(self, target):
+    def replace(self, target) -> None:
         """
         Rename this path to the target path, overwriting if that path exists.
 
@@ -1172,49 +1069,148 @@ class FCPath:
         """
         raise NotImplementedError(self._not_implemented_msg('replace()'))
 
-    def chmod(self, mode, *, follow_symlinks=True):
-        """
-        Change the permissions of the path, like os.chmod().
-        """
-        raise NotImplementedError(self._not_implemented_msg('chmod()'))
+    # Operations not supported by FCPath
 
-    def lchmod(self, mode):
-        """
-        Like chmod(), except if the path points to a symlink, the symlink's
-        permissions are changed, rather than its target's.
-        """
-        raise NotImplementedError(self._not_implemented_msg('lchmod()'))
+    def relative_to(self, other: str) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
 
-    def unlink(self, missing_ok=False):
-        """
-        Remove this file or link.
-        If the path is a directory, use rmdir() instead.
-        """
-        raise NotImplementedError(self._not_implemented_msg('unlink()'))
+    def is_relative_to(self, other: str) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
 
-    def rmdir(self):
-        """
-        Remove this directory.  The directory must be empty.
-        """
-        raise NotImplementedError(self._not_implemented_msg('rmdir()'))
+    def stat(self, *, follow_symlinks: bool = True) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
 
-    def owner(self, *, follow_symlinks=True):
-        """
-        Return the login name of the file owner.
-        """
-        raise NotImplementedError(self._not_implemented_msg('owner()'))
+    def lstat(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
 
-    def group(self, *, follow_symlinks=True):
-        """
-        Return the group name of the file gid.
-        """
-        raise NotImplementedError(self._not_implemented_msg('group()'))
+    def is_dir(self, *, follow_symlinks: bool = True) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def is_mount(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def is_symlink(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def is_junction(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def is_block_device(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def is_char_device(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def is_fifo(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def is_socket(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def samefile(self, other_path: Path) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def absolute(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
 
     @classmethod
-    def from_uri(cls, uri):
-        """Return a new path from the given 'file' URI."""
-        raise NotImplementedError(cls._not_implemented_msg('from_uri()'))
+    def cwd(cls) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
 
-    def as_uri(self):
-        """Return the path as a URI."""
-        raise NotImplementedError(self._not_implemented_msg('as_uri()'))
+    def expanduser(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    @classmethod
+    def home(cls) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def readlink(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def resolve(self,
+                strict: bool = False) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def symlink_to(self,
+                   target: str,
+                   target_is_directory: bool = False) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def hardlink_to(self,
+                    target: str) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def touch(self,
+              mode: int = 0o666,
+              exist_ok: bool = True) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def mkdir(self,
+              mode: int = 0o777,
+              parents: bool = False,
+              exist_ok: bool = False) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def chmod(self,
+              mode: int,
+              *,
+              follow_symlinks: bool = True) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def lchmod(self,
+               mode: int) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def unlink(self,
+               missing_ok: bool = False) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def rmdir(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def owner(self, *,
+              follow_symlinks: bool = True) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def group(self, *,
+              follow_symlinks: bool = True) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    @classmethod
+    def from_uri(cls,
+                 uri: str) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError
+
+    def as_uri(self) -> None:
+        """Path function not supported by FCPath."""
+        raise NotImplementedError

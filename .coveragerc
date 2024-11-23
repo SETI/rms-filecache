@@ -3,3 +3,4 @@ branch = true
 omit =
     tests/*
     */_version.py
+    filecache/my_glob.py

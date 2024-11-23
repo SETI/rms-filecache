@@ -251,7 +251,7 @@ class FileCache:
         atexit.register(self._maybe_delete_cache)
 
     @classmethod
-    def registered_scheme_prefixes(self):
+    def registered_scheme_prefixes(self) -> tuple(str):
         return tuple([x + '://' for x in _SCHEME_CLASSES])
 
     @property

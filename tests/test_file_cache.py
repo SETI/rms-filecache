@@ -1762,8 +1762,10 @@ def test_cloud_upl_multi_pfx_bad_1(prefix):
             pfx.upload(paths)
         # However all of the other files should have been uploaded
         assert not pfx.exists(paths[0])
+        assert not (pfx / paths[0]).is_file()
         for path in paths[1:]:
             assert pfx.exists(path)
+            assert (pfx / path).is_file()
         assert fc.download_counter == 0
         assert fc.upload_counter == len(paths) - 1
         assert pfx.download_counter == 0
