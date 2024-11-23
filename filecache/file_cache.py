@@ -1311,7 +1311,7 @@ class FileCache:
             self.upload(url, anonymous=anonymous, url_to_path=url_to_path)
 
     def new_path(self,
-                 prefix: str,
+                 path: str,
                  *,
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
@@ -1321,10 +1321,7 @@ class FileCache:
         """Create a new FCPath with the given prefix.
 
         Parameters:
-            prefix: The prefix for the storage location, which may include the source
-                prefix was well as any top-level directories. All accesses made through
-                this :class:`FCPath` instance will have this prefix prepended to
-                their file path.
+            path: The path.
             anonymous: If True, access cloud resources without specifying credentials. If
                 False, credentials must be initialized in the program's environment. If
                 None, use the default setting for this :class:`FileCache` instance.
@@ -1361,17 +1358,17 @@ class FileCache:
                 If None, use the default translators for this :class:`FileCache` instance.
         """
 
-        if isinstance(prefix, Path):
-            prefix = str(prefix)
-        if not isinstance(prefix, str):
-            raise TypeError('prefix is not a str or Path')
-        prefix = prefix.replace('\\', '/').rstrip('/')
+        if isinstance(path, Path):
+            path = str(path)
+        if not isinstance(path, str):
+            raise TypeError('path is not a str or Path')
+        path = path.replace('\\', '/').rstrip('/')
         if anonymous is None:
             anonymous = self.anonymous
         if lock_timeout is None:
             lock_timeout = self.lock_timeout
         nthreads = self._validate_nthreads(nthreads)
-        return FCPath(prefix,
+        return FCPath(path,
                       filecache=self,
                       anonymous=anonymous,
                       lock_timeout=lock_timeout,

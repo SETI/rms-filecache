@@ -9,7 +9,7 @@
     :show-inheritance:
     :exclude-members: __dict__, __hash__, __module__, __weakref__, __enter__, __exit__, __annotations__
 
-.. automodule:: filecache.file_cache_prefix
+.. automodule:: filecache.file_cache_path
     :member-order: bysource
     :members:
     :undoc-members:

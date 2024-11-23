@@ -47,22 +47,19 @@ pip install rms-filecache
 
 # Getting Started
 
-
-The top-level file organization is provided by the `FileCache` class. A
-`FileCache` instance is used to specify a particular **sharing policy** and
-**lifetime**. For example, a cache could be private to the current process and group a set
-of files that all have the same basic purpose. Once these files have been (downloaded and)
-read, they are deleted as a group. Another cache could be shared among all processes on
-the current machine and group a set of files that are needed by multiple processes, thus
-allowing them to be downloaded from a remote source only one time, saving time and
-bandwidth.
+The top-level file organization is provided by the `FileCache` class. A `FileCache`
+instance is used to specify a particular **sharing policy** and **lifetime**. For example,
+a cache could be private to the current process and group a set of files that all have the
+same basic purpose. Once these files have been (downloaded and) read, they are deleted as
+a group. Another cache could be shared among all processes on the current machine and
+group a set of files that are needed by multiple processes, thus allowing them to be
+downloaded from a remote source only one time, saving time and bandwidth.
 
 A `FileCache` can be instantiated either directly or as a context manager. When
-instantiated directly, the programmer is responsible for calling
-`FileCache.delete_cache` directly to delete the cache when finished. In addition, a
-non-shared cache will be deleted on program exit. When instantiated as a context manager,
-a non-shared cache is deleted on exit from the context. See the class documentation for
-full details.
+instantiated directly, the programmer is responsible for calling `FileCache.delete_cache`
+directly to delete the cache when finished (a non-shared cache will be automatically
+deleted on program exit). When instantiated as a context manager, a non-shared cache is
+deleted on exit from the context. See the class documentation for full details.
 
 Usage examples:
 
@@ -104,15 +101,15 @@ with FileCache(None) as fc:
 ```
 
 The `FCPath` class is a reimplementation of the Python `Path` class to support remote
-acess using `FileCache`. Like `Path`, a `FCPath` instance can contain any part of a URI,
-but only an absolute URI can be used when actually accessing the file specified by the
-`FCPath`. In addition, an `FCPath` can encapsulate various arguments such as `anonymous`
-and `time_out` that can be specified to each `exists`, `retrieve`, or `upload` method.
-Thus using one of these instances can simplify the use of a `FileCache` by allowing the
-user to only specify the relative part of the path to be operated on, and to not specify
+acess using an associated `FileCache`. Like `Path`, an `FCPath` instance can contain any
+part of a URI, but only an absolute URI can be used when actually accessing the file
+specified by the `FCPath`. In addition, an `FCPath` can encapsulate various arguments such
+as `anonymous` and `time_out` so that they do not need to be specified to each access
+method. Thus, using this class can simplify the use of a `FileCache` by allowing the user
+to operate on paths using the simpler syntax provided by `Path`, and to not specify
 various other parameters at each method call site. If an `FCPath` instance is created
 without an explicitly-associated `FileCache`, then the default `FileCache()` is used,
-which specifies a shared cache named `"global"`.
+which specifies a shared cache named `"global"` that will persist after the program exits.
 
 Compare this example to the one above:
 
@@ -176,18 +173,15 @@ If the program was going to be run multiple times in a row, or multiple copies w
 to be run simultaneously, using a shared cache would allow all of the processes to share
 the same copy, thus requiring only a single download no matter how many times the program
 was run. A shared cache is indicated by giving the cache a name (or no argument, which
-defaults to ``"global"``):
+defaults to ``"global"``); also `FCPath` defaults to using the global cache if no
+`FileCache` is specified. This results in the simplest form of the program:
 
 ```python
-from filecache import FileCache
+from filecache import FCPath
 import os
-with FileCache('my_name') as fc:
-    p = fc.new_path(os.getenv('PDS3_HOLDINGS_DIR'))
-    voldesc_path = p / 'volumes/COISS_2xxx/COISS_2001/voldesc.cat'
-    contents = voldesc_path.read_text()
-# Cache not deleted here; must be deleted manually using fc.delete_cache()
-# If not deleted manually, the shared cache will persist until the temporary
-# directory is purged by the operating system (which may be never)
+p = FCPath(os.getenv('PDS3_HOLDINGS_DIR'))
+voldesc_path = p / 'volumes/COISS_2xxx/COISS_2001/voldesc.cat'
+contents = voldesc_path.read_text()
 ```
 
 Finally, there are four classes that allow direct access to the four possible storage

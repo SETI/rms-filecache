@@ -485,7 +485,6 @@ def test_match():
     assert p.match('a/b')
     assert p.match('c:/a/b')
     assert p.match('C:/a/b')
-    assert p.match('C:/a/b')
     assert not p.match('d:/a/b')
     p = FCPath('c:/a/b')
     assert p.match('b')
@@ -572,6 +571,34 @@ def test_default_filecache():
         assert p.get_local_path() == p2.get_local_path()
         p3 = FCPath(GS_WRITABLE_TEST_BUCKET_ROOT) / EXPECTED_FILENAMES[0]
         assert p2.get_local_path() == p3.get_local_path()
+
+
+def test_operations_relative_paths():
+    p = FCPath('b/c')
+    with pytest.raises(ValueError):
+        p.get_local_path()
+    with pytest.raises(ValueError):
+        p.get_local_path('d')
+    with pytest.raises(ValueError):
+        p.get_local_path(['d', 'e'])
+    with pytest.raises(ValueError):
+        p.retrieve()
+    with pytest.raises(ValueError):
+        p.retrieve('d')
+    with pytest.raises(ValueError):
+        p.retrieve(['d', 'e'])
+    with pytest.raises(ValueError):
+        p.exists()
+    with pytest.raises(ValueError):
+        p.exists('d')
+    with pytest.raises(ValueError):
+        p.exists(['d', 'e'])
+    with pytest.raises(ValueError):
+        p.upload()
+    with pytest.raises(ValueError):
+        p.upload('d')
+    with pytest.raises(ValueError):
+        p.upload(['d', 'e'])
 
 
 def test_bad_threads():

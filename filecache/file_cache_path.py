@@ -55,7 +55,7 @@ class FCPath:
                 together to form a final path. File operations can only be performed on
                 absolute paths.
             file_cache: The :class:`FileCache` in which to store files retrieved from this
-                prefix. If not specified, the default global :class:`FileCache` will be
+                path. If not specified, the default global :class:`FileCache` will be
                 used.
             anonymous: If True, access cloud resources without specifying credentials. If
                 False, credentials must be initialized in the program's environment. If
@@ -283,9 +283,11 @@ class FCPath:
         Notes:
             Examples:
 
-                For a Windows path: '' or 'c:'
+                For a Windows path: '' or 'C:'
+
                 For a UNC share: '//host/share'
-                For a cloud resource: 'ss://bucket'
+
+                For a cloud resource: 'gs://bucket'
         """
 
         return self._split_parts(self._path)[0]
@@ -542,11 +544,11 @@ class FCPath:
                        create_parents: bool = True,
                        url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
                        ) -> Path | list[Path]:
-        """Return the local path for the given sub_path relative to the prefix.
+        """Return the local path for the given sub_path relative to this path.
 
         Parameters:
-            sub_path: The path of the file relative to the prefix. If `sub_path` is a list
-                or tuple, all paths are processed.
+            sub_path: The path of the file relative to this path. If not specified, this
+                path is used. If `sub_path` is a list or tuple, all paths are processed.
             create_parents: If True, create all parent directories. This is useful when
                 getting the local path of a file that will be uploaded.
             url_to_path: The function (or list of functions) that is used to translate
@@ -572,25 +574,36 @@ class FCPath:
                 called in order until one returns a Path, or it falls through to the
                 default.
 
-                If None, use the default value given when this :class:`FileCachePrefix`
-                was created.
+                If None, use the default value given when this :class:`FCPath` was
+                created.
         Returns:
-            The Path (or list of Paths) of the filename in the temporary directory, or
-            as specified by the `url_to_path` translators. The files do not have to exist
-            because a Path could be used for writing a file to upload. To facilitate
-            this, a side effect of this call (if `create_parents` is True) is that the
-            complete parent directory structure will be created for each returned Path.
+            The Path (or list of Paths) of the filename in the temporary directory, or as
+            specified by the `url_to_path` translators. The files do not have to exist
+            because a Path could be used for writing a file to upload. To facilitate this,
+            a side effect of this call (if `create_parents` is True) is that the complete
+            parent directory structure will be created for each returned Path.
+
+        Raises:
+            ValueError: If the derived path is not absolute.
         """
 
         if isinstance(sub_path, (list, tuple)):
-            new_sub_path: StrOrPathOrSeqType = [FCPath._join(self._path, p)
-                                                for p in sub_path]
-            return self._filecache_to_use.get_local_path(new_sub_path,
+            new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
+            if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
+                raise ValueError(
+                    f'Derived paths must be absolute, got {new_sub_paths}')
+            return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
+                                                         new_sub_paths),
                                                          anonymous=self._anonymous,
                                                          create_parents=create_parents,
                                                          url_to_path=url_to_path)
 
-        return self._filecache_to_use.get_local_path(FCPath._join(self._path, sub_path),
+        new_sub_path = FCPath._join(self._path, sub_path)
+        if not FCPath._is_absolute(str(new_sub_path)):
+            raise ValueError(
+                'Derived path must be absolute, got {new_sub_path}')
+        return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
+                                                          new_sub_path),
                                                      anonymous=self._anonymous,
                                                      create_parents=create_parents,
                                                      url_to_path=url_to_path)
@@ -605,13 +618,14 @@ class FCPath:
         """Check if a file exists without downloading it.
 
         Parameters:
-            sub_path: The path of the file relative to the prefix.
+            sub_path: The path of the file relative to this path. If not specified, this
+                path is used.
             bypass_cache: If False, check for the file first in the local cache, and if
                 not found there then on the remote server. If True, only check on the
                 remote server.
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value given when this
-                :class:`FileCachePrefix` was created.
+                :class:`FCPath` was created.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -635,8 +649,8 @@ class FCPath:
                 called in order until one returns a Path, or it falls through to the
                 default.
 
-                If None, use the default value given when this :class:`FileCachePrefix`
-                was created.
+                If None, use the default value given when this :class:`FCPath` was
+                created.
         Returns:
             True if the file exists. Note that it is possible that a file could exist and
             still not be downloadable due to permissions. False if the file does not
@@ -644,7 +658,7 @@ class FCPath:
             examine a bucket's contents, etc.
 
         Raises:
-            ValueError: If the path is invalidly constructed.
+            ValueError: If the derived path is not absolute.
         """
 
         if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
@@ -653,15 +667,23 @@ class FCPath:
             nthreads = self._nthreads
 
         if isinstance(sub_path, (list, tuple)):
-            new_sub_path: StrOrPathOrSeqType = [FCPath._join(self._path, p)
-                                                for p in sub_path]
-            return self._filecache_to_use.exists(new_sub_path,
+            new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
+            if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
+                raise ValueError(
+                    f'Derived paths must be absolute, got {new_sub_paths}')
+            return self._filecache_to_use.exists(cast(StrOrPathOrSeqType,
+                                                      new_sub_paths),
                                                  bypass_cache=bypass_cache,
                                                  nthreads=nthreads,
                                                  anonymous=self._anonymous,
                                                  url_to_path=url_to_path)
 
-        return self._filecache_to_use.exists(FCPath._join(self._path, sub_path),
+        new_sub_path = FCPath._join(self._path, sub_path)
+        if not FCPath._is_absolute(str(new_sub_path)):
+            raise ValueError(
+                'Derived path must be absolute, got {new_sub_path}')
+        return self._filecache_to_use.exists(cast(StrOrPathOrSeqType,
+                                                  new_sub_path),
                                              bypass_cache=bypass_cache,
                                              anonymous=self._anonymous,
                                              url_to_path=url_to_path)
@@ -677,17 +699,17 @@ class FCPath:
         """Retrieve a file(s) from the given sub_path and store it in the file cache.
 
         Parameters:
-            sub_path: The path of the file relative to the prefix. If `sub_path` is a list
-                or tuple, the complete list of files is retrieved. Depending on the
-                storage location, this may be more efficient because files can be
-                downloaded in parallel.
+            sub_path: The path of the file relative to this path. If not specified, this
+                path is used. If `sub_path` is a list or tuple, the complete list of files
+                is retrieved. Depending on the storage location, this may be more
+                efficient because files can be downloaded in parallel.
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value given when this
-                :class:`FileCachePrefix` was created.
+                :class:`FCPath` was created.
             lock_timeout: How long to wait, in seconds, if another process is marked as
                 retrieving the file before raising an exception. 0 means to not wait at
                 all. A negative value means to never time out. None means to use the
-                default value given when this :class:`FileCachePrefix` was created.
+                default value given when this :class:`FCPath` was created.
             exception_on_fail: If True, if any file does not exist or download fails a
                 FileNotFound exception is raised, and if any attempt to acquire a lock or
                 wait for another process to download a file fails a TimeoutError is
@@ -717,8 +739,8 @@ class FCPath:
                 called in order until one returns a Path, or it falls through to the
                 default.
 
-                If None, use the default value given when this :class:`FileCachePrefix`
-                was created.
+                If None, use the default value given when this :class:`FCPath` was
+                created.
         Returns:
             The Path of the filename in the temporary directory (or the original absolute
             path if local). If `sub_path` was a list or tuple of paths, then instead
@@ -734,6 +756,7 @@ class FCPath:
                 within the given timeout or, for a multi-file download, if we timed out
                 waiting for other processes to download locked files, and
                 exception_on_fail is True.
+            ValueError: If the derived path is not absolute.
 
         Notes:
             File download is normally an atomic operation; a program will never see a
@@ -754,17 +777,24 @@ class FCPath:
 
         try:
             if isinstance(sub_path, (list, tuple)):
-                new_sub_path: StrOrPathOrSeqType = [FCPath._join(self._path, p)
-                                                    for p in sub_path]
-                ret = self._filecache_to_use.retrieve(new_sub_path,
+                new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
+                if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
+                    raise ValueError(
+                        f'Derived paths must be absolute, got {new_sub_paths}')
+                ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
+                                                           new_sub_paths),
                                                       anonymous=self._anonymous,
                                                       lock_timeout=lock_timeout,
                                                       nthreads=nthreads,
                                                       exception_on_fail=exception_on_fail,
                                                       url_to_path=url_to_path)
             else:
-                new_sub_path2: StrOrPathOrSeqType = FCPath._join(self._path, sub_path)
-                ret = self._filecache_to_use.retrieve(new_sub_path2,
+                new_sub_path2 = FCPath._join(self._path, sub_path)
+                if not FCPath._is_absolute(str(new_sub_path2)):
+                    raise ValueError(
+                        'Derived path must be absolute, got {new_sub_path2}')
+                ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
+                                                           new_sub_path2),
                                                       anonymous=self._anonymous,
                                                       lock_timeout=lock_timeout,
                                                       exception_on_fail=exception_on_fail,
@@ -785,12 +815,13 @@ class FCPath:
         """Upload file(s) from the file cache to the storage location(s).
 
         Parameters:
-            sub_path: The path of the file relative to the prefix. If `sub_path` is a list
-                or tuple, the complete list of files is uploaded. This may be more
-                efficient because files can be uploaded in parallel.
+            sub_path: The path of the file relative to this path. If not specified, this
+                path is used. If `sub_path` is a list or tuple, the complete list of files
+                is uploaded. This may be more efficient because files can be uploaded in
+                parallel.
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value given when this
-                :class:`FileCachePrefix` was created.
+                :class:`FileCache` was created.
             exception_on_fail: If True, if any file does not exist or upload fails an
                 exception is raised. If False, the function returns normally and any
                 failed upload is marked with the Exception that caused the failure in
@@ -818,8 +849,8 @@ class FCPath:
                 called in order until one returns a Path, or it falls through to the
                 default.
 
-                If None, use the default value given when this :class:`FileCachePrefix`
-                was created.
+                If None, use the default value given when this :class:`FCPath` was
+                created.
         Returns:
             The Path of the filename in the temporary directory (or the original absolute
             path if local). If `sub_path` was a list or tuple of paths, then instead
@@ -829,7 +860,8 @@ class FCPath:
 
         Raises:
             FileNotFoundError: If a file to upload does not exist or the upload failed,
-            and exception_on_fail is True.
+                and exception_on_fail is True.
+            ValueError: If the derived path is not absolute.
         """
 
         old_upload_counter = self._filecache_to_use.upload_counter
@@ -842,16 +874,23 @@ class FCPath:
 
         try:
             if isinstance(sub_path, (list, tuple)):
-                new_sub_paths: StrOrPathOrSeqType = [FCPath._join(self._path, p)
-                                                     for p in sub_path]
-                ret = self._filecache_to_use.upload(new_sub_paths,
+                new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
+                if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
+                    raise ValueError(
+                        f'Derived paths must be absolute, got {new_sub_paths}')
+                ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
+                                                         new_sub_paths),
                                                     anonymous=self._anonymous,
                                                     nthreads=nthreads,
                                                     exception_on_fail=exception_on_fail,
                                                     url_to_path=url_to_path)
             else:
-                new_sub_path2: StrOrPathOrSeqType = FCPath._join(self._path, sub_path)
-                ret = self._filecache_to_use.upload(new_sub_path2,
+                new_sub_path = FCPath._join(self._path, sub_path)
+                if not FCPath._is_absolute(str(new_sub_path)):
+                    raise ValueError(
+                        'Derived path must be absolute, got {new_sub_path}')
+                ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
+                                                         new_sub_path),
                                                     anonymous=self._anonymous,
                                                     exception_on_fail=exception_on_fail,
                                                     url_to_path=url_to_path)
@@ -876,7 +915,8 @@ class FCPath:
         when this context manager is exited the file will be uploaded.
 
         Parameters:
-            sub_path: The path of the file relative to the prefix.
+            sub_path: The path of the file relative to this path. If not specified, this
+                path is used.
             mode: The mode string as you would specify to Python's `open()` function.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
@@ -901,8 +941,8 @@ class FCPath:
                 called in order until one returns a Path, or it falls through to the
                 default.
 
-                If None, use the default value given when this :class:`FileCachePrefix`
-                was created.
+                If None, use the default value given when this :class:`FCPath` was
+                created.
         Returns:
             IO object: The same object as would be returned by the normal `open()`
             function.
@@ -931,7 +971,7 @@ class FCPath:
 
     @property
     def is_local(self) -> bool:  # XXX
-        """A bool indicating whether or not the prefix refers to the local filesystem."""
+        """A bool indicating whether or not the path refers to the local filesystem."""
         return self._path.startswith('file:///') or '://' not in self._path
 
     def is_file(self) -> bool:
