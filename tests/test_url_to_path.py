@@ -160,7 +160,7 @@ def test_translator_local_abs():
 
 def test_translator_local_pfx():
     with FileCache() as fc:
-        pfx = fc.new_prefix(EXPECTED_DIR)
+        pfx = fc.new_path(EXPECTED_DIR)
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             assert pfx.get_local_path(filename) == path
@@ -169,7 +169,7 @@ def test_translator_local_pfx():
             assert pfx.upload(filename) == path
 
     with FileCache(url_to_path=translator_subdir2a_rel) as fc:
-        pfx = fc.new_prefix(EXPECTED_DIR)
+        pfx = fc.new_path(EXPECTED_DIR)
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             new_path = EXPECTED_DIR / (filename.replace('subdir2a/', ''))
@@ -184,7 +184,7 @@ def test_translator_local_pfx():
     with FileCache(url_to_path=[translator_subdir2a_rel]) as fc:
         translators = [translator_subdir2a_rel,
                        translator_subdir2b_rel]
-        pfx = fc.new_prefix(EXPECTED_DIR)
+        pfx = fc.new_path(EXPECTED_DIR)
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             new_path = EXPECTED_DIR / (filename
@@ -253,7 +253,7 @@ def test_translator_http():
 
 def test_translator_http_pfx():
     with FileCache(None, url_to_path=translator_subdir2a_rel) as fc:
-        pfx = fc.new_prefix(HTTP_TEST_ROOT)
+        pfx = fc.new_path(HTTP_TEST_ROOT)
         url = EXPECTED_FILENAMES[1]
         path = EXPECTED_FILENAMES[1].replace('subdir2a/', '')
         exp_local_path = fc.cache_dir / (HTTP_TEST_ROOT.replace('https://', 'http_') +
@@ -262,7 +262,7 @@ def test_translator_http_pfx():
         with FileCache(None) as fc2:
             uid = str(uuid.uuid4())
             fc2_path = uid + '/' + EXPECTED_FILENAMES[1]
-            pfx2 = fc2.new_prefix(GS_WRITABLE_TEST_BUCKET_ROOT + '/' + uid)
+            pfx2 = fc2.new_path(GS_WRITABLE_TEST_BUCKET_ROOT + '/' + uid)
             url2 = EXPECTED_FILENAMES[1]
 
             # Translate between caches

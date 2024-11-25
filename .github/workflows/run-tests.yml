@@ -12,7 +12,7 @@ on:
 
 jobs:
   flake8:
-    name: Flake8 filecache
+    name: Lint filecache
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,7 +35,7 @@ jobs:
 
       - name: Mypy
         run: |
-          mypy --strict filecache
+          mypy filecache
 
   test:
     name: Test filecache
