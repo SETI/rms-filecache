@@ -39,6 +39,12 @@ class FCPath:
     they do not have to be specified on every method call.
     """
 
+    _filecache: Optional["FileCache"]
+    _anonymous: Optional[bool]
+    _lock_timeout: Optional[int]
+    _nthreads: Optional[int]
+    _url_to_path: Optional[UrlToPathFuncOrSeqType]
+
     def __init__(self,
                  *paths: str | Path | FCPath | None,
                  filecache: Optional["FileCache"] = None,
@@ -102,11 +108,11 @@ class FCPath:
         self._path = self._join(*paths)
 
         if copy_from is not None:
-            self._filecache: Optional["FileCache"] = copy_from._filecache
-            self._anonymous: Optional[bool] = copy_from._anonymous
-            self._lock_timeout: Optional[int] = copy_from._lock_timeout
-            self._nthreads: Optional[int] = copy_from._nthreads
-            self._url_to_path: Optional[UrlToPathFuncOrSeqType] = copy_from._url_to_path
+            self._filecache = copy_from._filecache
+            self._anonymous = copy_from._anonymous
+            self._lock_timeout = copy_from._lock_timeout
+            self._nthreads = copy_from._nthreads
+            self._url_to_path = copy_from._url_to_path
         else:
             self._filecache = filecache
             self._anonymous = anonymous

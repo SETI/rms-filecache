@@ -34,10 +34,10 @@ Usage examples::
     with FileCache(None) as fc:  # Use as context manager
         # Also use open() as a context manager
         with fc.open('gs://rms-filecache-tests/subdir1/subdir2a/binary1.bin', 'rb',
-                    anonymous=True) as fp:
+                     anonymous=True) as fp:
             bin1 = fp.read()
         with fc.open('s3://rms-filecache-tests/subdir1/subdir2a/binary1.bin', 'rb',
-                    anonymous=True) as fp:
+                     anonymous=True) as fp:
             bin2 = fp.read()
         assert bin1 == bin2
     # Cache automatically deleted here

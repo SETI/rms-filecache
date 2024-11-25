@@ -507,7 +507,6 @@ def test_match():
     assert p.match('a/b')
     assert p.match('c:/a/b')
     assert p.match('C:/a/b')
-    assert p.match('C:/a/b')
     assert not p.match('d:/a/b')
     p = FCPath('http://server.name/a/b')
     assert p.match('b')
