@@ -149,7 +149,7 @@ accessible from a webserver at
 Finally, it could be accessible from Google Cloud Storage from the ``rms-node-holdings``
 bucket at
 ``gs://rms-node-holdings/pds3-holdings/volumes/COISS_2xxx/COISS_2001/voldesc.cat``. Before
-running the program, an environment variable could be set to one of these values::
+running the program, an environment variable could be set to one of these values:
 
 ```sh
 $ export PDS3_HOLDINGS_SRC="~/pds3-holdings"
@@ -185,8 +185,8 @@ contents = voldesc_path.read_text()
 ```
 
 Finally, there are four classes that allow direct access to the four possible storage
-locations without invoking any caching behavior: :class:`FileCacheSourceLocal`,
-:class:`FileCacheSourceHTTP`, :class:`FileCacheSourceGS`, and :class:`FileSourceCacheS3`:
+locations without invoking any caching behavior: `FileCacheSourceLocal`,
+`FileCacheSourceHTTP`, `FileCacheSourceGS`, and `FileSourceCacheS3`:
 
 ```python
 from filecache import FileCacheSourceGS

@@ -24,28 +24,6 @@ HTTP_TEST_ROOT = 'https://storage.googleapis.com/rms-filecache-tests'
 GS_WRITABLE_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests-writable'
 
 
-def _compare_to_expected_path(cache_path, filename):
-    local_path = EXPECTED_DIR / filename
-    mode = 'r'
-    if filename.endswith('.bin'):
-        mode = 'rb'
-    with open(cache_path, mode) as fp:
-        cache_data = fp.read()
-    with open(local_path, mode) as fp:
-        local_data = fp.read()
-    assert cache_data == local_data
-
-
-def _compare_to_expected_data(cache_data, filename):
-    local_path = EXPECTED_DIR / filename
-    mode = 'r'
-    if filename.endswith('.bin'):
-        mode = 'rb'
-    with open(local_path, mode) as fp:
-        local_data = fp.read()
-    assert cache_data == local_data
-
-
 def test__split_parts():
     # Local
     assert FCPath._split_parts('') == ('', '', '')
@@ -394,6 +372,24 @@ def test_joinpath():
         assert p2._anonymous
         assert p2._lock_timeout == 59
         assert p2._nthreads == 2
+        p3 = FCPath(p2)
+        assert str(p3) == 'a/c'
+        assert p3._filecache is fc
+        assert p3._anonymous
+        assert p3._lock_timeout == 59
+        assert p3._nthreads == 2
+        p4 = FCPath(p3, FCPath('e'))
+        assert str(p4) == 'a/c/e'
+        assert p4._filecache is fc
+        assert p4._anonymous
+        assert p4._lock_timeout == 59
+        assert p4._nthreads == 2
+        p5 = FCPath(str(p3), FCPath('e'))
+        assert str(p5) == 'a/c/e'
+        assert p5._filecache is not fc
+        assert not p5._anonymous
+        assert p5._lock_timeout is None
+        assert p5._nthreads is None
 
 
 def test_truediv():
@@ -432,6 +428,23 @@ def test_rtruediv():
         assert p3._nthreads == 9
         assert str('http://bucket/a' / FCPath('b/c') / 'd' / FCPath('e')) == \
             'http://bucket/a/b/c/d/e'
+
+
+def test_name():
+    p = FCPath('')
+    assert p.name == ''
+    p = FCPath('c')
+    assert p.name == 'c'
+    p = FCPath('c.txt')
+    assert p.name == 'c.txt'
+    p = FCPath('/c.txt')
+    assert p.name == 'c.txt'
+    p = FCPath('a/b/c.txt')
+    assert p.name == 'c.txt'
+    p = FCPath('C:/a/b/c.txt')
+    assert p.name == 'c.txt'
+    p = FCPath('http://bucket/a/b/c')
+    assert p.name == 'c'
 
 
 def test_parent():
