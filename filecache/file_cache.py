@@ -1311,7 +1311,7 @@ class FileCache:
             self.upload(url, anonymous=anonymous, url_to_path=url_to_path)
 
     def new_path(self,
-                 path: str,
+                 path: str | Path | FCPath,
                  *,
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
@@ -1358,10 +1358,10 @@ class FileCache:
                 If None, use the default translators for this :class:`FileCache` instance.
         """
 
-        if isinstance(path, Path):
+        if isinstance(path, (Path, FCPath)):
             path = str(path)
         if not isinstance(path, str):
-            raise TypeError('path is not a str or Path')
+            raise TypeError('path is not a str or Path or FCPath')
         path = path.replace('\\', '/').rstrip('/')
         if anonymous is None:
             anonymous = self.anonymous
