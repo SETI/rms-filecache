@@ -107,6 +107,9 @@ class FCPath:
 
         self._path = self._join(*paths)
 
+        if copy_from is None and len(paths) > 0 and isinstance(paths[0], FCPath):
+            copy_from = paths[0]
+
         if copy_from is not None:
             self._filecache = copy_from._filecache
             self._anonymous = copy_from._anonymous
@@ -472,6 +475,12 @@ class FCPath:
             return FCPath(other, self._path, copy_from=other)
         else:
             return FCPath(other, self._path, copy_from=self)
+
+    @property
+    def name(self) -> str:
+        """The final component of the path."""
+
+        return FCPath._split(self._path)[1]
 
     @property
     def parent(self) -> FCPath:

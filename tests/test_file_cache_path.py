@@ -24,28 +24,6 @@ HTTP_TEST_ROOT = 'https://storage.googleapis.com/rms-filecache-tests'
 GS_WRITABLE_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests-writable'
 
 
-def _compare_to_expected_path(cache_path, filename):
-    local_path = EXPECTED_DIR / filename
-    mode = 'r'
-    if filename.endswith('.bin'):
-        mode = 'rb'
-    with open(cache_path, mode) as fp:
-        cache_data = fp.read()
-    with open(local_path, mode) as fp:
-        local_data = fp.read()
-    assert cache_data == local_data
-
-
-def _compare_to_expected_data(cache_data, filename):
-    local_path = EXPECTED_DIR / filename
-    mode = 'r'
-    if filename.endswith('.bin'):
-        mode = 'rb'
-    with open(local_path, mode) as fp:
-        local_data = fp.read()
-    assert cache_data == local_data
-
-
 def test__split_parts():
     # Local
     assert FCPath._split_parts('') == ('', '', '')
@@ -432,6 +410,23 @@ def test_rtruediv():
         assert p3._nthreads == 9
         assert str('http://bucket/a' / FCPath('b/c') / 'd' / FCPath('e')) == \
             'http://bucket/a/b/c/d/e'
+
+
+def test_name():
+    p = FCPath('')
+    assert p.name == ''
+    p = FCPath('c')
+    assert p.name == 'c'
+    p = FCPath('c.txt')
+    assert p.name == 'c.txt'
+    p = FCPath('/c.txt')
+    assert p.name == 'c.txt'
+    p = FCPath('a/b/c.txt')
+    assert p.name == 'c.txt'
+    p = FCPath('C:/a/b/c.txt')
+    assert p.name == 'c.txt'
+    p = FCPath('http://bucket/a/b/c')
+    assert p.name == 'c'
 
 
 def test_parent():
