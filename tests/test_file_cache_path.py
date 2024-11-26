@@ -372,6 +372,24 @@ def test_joinpath():
         assert p2._anonymous
         assert p2._lock_timeout == 59
         assert p2._nthreads == 2
+        p3 = FCPath(p2)
+        assert str(p3) == 'a/c'
+        assert p3._filecache is fc
+        assert p3._anonymous
+        assert p3._lock_timeout == 59
+        assert p3._nthreads == 2
+        p4 = FCPath(p3, FCPath('e'))
+        assert str(p4) == 'a/c/e'
+        assert p4._filecache is fc
+        assert p4._anonymous
+        assert p4._lock_timeout == 59
+        assert p4._nthreads == 2
+        p5 = FCPath(str(p3), FCPath('e'))
+        assert str(p5) == 'a/c/e'
+        assert p5._filecache is not fc
+        assert not p5._anonymous
+        assert p5._lock_timeout is None
+        assert p5._nthreads is None
 
 
 def test_truediv():
