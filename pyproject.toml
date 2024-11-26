@@ -12,7 +12,8 @@ dependencies = [
   "boto3",
   "filelock",
   "google-cloud-storage",
-  "requests"
+  "requests",
+  "typing_extensions"
 ]
 license = {text = "Apache-2.0"}
 maintainers = [
