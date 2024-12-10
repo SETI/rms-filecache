@@ -51,6 +51,9 @@ Issues = "https://github.com/SETI/rms-filecache/issues"
 [tool.setuptools]
 packages = ["filecache"]
 
+[tool.setuptools.package-data]
+"pkgname" = ["py.typed"]
+
 [tool.setuptools_scm]
 local_scheme = "no-local-version"
 write_to = "filecache/_version.py"
