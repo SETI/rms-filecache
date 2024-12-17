@@ -333,7 +333,7 @@ class FileCacheSourceFile(FileCacheSource):
             file.
         """
 
-        local_path_p = Path(local_path).expanduser().resolve()
+        local_path_p = Path(local_path)
 
         if not local_path_p.is_file():
             raise FileNotFoundError(f'File does not exist: {local_path_p}')
@@ -360,7 +360,7 @@ class FileCacheSourceFile(FileCacheSource):
             FileNotFoundError: If the file does not exist.
         """
 
-        local_path_p = Path(local_path).expanduser().resolve()
+        local_path_p = Path(local_path)
 
         if not local_path_p.is_file():
             raise FileNotFoundError(f'File does not exist: {local_path_p}')
@@ -452,7 +452,7 @@ class FileCacheSourceHTTP(FileCacheSource):
             The download is an atomic operation.
         """
 
-        local_path = Path(local_path).expanduser().resolve()
+        local_path = Path(local_path)
 
         url = self._src_prefix_ + sub_path
 
@@ -568,7 +568,7 @@ class FileCacheSourceGS(FileCacheSource):
             The download is an atomic operation.
         """
 
-        local_path = Path(local_path).expanduser().resolve()
+        local_path = Path(local_path)
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -608,7 +608,7 @@ class FileCacheSourceGS(FileCacheSource):
             FileNotFoundError: If the local file does not exist.
         """
 
-        local_path = Path(local_path).expanduser().resolve()
+        local_path = Path(local_path)
 
         if not local_path.exists():
             raise FileNotFoundError(f'File does not exist: {local_path}')
@@ -709,7 +709,7 @@ class FileCacheSourceS3(FileCacheSource):
             The download is an atomic operation.
         """
 
-        local_path = Path(local_path).expanduser().resolve()
+        local_path = Path(local_path)
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -745,7 +745,7 @@ class FileCacheSourceS3(FileCacheSource):
             FileNotFoundError: If the local file does not exist.
         """
 
-        local_path = Path(local_path).expanduser().resolve()
+        local_path = Path(local_path)
 
         self._client.upload_file(str(local_path), self._bucket_name, sub_path)
 

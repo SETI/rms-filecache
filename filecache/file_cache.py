@@ -349,7 +349,7 @@ class FileCache:
                     # file:///dir/file
                     # We have to add the / back on the beginning
                     sub_path = f'/{sub_path}'
-                sub_path = str(Path(sub_path).expanduser().resolve())
+                sub_path = str(Path(sub_path))
             if scheme not in _SCHEME_CLASSES:
                 raise ValueError(f'Unknown scheme {scheme} in {url}')
             return scheme, remote, sub_path
@@ -362,7 +362,7 @@ class FileCache:
                              cache_dir: Path,
                              cache_subdir: str) -> Path:
         if scheme == 'file':
-            return Path(path).expanduser().resolve()
+            return Path(path)
         return cache_dir / cache_subdir / path
 
     def _get_source_and_paths(self,
