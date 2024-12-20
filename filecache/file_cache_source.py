@@ -10,7 +10,7 @@ from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import requests
-from typing import Generator
+from typing import Iterator
 import uuid
 
 import boto3
@@ -122,7 +122,7 @@ class FileCacheSource(ABC):
 
     def _exists_object_parallel(self,
                                 sub_paths: Sequence[str],
-                                nthreads: int) -> Generator[tuple[str, bool]]:
+                                nthreads: int) -> Iterator[tuple[str, bool]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._exists_object, x): x
                                for x in sub_paths}
@@ -185,7 +185,7 @@ class FileCacheSource(ABC):
     def _download_object_parallel(self,
                                   sub_paths: Sequence[str],
                                   local_paths: Sequence[str | Path],
-                                  nthreads: int) -> Generator[
+                                  nthreads: int) -> Iterator[
                                       tuple[str, Path | BaseException]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._download_object, x[0], x[1]): x[0]
@@ -244,8 +244,8 @@ class FileCacheSource(ABC):
     def _upload_object_parallel(self,
                                 sub_paths: Sequence[str],
                                 local_paths: Sequence[str | Path],
-                                nthreads: int) -> Generator[tuple[str,
-                                                                  Path | BaseException]]:
+                                nthreads: int) -> Iterator[tuple[str,
+                                                                 Path | BaseException]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._upload_object, x[0], x[1]): x[0]
                                for x in zip(sub_paths, local_paths)}
@@ -256,6 +256,21 @@ class FileCacheSource(ABC):
                     yield sub_path, future.result()
                 else:
                     yield sub_path, exception
+
+    @abstractmethod
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The path of the directory relative to the source prefix.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored. The bool is True if the
+            returned name is a directory, False if it is a file.
+        """
+        ...  # pragma: no cover
 
 
 class FileCacheSourceFile(FileCacheSource):
@@ -369,6 +384,24 @@ class FileCacheSourceFile(FileCacheSource):
         # correct location.
         return local_path_p
 
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The absolute path of the directory.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored. The bool is True if the
+            returned name is a directory, False if it is a file.
+        """
+
+        sub_path_p = Path(sub_path)
+        for obj_name in sub_path_p.iterdir():
+            is_dir = obj_name.is_dir()
+            yield str(obj_name), is_dir
+
 
 class FileCacheSourceHTTP(FileCacheSource):
     """Class that provides access to files stored on a webserver."""
@@ -412,7 +445,7 @@ class FileCacheSourceHTTP(FileCacheSource):
         """Check if a file exists without downloading it.
 
         Parameters:
-            sub_path: The path of the file on the webserver given by the source prefix.
+            sub_path: The path of the file on the webserver relative to the source prefix.
 
         Returns:
             True if the file (including the webserver) exists. Note that it is possible
@@ -452,6 +485,9 @@ class FileCacheSourceHTTP(FileCacheSource):
             The download is an atomic operation.
         """
 
+        if sub_path == '':
+            raise ValueError('sub_path can not be empty')
+
         local_path = Path(local_path)
 
         url = self._src_prefix_ + sub_path
@@ -480,6 +516,21 @@ class FileCacheSourceHTTP(FileCacheSource):
                sub_path: str,
                local_path: str | Path) -> Path:
         """Upload a local file to a webserver. Not implemented."""
+
+        raise NotImplementedError
+
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The path of the directory on the webserver relative to the source
+                prefix.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored.
+        """
 
         raise NotImplementedError
 
@@ -568,6 +619,9 @@ class FileCacheSourceGS(FileCacheSource):
             The download is an atomic operation.
         """
 
+        if sub_path == '':
+            raise ValueError('sub_path can not be empty')
+
         local_path = Path(local_path)
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -617,6 +671,37 @@ class FileCacheSourceGS(FileCacheSource):
         blob.upload_from_filename(str(local_path))
 
         return local_path
+
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The path of the directory in the Google Storage bucket given
+                by the source prefix.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored.
+        """
+
+        if sub_path:
+            sub_prefix = f'{sub_path}/'
+        else:
+            sub_prefix = None
+        blobs = self._client.list_blobs(self._bucket_name,
+                                        prefix=sub_prefix, delimiter='/')
+
+        # Yield filenames
+        for blob in blobs:
+            if blob.name.rstrip('/') != sub_path:
+                yield f'{self._src_prefix_}{blob.name}', False
+
+        # Yield sub-directories
+        for prefix in blobs.prefixes:
+            prefix = prefix.rstrip('/')
+            if prefix != sub_path:
+                yield f'{self._src_prefix_}{prefix}', True
 
 
 class FileCacheSourceS3(FileCacheSource):
@@ -709,6 +794,9 @@ class FileCacheSourceS3(FileCacheSource):
             The download is an atomic operation.
         """
 
+        if sub_path == '':
+            raise ValueError('sub_path can not be empty')
+
         local_path = Path(local_path)
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -750,3 +838,42 @@ class FileCacheSourceS3(FileCacheSource):
         self._client.upload_file(str(local_path), self._bucket_name, sub_path)
 
         return local_path
+
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The path of the directory in the AWS S3 bucket given by the source
+                prefix.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored.
+        """
+
+        if sub_path:
+            sub_prefix = f'{sub_path}/'
+        else:
+            sub_prefix = ''
+        response = self._client.list_objects_v2(Bucket=self._bucket_name,
+                                                Prefix=sub_prefix, Delimiter='/')
+
+        if response is not None:
+            # Yield filenames
+            contents = response.get('Contents')
+            if contents is not None:
+                for content in contents:
+                    name = content.get('Key')
+                    if name is not None:
+                        if name.rstrip('/') != sub_path:
+                            yield f'{self._src_prefix_}{name}', False
+
+            # Yield sub-directories
+            contents2 = response.get('CommonPrefixes', [])
+            if contents2 is not None:
+                for content2 in contents2:
+                    prefix = content2.get('Prefix')
+                    if prefix is not None:
+                        prefix = str(prefix).rstrip('/')
+                        yield f'{self._src_prefix_}{prefix}', True

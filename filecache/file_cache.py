@@ -17,8 +17,8 @@ import time
 from types import TracebackType
 from typing import (cast,
                     Any,
-                    Generator,
                     IO,
+                    Iterator,
                     Literal,
                     Optional,
                     Type,
@@ -333,8 +333,10 @@ class FileCache:
         elif len(parts) == 2:
             slash_split = parts[1].split('/', maxsplit=1)
             if len(slash_split) != 2:
-                raise ValueError(f'No path after remote: {url}')
-            remote, sub_path = slash_split
+                remote = parts[1]
+                sub_path = ''
+            else:
+                remote, sub_path = slash_split
             scheme = parts[0].lower()
             if scheme == 'file':
                 # All file accesses are absolute
@@ -348,7 +350,8 @@ class FileCache:
                 else:
                     # file:///dir/file
                     # We have to add the / back on the beginning
-                    sub_path = f'/{sub_path}'
+                    if sub_path:
+                        sub_path = f'/{sub_path}'
                 sub_path = str(Path(sub_path))
             if scheme not in _SCHEME_CLASSES:
                 raise ValueError(f'Unknown scheme {scheme} in {url}')
@@ -1248,7 +1251,7 @@ class FileCache:
              anonymous: Optional[bool] = None,
              lock_timeout: Optional[int] = None,
              url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
-             **kwargs: Any) -> Generator[IO[Any]]:
+             **kwargs: Any) -> Iterator[IO[Any]]:
         """Retrieve+open or open+upload a file as a context manager.
 
         If `mode` is a read mode (like ``'r'`` or ``'rb'``) then the file will be first
@@ -1309,6 +1312,65 @@ class FileCache:
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
             self.upload(url, anonymous=anonymous, url_to_path=url_to_path)
+
+    def iterdir(self,
+                url: str | Path,
+                *,
+                anonymous: Optional[bool] = None,
+                ) -> Iterator[str]:
+        """Enumerate the files and sub-directories in a directory.
+
+        This function always accesses a remote location (ignoring the local cache),
+        if appropriate, because there is no way to know if the local cache contains
+        all of the files and sub-directories present in the remote.
+
+        Parameters:
+            url: The URL of the directory, including any source prefix.
+            anonymous: If specified, override the default setting for anonymous access.
+                If True, access cloud resources without specifying credentials. If False,
+                credentials must be initialized in the program's environment.
+
+        Yields:
+            All files and sub-directories in the directory given by the url, in no
+            particular order. Special directories ``.`` and ``..`` are ignored.
+        """
+
+        self._log_debug(f'Iterating directory contents: {url}')
+
+        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None)
+
+        for obj_name, _ in source.iterdir_type(sub_path):
+            yield obj_name
+
+    def iterdir_type(self,
+                     url: str | Path,
+                     *,
+                     anonymous: Optional[bool] = None,
+                     ) -> Iterator[tuple[str, bool]]:
+        """Enumerate the files and sub-dirs in a directory indicating which is a dir.
+
+        This function always accesses a remote location (ignoring the local cache),
+        if appropriate, because there is no way to know if the local cache contains
+        all of the files and sub-directories present in the remote.
+
+        Parameters:
+            url: The URL of the directory, including any source prefix.
+            anonymous: If specified, override the default setting for anonymous access.
+                If True, access cloud resources without specifying credentials. If False,
+                credentials must be initialized in the program's environment.
+
+        Yields:
+            All files and sub-directories in the directory given by the url, in no
+            particular order. Special directories ``.`` and ``..`` are ignored. The bool
+            is True if the returned name is a directory, False if it is a file.
+        """
+
+        self._log_debug(f'Iterating directory contents: {url}')
+
+        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None)
+
+        for obj_name, is_dir in source.iterdir_type(sub_path):
+            yield obj_name, is_dir
 
     def new_path(self,
                  path: str | Path | FCPath,

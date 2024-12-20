@@ -9,19 +9,10 @@ import pytest
 
 from filecache import FileCache, FCPath
 
-
-ROOT_DIR = Path(__file__).resolve().parent.parent
-TEST_FILES_DIR = ROOT_DIR / 'test_files'
-EXPECTED_DIR = TEST_FILES_DIR / 'expected'
-
-EXPECTED_FILENAMES = ('lorem1.txt',
-                      'subdir1/subdir2a/binary1.bin',
-                      'subdir1/lorem1.txt',
-                      'subdir1/subdir2b/binary1.bin')
-LIMITED_FILENAMES = EXPECTED_FILENAMES[0:2]
-
-HTTP_TEST_ROOT = 'https://storage.googleapis.com/rms-filecache-tests'
-GS_WRITABLE_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests-writable'
+from tests.test_file_cache import (INDEXABLE_PREFIXES,
+                                   EXPECTED_FILENAMES,
+                                   GS_WRITABLE_TEST_BUCKET_ROOT
+                                   )
 
 
 def test__split_parts():
@@ -642,6 +633,97 @@ def test_operations_relative_paths():
         p.upload('d')
     with pytest.raises(ValueError):
         p.upload(['d', 'e'])
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_walk(prefix):
+    prefix = str(prefix)
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix, nthreads=23)
+        results = []
+        for path, dirs, files in pfx1.walk():
+            assert path._nthreads == 23
+            dirs.sort()
+            files.sort()
+            results.append((str(path), dirs, files))
+        assert len(results) == 4
+        assert results[0] == (prefix, ['subdir1'], ['lorem1.txt'])
+        assert results[1] == (f'{prefix}/subdir1',
+                              ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+        if results[2][0].endswith('2a'):
+            assert results[2] == (f'{prefix}/subdir1/subdir2a',
+                                [], ['binary1.bin'])
+            assert results[3] == (f'{prefix}/subdir1/subdir2b',
+                                [], ['binary1.bin'])
+        else:
+            assert results[3] == (f'{prefix}/subdir1/subdir2a',
+                                [], ['binary1.bin'])
+            assert results[2] == (f'{prefix}/subdir1/subdir2b',
+                                [], ['binary1.bin'])
+
+        prefix2 = f'{prefix}/subdir1'
+        pfx2 = fc.new_path(prefix2, nthreads=32)
+        results = []
+        for path, dirs, files in pfx2.walk():
+            assert path._nthreads == 32
+            dirs.sort()
+            files.sort()
+            results.append((str(path), dirs, files))
+        results.sort()
+        print(results)
+        assert len(results) == 3
+        assert results[0] == (prefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+        if results[1][0].endswith('2a'):
+            assert results[1] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
+            assert results[2] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
+        else:
+            assert results[2] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
+            assert results[1] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_walk_topdown(prefix):
+    prefix = str(prefix)
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix, nthreads=23)
+        results = []
+        for path, dirs, files in pfx1.walk(top_down=False):
+            assert path._nthreads == 23
+            dirs.sort()
+            files.sort()
+            results.append((str(path), dirs, files))
+        assert len(results) == 4
+        print(results)
+        assert results[3] == (prefix, ['subdir1'], ['lorem1.txt'])
+        assert results[2] == (f'{prefix}/subdir1',
+                              ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+        if results[1][0].endswith('2a'):
+            assert results[1] == (f'{prefix}/subdir1/subdir2a',
+                                  [], ['binary1.bin'])
+            assert results[0] == (f'{prefix}/subdir1/subdir2b',
+                                  [], ['binary1.bin'])
+        else:
+            assert results[0] == (f'{prefix}/subdir1/subdir2a',
+                                  [], ['binary1.bin'])
+            assert results[1] == (f'{prefix}/subdir1/subdir2b',
+                                  [], ['binary1.bin'])
+
+        prefix2 = f'{prefix}/subdir1'
+        pfx2 = fc.new_path(prefix2, nthreads=32)
+        results = []
+        for path, dirs, files in pfx2.walk(top_down=False):
+            assert path._nthreads == 32
+            dirs.sort()
+            files.sort()
+            results.append((str(path), dirs, files))
+        assert len(results) == 3
+        assert results[2] == (prefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+        if results[1][0].endswith('2a'):
+            assert results[1] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
+            assert results[0] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
+        else:
+            assert results[0] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
+            assert results[1] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
 
 
 def test_bad_threads():

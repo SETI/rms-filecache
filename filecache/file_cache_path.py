@@ -11,7 +11,7 @@ import contextlib
 from pathlib import Path
 from typing import (cast,
                     Any,
-                    Generator,
+                    Iterator,
                     IO,
                     Optional,
                     TYPE_CHECKING)
@@ -919,7 +919,7 @@ class FCPath:
              mode: str = 'r',
              *args: Any,
              url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
-             **kwargs: Any) -> Generator[IO[Any]]:
+             **kwargs: Any) -> Iterator[IO[Any]]:
         """Retrieve+open or open+upload a file as a context manager.
 
         If `mode` is a read mode (like ``'r'`` or ``'rb'``) then the file will be first
@@ -1016,30 +1016,42 @@ class FCPath:
         with self.open(mode='w', **kwargs) as f:
             return f.write(data)
 
-    # def iterdir(self):  # XXX
-    #     """Yield path objects of the directory contents.
+    def iterdir(self) -> Iterator[FCPath]:
+        """Yield path objects of the directory contents.
 
-    #     The children are yielded in arbitrary order, and the
-    #     special entries '.' and '..' are not included.
-    #     """
-    #     raise NotImplementedError
+        The children are yielded in arbitrary order, and the
+        special entries '.' and '..' are not included.
+        """
 
-    # def _glob_selector(self, parts):  # XXX
-    #     return
-    #     # if case_sensitive is None:
-    #     #     case_sensitive = True
-    #     #     case_pedantic = False
-    #     # else:
-    #     #     # The user has expressed a case sensitivity choice, but we don't
-    #     #     # know the case sensitivity of the underlying filesystem, so we
-    #     #     # must use scandir() for everything, including non-wildcard parts.
-    #     #     case_pedantic = True
-    #     # recursive = True if recurse_symlinks else _no_recurse_symlinks
-    #     # globber = self._globber(self.parser.sep, case_sensitive, case_pedantic,
-    #     # recursive)
-    #     # return globber.selector(parts)
+        for obj in self._filecache_to_use.iterdir(self._path):
+            yield FCPath(obj, copy_from=self)
 
-    # def glob(self, pattern):  # XXX
+    def iterdir_type(self) -> Iterator[tuple[FCPath, bool]]:
+        """Yield path objects of the directory contents, indicating which is a dir.
+
+        The children are yielded in arbitrary order, and the
+        special entries '.' and '..' are not included.
+        """
+
+        for obj, is_dir in self._filecache_to_use.iterdir_type(self._path):
+            yield FCPath(obj, copy_from=self), is_dir
+
+    # def _glob_selector(self, parts):
+    #     if case_sensitive is None:
+    #         case_sensitive = True
+    #         case_pedantic = False
+    #     else:
+    #         # The user has expressed a case sensitivity choice, but we don't
+    #         # know the case sensitivity of the underlying filesystem, so we
+    #         # must use scandir() for everything, including non-wildcard parts.
+    #         case_pedantic = True
+    #     recursive = True if recurse_symlinks else _no_recurse_symlinks
+    #     globber = self._globber(self.parser.sep, case_sensitive, case_pedantic,
+    #     recursive)
+    #     return globber.selector(parts)
+
+    # def glob(self,
+    #          pattern: str | Path | FCPath):
     #     """Iterate over this subtree and yield all existing files (of any
     #     kind, including directories) matching the given relative pattern.
     #     """
@@ -1051,7 +1063,8 @@ class FCPath:
     #     select = self._glob_selector(parts)
     #     return select(self)
 
-    # def rglob(self, pattern):  # XXX
+    # def rglob(self,
+    #           pattern: str | Path | FCPath):
     #     """Recursively yield all existing files (of any kind, including
     #     directories) matching the given relative pattern, anywhere in
     #     this subtree.
@@ -1061,39 +1074,30 @@ class FCPath:
     #     pattern = '**' / pattern
     #     return self.glob(pattern)
 
-    # def walk(self, top_down=True, on_error=None, follow_symlinks=False):  # XXX
-    #     """Walk the directory tree from this directory, similar to os.walk()."""
-    #     paths: list[FCPath | tuple[FCPath, list[str], list[str]]] = [self]
-    #     while paths:
-    #         path = paths.pop()
-    #         if isinstance(path, tuple):
-    #             yield path
-    #             continue
-    #         dirnames: list[str] = []
-    #         filenames: list[str] = []
-    #         if not top_down:
-    #             paths.append((path, dirnames, filenames))
-    #         try:
-    #             for child in path.iterdir():
-    #                 try:
-    #                     if child.is_dir(follow_symlinks=follow_symlinks):
-    #                         if not top_down:
-    #                             paths.append(child)
-    #                         dirnames.append(child.name)
-    #                     else:
-    #                         filenames.append(child.name)
-    #                 except OSError:
-    #                     filenames.append(child.name)
-    #         except OSError as error:
-    #             if on_error is not None:
-    #                 on_error(error)
-    #             if not top_down:
-    #                 while not isinstance(paths.pop(), tuple):
-    #                     pass
-    #             continue
-    #         if top_down:
-    #             yield path, dirnames, filenames
-    #             paths += [path.joinpath(d) for d in reversed(dirnames)]
+    def walk(self,
+             top_down: bool = True
+             ) -> Iterator[tuple[FCPath, list[str], list[str]]]:
+        """Walk the directory tree from this directory, similar to os.walk()."""
+        paths: list[FCPath | tuple[FCPath, list[str], list[str]]] = [self]
+        while paths:
+            path = paths.pop()
+            if isinstance(path, tuple):
+                yield path
+                continue
+            dirnames: list[str] = []
+            filenames: list[str] = []
+            if not top_down:
+                paths.append((path, dirnames, filenames))
+            for child, is_dir in path.iterdir_type():
+                if is_dir:
+                    if not top_down:
+                        paths.append(child)
+                    dirnames.append(child.name)
+                else:
+                    filenames.append(child.name)
+            if top_down:
+                yield path, dirnames, filenames
+                paths += [path.joinpath(d) for d in reversed(dirnames)]
 
     def rename(self,
                target: str | FCPath) -> None:

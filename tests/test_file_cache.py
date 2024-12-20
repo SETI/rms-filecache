@@ -46,6 +46,8 @@ GS_WRITABLE_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests-writable'
 S3_WRITABLE_TEST_BUCKET_ROOT = 's3://rms-filecache-tests-writable'
 WRITABLE_CLOUD_PREFIXES = (GS_WRITABLE_TEST_BUCKET_ROOT, S3_WRITABLE_TEST_BUCKET_ROOT)
 
+INDEXABLE_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
+
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
@@ -1895,6 +1897,54 @@ def test_url_bad():
             fc.retrieve('bad://bad-bucket/file.txt')
         with pytest.raises(ValueError):
             fc.retrieve('bad://non-existent.txt')
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_iterdir(prefix):
+    with FileCache(anonymous=True) as fc:
+        objs = sorted(list(fc.iterdir(prefix)))
+        assert objs == [f'{prefix}/lorem1.txt', f'{prefix}/subdir1']
+        objs = sorted(list(fc.iterdir(f'{prefix}/subdir1')))
+        assert objs == [f'{prefix}/subdir1/lorem1.txt',
+                        f'{prefix}/subdir1/subdir2a',
+                        f'{prefix}/subdir1/subdir2b']
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_iterdir_type(prefix):
+    with FileCache(anonymous=True) as fc:
+        objs = sorted(list(fc.iterdir_type(prefix)))
+        assert objs == [(f'{prefix}/lorem1.txt', False), (f'{prefix}/subdir1', True)]
+        objs = sorted(list(fc.iterdir_type(f'{prefix}/subdir1')))
+        assert objs == [(f'{prefix}/subdir1/lorem1.txt', False),
+                        (f'{prefix}/subdir1/subdir2a', True),
+                        (f'{prefix}/subdir1/subdir2b', True)]
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_iterdir_pfx(prefix):
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix)
+        objs = sorted([str(x) for x in pfx1.iterdir()])
+        assert objs == [f'{prefix}/lorem1.txt', f'{prefix}/subdir1']
+        pfx2 = fc.new_path(f'{prefix}/subdir1')
+        objs = sorted([str(x) for x in pfx2.iterdir()])
+        assert objs == [f'{prefix}/subdir1/lorem1.txt',
+                        f'{prefix}/subdir1/subdir2a',
+                        f'{prefix}/subdir1/subdir2b']
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_iterdir_type_pfx(prefix):
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix)
+        objs = sorted([(str(x), y) for x, y in pfx1.iterdir_type()])
+        assert objs == [(f'{prefix}/lorem1.txt', False), (f'{prefix}/subdir1', True)]
+        pfx2 = fc.new_path(f'{prefix}/subdir1')
+        objs = sorted([(str(x), y) for x, y in pfx2.iterdir_type()])
+        assert objs == [(f'{prefix}/subdir1/lorem1.txt', False),
+                        (f'{prefix}/subdir1/subdir2a', True),
+                        (f'{prefix}/subdir1/subdir2b', True)]
 
 
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
