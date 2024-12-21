@@ -493,7 +493,7 @@ def test_local_retr_pfx_good(cache_name):
     for pass_no in range(5):  # Make sure the expected dir doesn't get modified
         with FileCache(cache_name=cache_name) as fc:
             lf = fc.new_path(EXPECTED_DIR)
-            assert lf.is_local
+            assert lf.is_local()
             for filename in EXPECTED_FILENAMES:
                 path = lf.retrieve(filename)
                 assert str(path).replace('\\', '/') == \
@@ -533,7 +533,7 @@ def test_cloud_retr_good(cache_name, prefix):
 def test_cloud_retr_pfx_good(cache_name, prefix):
     with FileCache(cache_name=cache_name) as fc:
         pfx = fc.new_path(prefix, anonymous=True)
-        assert not pfx.is_local
+        assert not pfx.is_local()
         for filename in LIMITED_FILENAMES:
             path = pfx.retrieve(filename)
             assert str(path).replace('\\', '/').endswith(filename)

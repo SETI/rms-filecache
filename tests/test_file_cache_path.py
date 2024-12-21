@@ -2,14 +2,15 @@
 # tests/test_file_cache_path.py
 ################################################################################
 
-from pathlib import Path
+from pathlib import Path, PurePath
 import uuid
 
 import pytest
 
 from filecache import FileCache, FCPath
 
-from tests.test_file_cache import (INDEXABLE_PREFIXES,
+from tests.test_file_cache import (GS_TEST_BUCKET_ROOT,
+                                   INDEXABLE_PREFIXES,
                                    EXPECTED_FILENAMES,
                                    GS_WRITABLE_TEST_BUCKET_ROOT
                                    )
@@ -163,6 +164,13 @@ def test__str():
     assert str(FCPath('a/b')) == 'a/b'
     assert str(FCPath(Path('a/b'))) == 'a/b'
     assert str(FCPath(r'\a\b')) == '/a/b'
+
+
+def test_as_pathlib():
+    assert isinstance(FCPath('a/b').as_pathlib(), PurePath)
+    assert FCPath('a/b').as_pathlib() == Path('a/b')
+    with pytest.raises(ValueError):
+        FCPath('gs://x/a').as_pathlib()
 
 
 def test_as_posix():
@@ -500,6 +508,13 @@ def test_match():
     assert not p.match('/abc/def')
     assert p.match('/ABC/def')
     assert not p.match('/zz/abc/def')
+    p = FCPath('a/b/c.py')
+    assert not p.match('a/**')
+    assert not p.match('a/*')
+    assert p.match('**/*.py')
+    assert p.match('*.py')
+    assert p.match('b/*.py')
+    assert not p.match('a/*.py')
     p = FCPath('C:/a/b')
     assert p.match('b')
     assert p.match('a/b')
@@ -527,6 +542,7 @@ def test_full_match():
     assert not p.full_match('*f')
     assert not p.full_match('c/def')
     assert not p.full_match('/*f')
+    assert not p.full_match('')
     assert p.full_match('*/*f')
     assert not p.full_match('/def')
     assert not p.full_match('/*/def')
@@ -546,6 +562,14 @@ def test_full_match():
     assert not p.full_match('/abc/def')
     assert not p.full_match('abc/def')
     assert p.full_match('ABC/def')
+    p = FCPath('a/b/c.py')
+    assert p.full_match('a/**')
+    assert not p.full_match('a/*')
+    assert p.full_match('**/*.py')
+    assert not p.full_match('*.py')
+    assert not p.full_match('*.py')
+    assert not p.full_match('b/*.py')
+    assert not p.full_match('a/*.py')
     p = FCPath('C:/a/b')
     assert not p.full_match('b')
     assert not p.full_match('a/b')
@@ -652,14 +676,14 @@ def test_walk(prefix):
                               ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[2][0].endswith('2a'):
             assert results[2] == (f'{prefix}/subdir1/subdir2a',
-                                [], ['binary1.bin'])
+                                  [], ['binary1.bin'])
             assert results[3] == (f'{prefix}/subdir1/subdir2b',
-                                [], ['binary1.bin'])
+                                  [], ['binary1.bin'])
         else:
             assert results[3] == (f'{prefix}/subdir1/subdir2a',
-                                [], ['binary1.bin'])
+                                  [], ['binary1.bin'])
             assert results[2] == (f'{prefix}/subdir1/subdir2b',
-                                [], ['binary1.bin'])
+                                  [], ['binary1.bin'])
 
         prefix2 = f'{prefix}/subdir1'
         pfx2 = fc.new_path(prefix2, nthreads=32)
@@ -693,7 +717,6 @@ def test_walk_topdown(prefix):
             files.sort()
             results.append((str(path), dirs, files))
         assert len(results) == 4
-        print(results)
         assert results[3] == (prefix, ['subdir1'], ['lorem1.txt'])
         assert results[2] == (f'{prefix}/subdir1',
                               ['subdir2a', 'subdir2b'], ['lorem1.txt'])
@@ -724,6 +747,71 @@ def test_walk_topdown(prefix):
         else:
             assert results[0] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
             assert results[1] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('pattern', (
+    (
+        ('',
+         '*',
+         ['lorem1.txt', 'subdir1']),
+        ('',
+         '*i*',
+         ['subdir1']),
+        ('/subdir1',
+         '*',
+         ['lorem1.txt', 'subdir2a', 'subdir2b']),
+        ('/subdir1',
+         '**/*',  # Behavior of "**" changed in 3.13
+         ['lorem1.txt',
+          'subdir2a', 'subdir2a/binary1.bin',
+          'subdir2b', 'subdir2b/binary1.bin']),
+        ('/subdir1',
+         'lorem1.txt',
+         ['lorem1.txt']),
+        ('/subdir1',
+         'lo[mnopqrs]e[g-q]1.*',
+         ['lorem1.txt']),
+        ('/subdir1',
+         'l*??.t??',
+         ['lorem1.txt']),
+        ('/subdir1',
+         'l*??.t?',
+         []),
+        ('/subdir1',
+         'l[a-c]rem1.txt',
+         [])
+    )
+))
+def test_glob(prefix, pattern):
+    prefix = str(f'{prefix}{pattern[0]}')
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix)
+        if prefix.startswith('gs://'):
+            results = list(pfx1.glob(pattern[1]))
+        else:
+            results = list(pfx1.glob(FCPath(pattern[1])))
+        results = sorted([x.path.replace(prefix, '').lstrip('/') for x in results])
+        assert results == pattern[2]
+
+
+def test_glob_fail():
+    list(FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b').glob('a/b'))
+    with pytest.raises(NotImplementedError):
+        list(FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b').glob('/a/b'))
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_rglob(prefix):
+    with FileCache(anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        if str(prefix).startswith('gs://'):
+            results = list(pfx.rglob('binary1.bin'))
+        else:
+            results = list(pfx.rglob(FCPath('binary1.bin')))
+        results = sorted([x.path.replace(str(prefix), '').lstrip('/') for x in results])
+        assert results == ['subdir1/subdir2a/binary1.bin',
+                           'subdir1/subdir2b/binary1.bin']
 
 
 def test_bad_threads():

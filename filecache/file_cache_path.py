@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
-# See cpython/Lib/pathlib/_local.py
-from .my_glob import StringGlobber
-
 import contextlib
+import functools
+import os
 from pathlib import Path
+import re
 from typing import (cast,
                     Any,
+                    Callable,
+                    Generator,
                     Iterator,
                     IO,
                     Optional,
@@ -125,6 +127,7 @@ class FCPath:
             self._nthreads = nthreads
             self._url_to_path = url_to_path
 
+        self._pathlib: Optional[Path] = None
         self._upload_counter = 0
         self._download_counter = 0
 
@@ -279,6 +282,21 @@ class FCPath:
 
     def __str__(self) -> str:
         return self._path
+
+    @property
+    def path(self) -> str:
+        """Return this path as a string."""
+
+        return self._path
+
+    def as_pathlib(self) -> Path:
+        """Return this path as a pathlib Path object."""
+
+        if self._pathlib is None:
+            if not self.is_local():
+                raise ValueError(f'Cannot convert {self} to pathlib.Path')
+            self._pathlib = Path(self._path)
+        return self._pathlib
 
     def as_posix(self) -> str:
         """Return this FCPath as a POSIX path.
@@ -982,7 +1000,6 @@ class FCPath:
         """The number of actual file uploads that have taken place."""
         return self._upload_counter
 
-    @property
     def is_local(self) -> bool:  # XXX
         """A bool indicating whether or not the path refers to the local filesystem."""
         return self._path.startswith('file:///') or '://' not in self._path
@@ -1036,48 +1053,55 @@ class FCPath:
         for obj, is_dir in self._filecache_to_use.iterdir_type(self._path):
             yield FCPath(obj, copy_from=self), is_dir
 
-    # def _glob_selector(self, parts):
-    #     if case_sensitive is None:
-    #         case_sensitive = True
-    #         case_pedantic = False
-    #     else:
-    #         # The user has expressed a case sensitivity choice, but we don't
-    #         # know the case sensitivity of the underlying filesystem, so we
-    #         # must use scandir() for everything, including non-wildcard parts.
-    #         case_pedantic = True
-    #     recursive = True if recurse_symlinks else _no_recurse_symlinks
-    #     globber = self._globber(self.parser.sep, case_sensitive, case_pedantic,
-    #     recursive)
-    #     return globber.selector(parts)
+    def glob(self,
+             pattern: str | Path | FCPath) -> Generator[FCPath]:
+        """Iterate over this subtree and yield all existing files (of any
+        kind, including directories) matching the given relative pattern.
 
-    # def glob(self,
-    #          pattern: str | Path | FCPath):
-    #     """Iterate over this subtree and yield all existing files (of any
-    #     kind, including directories) matching the given relative pattern.
-    #     """
-    #     if not isinstance(pattern, FCPath):
-    #         pattern = FCPath(pattern)
-    #     anchor, parts = pattern._stack
-    #     if anchor:
-    #         raise NotImplementedError("Non-relative patterns are unsupported")
-    #     select = self._glob_selector(parts)
-    #     return select(self)
+XXX
 
-    # def rglob(self,
-    #           pattern: str | Path | FCPath):
-    #     """Recursively yield all existing files (of any kind, including
-    #     directories) matching the given relative pattern, anywhere in
-    #     this subtree.
-    #     """
-    #     if not isinstance(pattern, FCPath):
-    #         pattern = FCPath(pattern)
-    #     pattern = '**' / pattern
-    #     return self.glob(pattern)
+        Notes:
+            If the FCPath is local, then the normal `pathlib.Path.glob()` method is
+            called. If the pattern is only `**`, this function had different behavior
+            before Python 3.13 (only directories returned) and in Python 3.13 and later
+            (both files and directories are returned). In contrast, when the FCPath is
+            remote, we always return all files and directories. To be safe, do not use
+            `**` but instead always use `**/*`.
+        """
+
+        if not isinstance(pattern, FCPath):
+            pattern = FCPath(pattern)
+
+        if pattern.is_absolute():
+            raise NotImplementedError('Non-relative patterns are unsupported')
+
+        if self.is_local():
+            for res in self.as_pathlib().glob(pattern.path):
+                yield FCPath(res, copy_from=self)
+            return
+
+        parts = pattern.path.split('/')
+        select = StringGlobber(recursive=True).selector(parts[::-1])
+        for path in select(self.path):
+            yield FCPath(path, copy_from=self)
+
+    def rglob(self,
+              pattern: str | Path | FCPath) -> Generator[FCPath]:
+        """Recursively yield all existing files (of any kind, including
+        directories) matching the given relative pattern, anywhere in
+        this subtree.
+        """
+
+        if not isinstance(pattern, FCPath):
+            pattern = FCPath(pattern)
+        pattern = '**' / pattern
+        return self.glob(pattern)
 
     def walk(self,
              top_down: bool = True
              ) -> Iterator[tuple[FCPath, list[str], list[str]]]:
         """Walk the directory tree from this directory, similar to os.walk()."""
+
         paths: list[FCPath | tuple[FCPath, list[str], list[str]]] = [self]
         while paths:
             path = paths.pop()
@@ -1269,3 +1293,243 @@ class FCPath:
     def as_uri(self) -> None:
         """Path function not supported by FCPath."""
         raise NotImplementedError
+
+
+def _translate(pat: str,
+               STAR: str,
+               QUESTION_MARK: str) -> list[str]:
+    res: list[str] = []
+    add = res.append
+    i, n = 0, len(pat)
+    while i < n:
+        c = pat[i]
+        i = i+1
+        if c == '*':
+            # compress consecutive `*` into one
+            if (not res) or res[-1] is not STAR:
+                add(STAR)
+        elif c == '?':
+            add(QUESTION_MARK)
+        elif c == '[':
+            j = i
+            if j < n and pat[j] == '!':
+                j = j+1
+            if j < n and pat[j] == ']':
+                j = j+1
+            while j < n and pat[j] != ']':
+                j = j+1
+            if j >= n:
+                add('\\[')
+            else:
+                stuff = pat[i:j]
+                if '-' not in stuff:
+                    stuff = stuff.replace('\\', r'\\')
+                else:
+                    chunks = []
+                    k = i+2 if pat[i] == '!' else i+1
+                    while True:
+                        k = pat.find('-', k, j)
+                        if k < 0:
+                            break
+                        chunks.append(pat[i:k])
+                        i = k+1
+                        k = k+3
+                    chunk = pat[i:j]
+                    if chunk:
+                        chunks.append(chunk)
+                    else:
+                        chunks[-1] += '-'
+                    # Remove empty ranges -- invalid in RE.
+                    for k in range(len(chunks)-1, 0, -1):
+                        if chunks[k-1][-1] > chunks[k][0]:
+                            chunks[k-1] = chunks[k-1][:-1] + chunks[k][1:]
+                            del chunks[k]
+                    # Escape backslashes and hyphens for set difference (--).
+                    # Hyphens that create ranges shouldn't be escaped.
+                    stuff = '-'.join(s.replace('\\', r'\\').replace('-', r'\-')
+                                     for s in chunks)
+                # Escape set operations (&&, ~~ and ||).
+                stuff = re.sub(r'([&~|])', r'\\\1', stuff)
+                i = j+1
+                if not stuff:
+                    # Empty range: never match.
+                    add('(?!)')
+                elif stuff == '!':
+                    # Negated empty range: match any character.
+                    add('.')
+                else:
+                    if stuff[0] == '!':
+                        stuff = '^' + stuff[1:]
+                    elif stuff[0] in ('^', '['):
+                        stuff = '\\' + stuff
+                    add(f'[{stuff}]')
+        else:
+            add(re.escape(c))
+    assert i == n
+    return res
+
+
+magic_check = re.compile('([*?[])')
+magic_check_bytes = re.compile(b'([*?[])')
+
+
+def translate(pat: str,
+              *,
+              recursive: bool = False) -> str:
+    """Translate a pathname with shell wildcards to a regular expression.
+
+    If `recursive` is true, the pattern segment '**' will match any number of
+    path segments.
+    """
+    not_sep = '[^/]'
+    one_last_segment = f'[^/.]{not_sep}*'
+    one_segment = f'{one_last_segment}/'
+    any_segments = f'(?:{one_segment})*'
+    any_last_segments = f'{any_segments}(?:{one_last_segment})?'
+
+    results = []
+    parts = re.split('/', pat)
+    last_part_idx = len(parts) - 1
+    for idx, part in enumerate(parts):
+        if part == '*':
+            results.append(one_segment if idx < last_part_idx else one_last_segment)
+        elif recursive and part == '**':
+            if idx < last_part_idx:
+                if parts[idx + 1] != '**':
+                    results.append(any_segments)
+            else:
+                results.append(any_last_segments)
+        else:
+            if part:
+                if part[0] in '*?':
+                    results.append(r'(?!\.)')
+                results.extend(_translate(part, f'{not_sep}*', not_sep))
+            if idx < last_part_idx:
+                results.append('/')
+    res = ''.join(results)
+    return fr'(?s:{res})\Z'
+
+
+@functools.lru_cache(maxsize=512)
+def _compile_pattern(pat: str,
+                     recursive: bool = True) -> Any:
+    """Compile given glob pattern to a re.Pattern object (observing case
+    sensitivity)."""
+    regex = translate(pat, recursive=recursive)
+    return re.compile(regex).match
+
+
+class StringGlobber:
+    """Class providing shell-style pattern matching and globbing.
+    """
+
+    def __init__(self,
+                 recursive: bool = False) -> None:
+        self.recursive = recursive
+
+    # High-level methods
+
+    def compile(self,
+                pat: str) -> Any:
+        return _compile_pattern(pat, self.recursive)
+
+    def selector(self,
+                 parts: list[str]) -> Any:
+        """Returns a function that selects from a given path, walking and
+        filtering according to the glob-style pattern parts in *parts*.
+        """
+        if not parts:
+            return self.select_exists
+        part = parts.pop()
+        if self.recursive and part == '**':
+            selector = self.recursive_selector
+        else:
+            selector = self.wildcard_selector
+        return selector(part, parts)
+
+    def wildcard_selector(self,
+                          part: str,
+                          parts: list[str]) -> Callable[[str, bool], Generator[FCPath]]:
+        """Returns a function that selects direct children of a given path,
+        filtering by pattern.
+        """
+
+        match = None if part == '*' else self.compile(part)
+        dir_only = bool(parts)
+        if dir_only:
+            select_next = self.selector(parts)
+
+        def select_wildcard(path: str,
+                            exists: bool = False) -> Generator[FCPath]:
+            entries = list(FCPath(path).iterdir_type())
+            for entry, dir in entries:
+                if match is None or match(entry.name):
+                    if dir_only and not dir:
+                        continue
+                    if dir_only:
+                        yield from select_next(entry, exists=True)
+                    else:
+                        yield entry
+        return select_wildcard
+
+    def recursive_selector(self,
+                           part: str,
+                           parts: list[str]) -> Callable[[str, bool], Generator[FCPath]]:
+        """Returns a function that selects a given path and all its children,
+        recursively, filtering by pattern.
+        """
+        # Optimization: consume following '**' parts, which have no effect.
+        while parts and parts[-1] == '**':
+            parts.pop()
+
+        # Optimization: consume and join any following non-special parts here,
+        # rather than leaving them for the next selector. They're used to
+        # build a regular expression, which we use to filter the results of
+        # the recursive walk. As a result, non-special pattern segments
+        # following a '**' wildcard don't require additional filesystem access
+        # to expand.
+        match = None if part == '**' else self.compile(part)
+        dir_only = bool(parts)
+        select_next = self.selector(parts)
+
+        def select_recursive(path: str,
+                             exists: bool = False) -> Generator[FCPath]:
+            if path and path[-1] != '/':
+                path = f'{path}/'
+            match_pos = len(str(path))
+            if match is None or match(str(path), match_pos):
+                yield from select_next(path, exists)
+            stack = [path]
+            while stack:
+                yield from select_recursive_step(stack, match_pos)
+
+        def select_recursive_step(stack: list[str],
+                                  match_pos: int) -> Generator[Any]:
+            path = stack.pop()
+            entries = list(FCPath(path).iterdir_type())
+            for entry, is_dir in entries:
+                if is_dir or not dir_only:
+                    if match is None or match(str(entry), match_pos):
+                        if dir_only:
+                            yield from select_next(entry, exists=True)
+                        else:
+                            # Optimization: directly yield the path if this is
+                            # last pattern part.
+                            yield entry
+                    if is_dir:
+                        stack.append(entry.path)
+
+        return select_recursive
+
+    def select_exists(self,
+                      path: str,
+                      exists: bool = False) -> Generator[str]:
+        """Yields the given path, if it exists.
+        """
+        if exists:
+            # Optimization: this path is already known to exist, e.g. because
+            # it was returned from os.iterdir(), so we skip calling exists().
+            yield path
+        else:
+            if FCPath(path).exists():
+                yield path
