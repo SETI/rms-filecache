@@ -8,6 +8,7 @@ from __future__ import annotations
 from .my_glob import StringGlobber
 
 import contextlib
+import os
 from pathlib import Path
 from typing import (cast,
                     Any,
@@ -1024,6 +1025,16 @@ class FCPath:
     #     """
     #     raise NotImplementedError
 
+    def iterdir(self):
+        """Yield path objects of the directory contents.
+
+        The children are yielded in arbitrary order, and the
+        special entries '.' and '..' are not included.
+        """
+        if self.is_local():
+            return self.get_local_path.iterdir()
+        raise NotImplementedError('FCPath.iterdir')
+
     # def _glob_selector(self, parts):  # XXX
     #     return
     #     # if case_sensitive is None:
@@ -1051,6 +1062,14 @@ class FCPath:
     #     select = self._glob_selector(parts)
     #     return select(self)
 
+    def glob(self, pattern, *, case_sensitive=None):
+        """Iterate over this subtree and yield all existing files (of any
+        kind, including directories) matching the given relative pattern.
+        """
+        if self.is_local():
+            return Path(self._path).glob(str(pattern), case_sensitive=case_sensitive)
+        raise NotImplementedError('FCPath.glob')
+
     # def rglob(self, pattern):  # XXX
     #     """Recursively yield all existing files (of any kind, including
     #     directories) matching the given relative pattern, anywhere in
@@ -1060,6 +1079,15 @@ class FCPath:
     #         pattern = FCPath(pattern)
     #     pattern = '**' / pattern
     #     return self.glob(pattern)
+
+    def rglob(self, pattern, *, case_sensitive=None):
+        """Recursively yield all existing files (of any kind, including
+        directories) matching the given relative pattern, anywhere in
+        this subtree.
+        """
+        if self.is_local():
+            return Path(self._path).rglob(str(pattern), case_sensitive=case_sensitive)
+        raise NotImplementedError('FCPath.rglob')
 
     # def walk(self, top_down=True, on_error=None, follow_symlinks=False):  # XXX
     #     """Walk the directory tree from this directory, similar to os.walk()."""
@@ -1095,8 +1123,15 @@ class FCPath:
     #             yield path, dirnames, filenames
     #             paths += [path.joinpath(d) for d in reversed(dirnames)]
 
+    def walk(self, top_down=True, on_error=None, follow_symlinks=False):
+        """Walk the directory tree from this directory, similar to os.walk()."""
+        if self.is_local():
+            return Path(self._path).walk(top_down=top_down, on_error=on_error,
+                                         follow_symlinks=follow_symlinks)
+        raise NotImplementedError('FCPath.walk')
+
     def rename(self,
-               target: str | FCPath) -> None:
+               target: str | Path | FCPath) -> None:
         """
         Rename this path to the target path.
 
@@ -1106,9 +1141,13 @@ class FCPath:
 
         Returns the new Path instance pointing to the target path.
         """
-        raise NotImplementedError
+        target = FCPath(target)
+        self.retrieve().rename(target.get_local_path())
+        target.upload()
+        self.unlink()
+        return target
 
-    def replace(self, target: str | FCPath) -> None:
+    def replace(self, target: str | Path | FCPath) -> None:
         """
         Rename this path to the target path, overwriting if that path exists.
 
@@ -1118,150 +1157,233 @@ class FCPath:
 
         Returns the new Path instance pointing to the target path.
         """
-        raise NotImplementedError
+        self.rename(target)
 
     # Operations not supported by FCPath
 
-    def relative_to(self, other: str) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def relative_to(self, other: str | Path | FCPath) -> FCPath:
+        """Return the relative path to another path identified by the passed
+        arguments.  If the operation is not possible (because this is not
+        related to the other path), raise ValueError.
 
-    def is_relative_to(self, other: str) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        The *walk_up* parameter controls whether `..` may be used to resolve
+        the path.
+        """
+        if self.is_local():
+            other = FCPath(other)
+            return FCPath(self.get_local_path().relative_to(other.get_local_path()))
+        raise NotImplementedError('FCPath.relative_to')
 
-    def stat(self, *, follow_symlinks: bool = True) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_relative_to(self, other: str | Path | FCPath) -> bool:
+        """Return True if the path is relative to another path or False."""
+        if self.is_local():
+            other = FCPath(other)
+            return self.get_local_path().is_relative_to(other.get_local_path())
+        raise NotImplementedError('FCPath.is_relative_to')
 
-    def lstat(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def stat(self, *, follow_symlinks: bool = True) -> os.stat_result:
+        """Return the result of the stat() system call on this path, like
+        os.stat() does.
+        """
+        return self.retrieve().stat(follow_symlinks=follow_symlinks)
 
-    def is_dir(self, *, follow_symlinks: bool = True) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def lstat(self) -> os.stat_result:
+        """Like stat(), except if the path points to a symlink, the symlink's
+        status information is returned, rather than its target's.
+        """
+        return self.retrieve().lstat()
 
-    def is_mount(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+        """Whether this path is a directory."""
+        if self.is_local():
+            return Path(self._path).is_dir(follow_symlinks=follow_symlinks)
+        raise NotImplementedError('FCPath.is_dir')
 
-    def is_symlink(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_mount(self) -> bool:
+        """Check if this path is a mount point."""
+        if self.is_local():
+            return Path(self._path).is_mount()
+        return False
 
-    def is_junction(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_symlink(self) -> bool:
+        """Whether this path is a symbolic link."""
+        if self.is_local():
+            return Path(self._path).is_symlink()
+        return False
 
-    def is_block_device(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_junction(self) -> bool:
+        """Whether this path is a junction."""
+        return self.retrieve().is_junction()
 
-    def is_char_device(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_block_device(self) -> bool:
+        """Whether this path is a block device."""
+        return self.retrieve().is_block_device()
 
-    def is_fifo(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_char_device(self) -> bool:
+        """Whether this path is a character device."""
+        return self.retrieve().is_char_device()
 
-    def is_socket(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_fifo(self) -> bool:
+        """Whether this path is a FIFO."""
+        return self.retrieve().is_fifo()
 
-    def samefile(self, other_path: Path) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def is_socket(self) -> bool:
+        """Whether this path is a socket."""
+        if self.is_local():
+            return Path(self._path).is_socket()
+        return False
 
-    def absolute(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def samefile(self, other_path: str | Path | FCPath) -> bool:
+        """Return whether other_path is the same or not as this file
+        (as returned by os.path.samefile()).
+        """
+        other = FCPath(other_path)
+        return self.get_local_path().samefile(other.get_local_path())
+
+    def absolute(self) -> FCPath:
+        """Return an absolute version of this path by prepending the current
+        working directory. No normalization or symlink resolution is performed.
+
+        Use resolve() to get the canonical path to a file.
+        """
+        if self.is_local():
+            return FCPath(self.get_local_path().absolute())
+        return self
 
     @classmethod
-    def cwd(cls) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def cwd(cls) -> FCPath:
+        """Return a new path pointing to the current working directory."""
+        return FCPath(Path.cwd())
 
-    def expanduser(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def expanduser(self) -> FCPath:
+        """Return a new path with expanded ~ and ~user constructs
+        (as returned by os.path.expanduser)
+        """
+        if self.is_local():
+            return FCPath(self.get_local_path().expanduser())
+        return self
 
     @classmethod
-    def home(cls) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def home(cls) -> FCPath:
+        """Return a new path pointing to the user's home directory (as
+        returned by os.path.expanduser('~')).
+        """
+        return FCPath(Path.home())
 
-    def readlink(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def readlink(self) -> FCPath:
+        """Return the path to which the symbolic link points."""
+        if self.is_local():
+            return FCPath(self.get_local_path().readlink())
+        return self     # no symlinks, so it points to itself
 
     def resolve(self,
-                strict: bool = False) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+                strict: bool = False) -> FCPath:
+        """Make the path absolute, resolving all symlinks on the way and also
+        normalizing it.
+        """
+        if self.is_local():
+            return FCPath(self.get_local_path().resolve(strict=strict))
+        return self
 
     def symlink_to(self,
-                   target: str,
+                   target: str | Path | FCPath,
                    target_is_directory: bool = False) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Make this path a symlink pointing to the target path.
+        Note the order of arguments (link, target) is the reverse of os.symlink.
+        """
+        if self.is_local():
+            target_fcpath = FCPath(target)
+            Path(self._path).symlink_to(target=target_fcpath.get_local_path(),
+                                        target_is_directory=target_is_directory)
+        raise NotImplementedError('FCPath.symlink_to')
 
     def hardlink_to(self,
-                    target: str) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+                    target: str | Path | FCPath) -> None:
+        """Make this path a hard link pointing to the same file as *target*.
+
+        Note the order of arguments (self, target) is the reverse of os.link's.
+        """
+        if self.is_local():
+            target_fcpath = FCPath(target)
+            Path(self._path).hardlink_to(target=target_fcpath.get_local_path())
+        raise NotImplementedError('FCPath.hardlink_to')
 
     def touch(self,
               mode: int = 0o666,
               exist_ok: bool = True) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Create this file with the given access mode, if it doesn't exist."""
+        try:
+            local_path = self.retrieve()
+        except FileNotFoundError:
+            local_path = self.get_local_path()
+        local_path.touch(mode=mode, exist_ok=exist_ok)
 
     def mkdir(self,
               mode: int = 0o777,
               parents: bool = False,
               exist_ok: bool = False) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Create a new directory at this given path."""
+        if self.is_local():
+            return      # it'll always exist
+        raise NotImplementedError('FCPath.mkdir')
 
     def chmod(self,
               mode: int,
               *,
               follow_symlinks: bool = True) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Change the permissions of the path, like os.chmod()."""
+        if self.is_local():
+            Path(self._path).chmod(mode=mode, follow_symlinks=follow_symlinks)
+        raise NotImplementedError('FCPath.chmod')
 
     def lchmod(self,
                mode: int) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Like chmod(), except if the path points to a symlink, the symlink's
+        permissions are changed, rather than its target's.
+        """
+        if self.is_local():
+            Path(self._path).lchmod(mode=mode)
+        raise NotImplementedError('FCPath.lchmod')
 
     def unlink(self,
                missing_ok: bool = False) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Remove this file or link.
+        If the path is a directory, use rmdir() instead.
+        """
+        if self.is_local():
+            Path(self._path).unlink(missing_ok=missing_ok)
+        raise NotImplementedError('FCPath.unlink')
 
     def rmdir(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Remove this directory.  The directory must be empty."""
+        if self.is_local():
+            self.rmdir()
+        raise NotImplementedError('FCPath.rmdir')
 
     def owner(self, *,
               follow_symlinks: bool = True) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Return the login name of the file owner."""
+        if self.is_local():
+            return Path(self._path).owner(follow_symlinks=follow_symlinks)
+        raise NotImplementedError('FCPath.owner')
 
     def group(self, *,
               follow_symlinks: bool = True) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+        """Return the group name of the file gid."""
+        if self.is_local():
+            return Path(self._path).group(follow_symlinks=follow_symlinks)
+        raise NotImplementedError('FCPath.group')
 
     @classmethod
     def from_uri(cls,
-                 uri: str) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+                 uri: str) -> FCPath:
+        """Return a new path object from parsing a ‘file’ URI."""
+        if uri.startswith('file://'):
+            return FCPath(Path.from_uri(uri))
+        return FCPath(uri)
 
-    def as_uri(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
+    def as_uri(self) -> str:
+        """Return the path as a 'file' URI."""
+        if self.is_local():
+            return Path(self._path).as_uri()
+        return str(self._path)
