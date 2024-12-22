@@ -9,6 +9,7 @@ import functools
 import os
 from pathlib import Path
 import re
+import sys
 from typing import (cast,
                     Any,
                     Callable,
@@ -1190,30 +1191,51 @@ class FCPath:
 
     # Operations not supported by FCPath
 
-    def relative_to(self,
-                    other: str | Path | FCPath,
-                    *,
-                    walk_up: bool = False) -> FCPath:
-        """Return the relative path to another path identified by the passed
-        arguments.  If the operation is not possible (because this is not
-        related to the other path), raise ValueError.
-        """
+    if sys.version_info >= (3,12):
+        def relative_to(self,
+                        other: str | Path | FCPath,
+                        *,
+                        walk_up: bool = False) -> FCPath:
+            """Return the relative path to another path identified by the passed
+            arguments.  If the operation is not possible (because this is not
+            related to the other path), raise ValueError.
+            """
 
-        if not isinstance(other, FCPath):
-            other = FCPath(other)
+            if not isinstance(other, FCPath):
+                other = FCPath(other)
 
-        if self.is_local():
-            return FCPath(self.as_pathlib().relative_to(other.as_pathlib(),
-                                                        walk_up=walk_up),
-                          copy_from=self)
+            if self.is_local():
+                return FCPath(self.as_pathlib().relative_to(other.as_pathlib(),
+                                                            walk_up=walk_up),
+                              copy_from=self)
 
-        if walk_up:
-            raise NotImplementedError('walk_up is not supported for non-local FCPaths')
+            if walk_up:
+                raise NotImplementedError(
+                    'walk_up is not supported for non-local FCPaths')
 
-        if not self._path.startswith(other._path):
-            raise ValueError(f"{str(self)!r} is not in the subpath of {str(other)!r}")
+            if not self._path.startswith(other._path):
+                raise ValueError(f"{str(self)!r} is not in the subpath of {str(other)!r}")
 
-        return FCPath(self._path[len(other._path)+1:], copy_from=self)
+            return FCPath(self._path[len(other._path)+1:], copy_from=self)
+    else:
+        def relative_to(self,
+                        other: str | Path | FCPath) -> FCPath:
+            """Return the relative path to another path identified by the passed
+            arguments.  If the operation is not possible (because this is not
+            related to the other path), raise ValueError.
+            """
+
+            if not isinstance(other, FCPath):
+                other = FCPath(other)
+
+            if self.is_local():
+                return FCPath(self.as_pathlib().relative_to(other.as_pathlib()),
+                              copy_from=self)
+
+            if not self._path.startswith(other._path):
+                raise ValueError(f"{str(self)!r} is not in the subpath of {str(other)!r}")
+
+            return FCPath(self._path[len(other._path)+1:], copy_from=self)
 
     def is_relative_to(self,
                        other: str | Path | FCPath) -> bool:
@@ -1272,13 +1294,14 @@ class FCPath:
 
         return self.as_pathlib().is_symlink()
 
-    def is_junction(self) -> bool:
-        """Whether this path is a junction."""
+    if sys.version_info >= (3, 12):
+        def is_junction(self) -> bool:
+            """Whether this path is a junction."""
 
-        if not self.is_local():
-            raise NotImplementedError('is_junction on a remote file is not implemented')
+            if not self.is_local():
+                raise NotImplementedError('is_junction on a remote file is not implemented')
 
-        return self.as_pathlib().is_junction()
+            return self.as_pathlib().is_junction()
 
     def is_block_device(self) -> bool:
         """Whether this path is a block device."""
