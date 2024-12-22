@@ -1901,50 +1901,54 @@ def test_url_bad():
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_iterdir(prefix):
+    wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
         objs = sorted(list(fc.iterdir(prefix)))
-        assert objs == [f'{prefix}/lorem1.txt', f'{prefix}/subdir1']
+        assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
         objs = sorted(list(fc.iterdir(f'{prefix}/subdir1')))
-        assert objs == [f'{prefix}/subdir1/lorem1.txt',
-                        f'{prefix}/subdir1/subdir2a',
-                        f'{prefix}/subdir1/subdir2b']
+        assert objs == [f'{wprefix}/subdir1/lorem1.txt',
+                        f'{wprefix}/subdir1/subdir2a',
+                        f'{wprefix}/subdir1/subdir2b']
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_iterdir_type(prefix):
+    wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
         objs = sorted(list(fc.iterdir_type(prefix)))
-        assert objs == [(f'{prefix}/lorem1.txt', False), (f'{prefix}/subdir1', True)]
+        assert objs == [(f'{wprefix}/lorem1.txt', False), (f'{wprefix}/subdir1', True)]
         objs = sorted(list(fc.iterdir_type(f'{prefix}/subdir1')))
-        assert objs == [(f'{prefix}/subdir1/lorem1.txt', False),
-                        (f'{prefix}/subdir1/subdir2a', True),
-                        (f'{prefix}/subdir1/subdir2b', True)]
+        assert objs == [(f'{wprefix}/subdir1/lorem1.txt', False),
+                        (f'{wprefix}/subdir1/subdir2a', True),
+                        (f'{wprefix}/subdir1/subdir2b', True)]
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_iterdir_pfx(prefix):
+    wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
         pfx1 = fc.new_path(prefix)
         objs = sorted([str(x) for x in pfx1.iterdir()])
-        assert objs == [f'{prefix}/lorem1.txt', f'{prefix}/subdir1']
+        assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
         pfx2 = fc.new_path(f'{prefix}/subdir1')
         objs = sorted([str(x) for x in pfx2.iterdir()])
-        assert objs == [f'{prefix}/subdir1/lorem1.txt',
-                        f'{prefix}/subdir1/subdir2a',
-                        f'{prefix}/subdir1/subdir2b']
+        assert objs == [f'{wprefix}/subdir1/lorem1.txt',
+                        f'{wprefix}/subdir1/subdir2a',
+                        f'{wprefix}/subdir1/subdir2b']
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_iterdir_type_pfx(prefix):
+    wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
         pfx1 = fc.new_path(prefix)
         objs = sorted([(str(x), y) for x, y in pfx1.iterdir_type()])
-        assert objs == [(f'{prefix}/lorem1.txt', False), (f'{prefix}/subdir1', True)]
+        assert objs == [(f'{wprefix}/lorem1.txt', False), (f'{wprefix}/subdir1', True)]
         pfx2 = fc.new_path(f'{prefix}/subdir1')
         objs = sorted([(str(x), y) for x, y in pfx2.iterdir_type()])
-        assert objs == [(f'{prefix}/subdir1/lorem1.txt', False),
-                        (f'{prefix}/subdir1/subdir2a', True),
-                        (f'{prefix}/subdir1/subdir2b', True)]
+        assert objs == [(f'{wprefix}/subdir1/lorem1.txt', False),
+                        (f'{wprefix}/subdir1/subdir2a', True),
+                        (f'{wprefix}/subdir1/subdir2b', True)]
 
 
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK

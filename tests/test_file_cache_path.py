@@ -701,10 +701,10 @@ def test_relative():
     assert (FCPath(r'c:\a\b\c.txt')
             .relative_to(r'C:\a')) == FCPath('b/c.txt')
     assert (FCPath(r'c:\a\b\c.txt')
-            .relative_to(r'C:')) == FCPath('a/b/c.txt')
+            .relative_to('C:\\')) == FCPath('a/b/c.txt')
     with pytest.raises(ValueError):
         FCPath('/a/b/c/d/e.txt').relative_to('/a/b/c/f/g')
-    if sys.version_info >= (3,12):
+    if sys.version_info >= (3, 12):
         assert (FCPath('/a/b/c/d/e.txt').relative_to('/a/b/c/f/g', walk_up=True) ==
                 FCPath('../../d/e.txt'))
     assert FCPath('/a/b/c.txt').is_relative_to('/a/b')
@@ -729,7 +729,7 @@ def test_misc_os():
     with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').is_symlink()
     assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_symlink()
-    if sys.version_info >= (3,12):
+    if sys.version_info >= (3, 12):
         with pytest.raises(NotImplementedError):
             FCPath('https://x.com/a/b').is_junction()
         assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_junction()
@@ -764,6 +764,7 @@ def test_misc_os():
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_walk(prefix):
     prefix = str(prefix)
+    wprefix = prefix.replace('\\', '/')
     with FileCache(anonymous=True) as fc:
         pfx1 = fc.new_path(prefix, nthreads=23)
         results = []
@@ -774,20 +775,21 @@ def test_walk(prefix):
             results.append((str(path), dirs, files))
         assert len(results) == 4
         assert results[0] == (prefix, ['subdir1'], ['lorem1.txt'])
-        assert results[1] == (f'{prefix}/subdir1',
+        assert results[1] == (f'{wprefix}/subdir1',
                               ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[2][0].endswith('2a'):
-            assert results[2] == (f'{prefix}/subdir1/subdir2a',
+            assert results[2] == (f'{wprefix}/subdir1/subdir2a',
                                   [], ['binary1.bin'])
-            assert results[3] == (f'{prefix}/subdir1/subdir2b',
+            assert results[3] == (f'{wprefix}/subdir1/subdir2b',
                                   [], ['binary1.bin'])
         else:
-            assert results[3] == (f'{prefix}/subdir1/subdir2a',
+            assert results[3] == (f'{wprefix}/subdir1/subdir2a',
                                   [], ['binary1.bin'])
-            assert results[2] == (f'{prefix}/subdir1/subdir2b',
+            assert results[2] == (f'{wprefix}/subdir1/subdir2b',
                                   [], ['binary1.bin'])
 
         prefix2 = f'{prefix}/subdir1'
+        wprefix2 = prefix2.replace('\\', '/')
         pfx2 = fc.new_path(prefix2, nthreads=32)
         results = []
         for path, dirs, files in pfx2.walk():
@@ -800,16 +802,17 @@ def test_walk(prefix):
         assert len(results) == 3
         assert results[0] == (prefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[1][0].endswith('2a'):
-            assert results[1] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[2] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
+            assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+            assert results[2] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
         else:
-            assert results[2] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[1] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
+            assert results[2] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+            assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_walk_topdown(prefix):
     prefix = str(prefix)
+    wprefix = prefix.replace('\\', '/')
     with FileCache(anonymous=True) as fc:
         pfx1 = fc.new_path(prefix, nthreads=23)
         results = []
@@ -820,20 +823,21 @@ def test_walk_topdown(prefix):
             results.append((str(path), dirs, files))
         assert len(results) == 4
         assert results[3] == (prefix, ['subdir1'], ['lorem1.txt'])
-        assert results[2] == (f'{prefix}/subdir1',
+        assert results[2] == (f'{wprefix}/subdir1',
                               ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[1][0].endswith('2a'):
-            assert results[1] == (f'{prefix}/subdir1/subdir2a',
+            assert results[1] == (f'{wprefix}/subdir1/subdir2a',
                                   [], ['binary1.bin'])
-            assert results[0] == (f'{prefix}/subdir1/subdir2b',
+            assert results[0] == (f'{wprefix}/subdir1/subdir2b',
                                   [], ['binary1.bin'])
         else:
-            assert results[0] == (f'{prefix}/subdir1/subdir2a',
+            assert results[0] == (f'{wprefix}/subdir1/subdir2a',
                                   [], ['binary1.bin'])
-            assert results[1] == (f'{prefix}/subdir1/subdir2b',
+            assert results[1] == (f'{wprefix}/subdir1/subdir2b',
                                   [], ['binary1.bin'])
 
         prefix2 = f'{prefix}/subdir1'
+        wprefix2 = prefix2.replace('\\', '/')
         pfx2 = fc.new_path(prefix2, nthreads=32)
         results = []
         for path, dirs, files in pfx2.walk(top_down=False):
@@ -844,11 +848,11 @@ def test_walk_topdown(prefix):
         assert len(results) == 3
         assert results[2] == (prefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[1][0].endswith('2a'):
-            assert results[1] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[0] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
+            assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+            assert results[0] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
         else:
-            assert results[0] == (f'{prefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[1] == (f'{prefix2}/subdir2b', [], ['binary1.bin'])
+            assert results[0] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+            assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)

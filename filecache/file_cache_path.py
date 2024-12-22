@@ -1191,7 +1191,7 @@ class FCPath:
 
     # Operations not supported by FCPath
 
-    if sys.version_info >= (3,12):
+    if sys.version_info >= (3, 12):
         def relative_to(self,
                         other: str | Path | FCPath,
                         *,
@@ -1299,7 +1299,8 @@ class FCPath:
             """Whether this path is a junction."""
 
             if not self.is_local():
-                raise NotImplementedError('is_junction on a remote file is not implemented')
+                raise NotImplementedError(
+                    'is_junction on a remote file is not implemented')
 
             return self.as_pathlib().is_junction()
 
