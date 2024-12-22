@@ -4,6 +4,7 @@
 
 import os
 from pathlib import Path, PurePath
+import platform
 import sys
 import uuid
 
@@ -725,7 +726,7 @@ def test_as_uri():
 def test_misc_os():
     with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').is_mount()
-    if platform.system() == 'Windows':
+    if platform.system() == 'Windows' and sys.version_info < (3, 12):
         with pytest.raises(NotImplementedError):
             assert not FCPath(EXPECTED_DIR).is_mount()
     else:
