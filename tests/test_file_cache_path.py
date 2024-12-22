@@ -2,6 +2,7 @@
 # tests/test_file_cache_path.py
 ################################################################################
 
+import os
 from pathlib import Path, PurePath
 import uuid
 
@@ -11,6 +12,7 @@ from filecache import FileCache, FCPath
 
 from tests.test_file_cache import (GS_TEST_BUCKET_ROOT,
                                    INDEXABLE_PREFIXES,
+                                   EXPECTED_DIR,
                                    EXPECTED_FILENAMES,
                                    GS_WRITABLE_TEST_BUCKET_ROOT
                                    )
@@ -164,6 +166,33 @@ def test__str():
     assert str(FCPath('a/b')) == 'a/b'
     assert str(FCPath(Path('a/b'))) == 'a/b'
     assert str(FCPath(r'\a\b')) == '/a/b'
+
+
+def test__repr():
+    assert repr(FCPath('a/b')) == "FCPath('a/b')"
+    assert repr(FCPath(Path('a/b'))) == "FCPath('a/b')"
+    assert repr(FCPath(r'\a\b')) == "FCPath('/a/b')"
+
+
+def test_comparison():
+    p1a = FCPath('/a/b/c1.py')
+    p1b = FCPath('/a/b/c1.py')
+    p2 = FCPath('/a/b/c2.py')
+    assert p1a == p1a
+    assert p1a == p1b
+    assert p2 == p2
+    assert p1a < p2
+    assert not (p2 < p1a)
+    assert not (p1a < p1b)
+    assert p1a <= p2
+    assert not (p2 <= p1a)
+    assert p1a <= p1b
+    assert p2 > p1a
+    assert not (p1a > p2)
+    assert not (p1b > p1a)
+    assert p2 >= p1a
+    assert not (p1a >= p2)
+    assert p1b >= p1a
 
 
 def test_as_pathlib():
@@ -659,6 +688,75 @@ def test_operations_relative_paths():
         p.upload(['d', 'e'])
 
 
+def test_relative():
+    assert (FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt')
+            .relative_to(f'{GS_TEST_BUCKET_ROOT}/a/b')) == FCPath('c.txt')
+    assert (FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt')
+            .relative_to(f'{GS_TEST_BUCKET_ROOT}/a')) == FCPath('b/c.txt')
+    assert (FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt')
+            .relative_to(f'{GS_TEST_BUCKET_ROOT}')) == FCPath('a/b/c.txt')
+    assert (FCPath(r'c:\a\b\c.txt')
+            .relative_to(r'C:\a\b')) == FCPath('c.txt')
+    assert (FCPath(r'c:\a\b\c.txt')
+            .relative_to(r'C:\a')) == FCPath('b/c.txt')
+    assert (FCPath(r'c:\a\b\c.txt')
+            .relative_to(r'C:')) == FCPath('a/b/c.txt')
+    with pytest.raises(ValueError):
+        FCPath('/a/b/c/d/e.txt').relative_to('/a/b/c/f/g')
+    assert (FCPath('/a/b/c/d/e.txt').relative_to('/a/b/c/f/g', walk_up=True) ==
+            FCPath('../../d/e.txt'))
+    assert FCPath('/a/b/c.txt').is_relative_to('/a/b')
+    assert FCPath('/a/b/c.txt').is_relative_to('/a/b/')
+
+
+def test_as_uri():
+    assert FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt').as_uri() == \
+        f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt'
+    assert FCPath('/a/b/c.txt').as_uri() == 'file:///a/b/c.txt'
+    assert FCPath('file:///a/b/c.txt').as_uri() == 'file:///a/b/c.txt'
+    assert FCPath('c:/a/b/c.txt').as_uri() == 'file:///C:/a/b/c.txt'
+    assert FCPath('//host/a/b/c.txt').as_uri() == 'file://host/a/b/c.txt'
+    with pytest.raises(ValueError):
+        FCPath('a/b/c.txt').as_uri()
+
+
+def test_misc_os():
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_mount()
+    assert not FCPath(EXPECTED_DIR).is_mount()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_symlink()
+    assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_symlink()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_junction()
+    assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_junction()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_block_device()
+    assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_block_device()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_char_device()
+    assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_char_device()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_fifo()
+    assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_fifo()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_socket()
+    assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_socket()
+    assert FCPath('C:/a/b/c.txt').samefile('C:/a/b/c.txt')
+    assert not FCPath('/a/b/c.txt').samefile('/a/b/d.txt')
+    assert FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt').absolute() == \
+        FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt')
+    assert FCPath('c/d.txt').absolute() == FCPath(Path('c/d.txt').absolute())
+    assert FCPath('c/d.txt').cwd() == FCPath(Path('c/d.txt').cwd())
+    assert FCPath(EXPECTED_DIR / '..' / 'x.txt').resolve() == \
+        FCPath((EXPECTED_DIR / '..' / 'x.txt').resolve())
+    username = os.path.expanduser('~')
+    assert FCPath(f'~{username}/b/c.txt').expanduser() == \
+        FCPath(Path(f'~{username}/b/c.txt')).expanduser()
+    assert FCPath(f'{GS_TEST_BUCKET_ROOT}/~{username}/b/c.txt').expanduser() == \
+        FCPath(f'{GS_TEST_BUCKET_ROOT}/~{username}/b/c.txt').expanduser()
+    assert FCPath.home() == FCPath(Path('~').expanduser())
+
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_walk(prefix):
     prefix = str(prefix)
@@ -819,68 +917,3 @@ def test_bad_threads():
         FCPath('http://bucket/a/b/c', nthreads='a')
     with pytest.raises(ValueError):
         FCPath('http://bucket/a/b/c', nthreads=-1)
-
-
-def test_unimplemented():
-    with pytest.raises(NotImplementedError):
-        FCPath('a').relative_to('b')
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_relative_to('b')
-    with pytest.raises(NotImplementedError):
-        FCPath('a').stat()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').lstat()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_dir()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_mount()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_symlink()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_junction()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_block_device()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_char_device()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_fifo()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').is_socket()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').samefile('a')
-    with pytest.raises(NotImplementedError):
-        FCPath('a').absolute()
-    with pytest.raises(NotImplementedError):
-        FCPath.cwd()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').expanduser()
-    with pytest.raises(NotImplementedError):
-        FCPath.home()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').readlink()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').resolve()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').symlink_to('a')
-    with pytest.raises(NotImplementedError):
-        FCPath('a').hardlink_to('a')
-    with pytest.raises(NotImplementedError):
-        FCPath('a').touch()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').mkdir()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').chmod(0)
-    with pytest.raises(NotImplementedError):
-        FCPath('a').lchmod(0)
-    with pytest.raises(NotImplementedError):
-        FCPath('a').unlink()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').rmdir()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').owner()
-    with pytest.raises(NotImplementedError):
-        FCPath('a').group()
-    with pytest.raises(NotImplementedError):
-        FCPath.from_uri('a')
-    with pytest.raises(NotImplementedError):
-        FCPath('a').as_uri()
