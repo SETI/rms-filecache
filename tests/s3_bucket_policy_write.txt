@@ -15,9 +15,14 @@
             "Sid": "PublicObjectWrite",
             "Effect": "Allow",
             "Principal": "*",
-            "Action": [
-                "s3:PutObject"
-            ],
+            "Action": "s3:PutObject",
+            "Resource": "arn:aws:s3:::rms-filecache-tests-writable/*"
+        },
+        {
+            "Sid": "PublicObjectDelete",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:DeleteObject",
             "Resource": "arn:aws:s3:::rms-filecache-tests-writable/*"
         },
         {

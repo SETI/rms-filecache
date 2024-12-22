@@ -301,7 +301,7 @@ class FCPath:
         return self._pathlib
 
     def as_posix(self) -> str:
-        """Return this FCPath as a POSIX path.
+        """Return this FCPath as a POSIX path. This is a str using only forward slashes.
 
         Notes:
             Because URLs are not really supported in POSIX format, we just return the
@@ -499,32 +499,27 @@ class FCPath:
     def __repr__(self) -> str:
         return f'FCPath({self._path!r})'
 
-    def __eq__(self,
-               other: object) -> bool:
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path == other._path
 
-    def __lt__(self,
-               other: object) -> bool:
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path < other._path
 
-    def __le__(self,
-               other: object) -> bool:
+    def __le__(self, other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path <= other._path
 
-    def __gt__(self,
-               other: object) -> bool:
+    def __gt__(self, other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path > other._path
 
-    def __ge__(self,
-               other: object) -> bool:
+    def __ge__(self, other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path >= other._path
@@ -571,7 +566,10 @@ class FCPath:
         """Return True if this path matches the given pattern.
 
         If the pattern is relative, matching is done from the right; otherwise, the entire
-        path is matched. The recursive wildcard '**' is *not* supported by this method.
+        path is matched. The recursive wildcard ``**`` is *not* supported by this method
+        (it just acts like ``*``).
+
+        See pathlib.Path.match for full documentation.
         """
 
         if not isinstance(path_pattern, FCPath):
@@ -584,7 +582,7 @@ class FCPath:
             return False
         if len(path_parts) > len(pattern_parts) and path_pattern.anchor:
             return False
-        globber = StringGlobber(self)
+        globber = _StringGlobber(self)
         for path_part, pattern_part in zip(path_parts, pattern_parts):
             match = globber.compile(pattern_part)
             if match(path_part) is None:
@@ -596,11 +594,13 @@ class FCPath:
         """Return True if this path matches the given glob-style pattern.
 
         The pattern is matched against the entire path.
+
+        See pathlib.Path.full_match for full documentation.
         """
 
         if not isinstance(pattern, FCPath):
             pattern = FCPath(pattern)
-        globber = StringGlobber(self, recursive=True)
+        globber = _StringGlobber(self, recursive=True)
         match = globber.compile(str(pattern))
         return match(self._path) is not None
 
@@ -984,6 +984,7 @@ class FCPath:
             sub_path: The path of the file relative to this path. If not specified, this
                 path is used.
             mode: The mode string as you would specify to Python's `open()` function.
+            **args: Any additional arguments are passed to the Python ``open()`` function.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -1009,6 +1010,9 @@ class FCPath:
 
                 If None, use the default value given when this :class:`FCPath` was
                 created.
+            **kwargs: Any additional arguments are passed to the Python ``open()``
+                function.
+
         Returns:
             IO object: The same object as would be returned by the normal `open()`
             function.
@@ -1025,6 +1029,83 @@ class FCPath:
                 yield fp
             self.upload(sub_path, url_to_path=url_to_path)
 
+    def unlink(self,
+               sub_path: Optional[StrOrSeqType] = None,
+               *,
+               missing_ok: bool = False,
+               nthreads: Optional[int] = None,
+               exception_on_fail: bool = True,
+               url_to_path: Optional[UrlToPathFuncOrSeqType] = None
+               ) -> str | Exception | list[str | Exception]:
+        """Remove this file or link.
+
+        Parameters:
+            sub_path: The path of the file relative to this path. If not specified, this
+                path is used. If `sub_path` is a list or tuple, the complete list of files
+                is retrieved. Depending on the storage location, this may be more
+                efficient because files can be downloaded in parallel.
+            missing_ok: True to ignore attempting to unlink a file that doesn't exist.
+            nthreads: The maximum number of threads to use when doing multiple-file
+                retrieval or upload. If None, use the default value given when this
+                :class:`FileCache` was created.
+            exception_on_fail: If True, if any file does not exist or upload fails an
+                exception is raised. If False, the function returns normally and any
+                failed upload is marked with the Exception that caused the failure in
+                place of the returned path.
+            url_to_path: The function (or list of functions) that is used to translate
+                URLs into local paths. By default, :class:`FileCache` uses a directory
+                hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
+                where ``source`` is the URL prefix converted to a filesystem-friendly
+                format (e.g. ``gs://bucket`` is converted to ``gs_bucket``). A
+                user-specified translator function takes five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> str | Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
+                default.
+
+                If None, use the default value given when this :class:`FCPath` was
+                created.
+
+        See `pathlib.Path.unlink` for full documentation.
+        """
+
+        if isinstance(sub_path, (list, tuple)):
+            new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
+            if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
+                raise ValueError(
+                    f'Derived paths must be absolute, got {new_sub_paths}')
+            return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
+                                                      new_sub_paths),
+                                                 missing_ok=missing_ok,
+                                                 anonymous=self._anonymous,
+                                                 nthreads=nthreads,
+                                                 exception_on_fail=exception_on_fail,
+                                                 url_to_path=url_to_path)
+        else:
+            new_sub_path2 = FCPath._join(self._path, sub_path)
+            if not FCPath._is_absolute(str(new_sub_path2)):
+                raise ValueError(
+                    f'Derived path must be absolute, got {new_sub_path2}')
+            return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
+                                                      new_sub_path2),
+                                                 missing_ok=missing_ok,
+                                                 anonymous=self._anonymous,
+                                                 nthreads=nthreads,
+                                                 exception_on_fail=exception_on_fail,
+                                                 url_to_path=url_to_path)
+
     @property
     def download_counter(self) -> int:
         """The number of actual file downloads that have taken place."""
@@ -1037,30 +1118,39 @@ class FCPath:
 
         return self._upload_counter
 
-    def is_local(self) -> bool:  # XXX
-        """A bool indicating whether or not the path refers to the local filesystem."""
+    def is_local(self) -> bool:
+        """True if the path refers to the local filesystem."""
 
         return self._path.startswith('file:///') or '://' not in self._path
 
     def is_file(self) -> bool:
-        """Whether this path is a regular file."""
+        """True if this path exists and is a regular file."""
 
         return cast(bool, self.exists())
 
     def read_bytes(self, **kwargs: Any) -> bytearray:
-        """Open the file in bytes mode, read it, and close the file."""
+        """Download and open the file in bytes mode, read it, and close the file.
+
+        Any additional arguments are passed to the Python ``open()`` function.
+        """
 
         with self.open(mode='rb', **kwargs) as f:
             return cast(bytearray, f.read())
 
     def read_text(self, **kwargs: Any) -> str:
-        """Open the file in text mode, read it, and close the file."""
+        """Download and open the file in text mode, read it, and close the file.
+
+        Any additional arguments are passed to the Python ``open()`` function.
+        """
 
         with self.open(mode='r', **kwargs) as f:
             return cast(str, f.read())
 
     def write_bytes(self, data: Any, **kwargs: Any) -> int:
-        """Open the file in bytes mode, write to it, and close the file."""
+        """Open the file in bytes mode, write to it, and close and upload the file.
+
+        Any additional arguments are passed to the Python ``open()`` function.
+        """
 
         # type-check for the buffer interface before truncating the file
         view = memoryview(data)
@@ -1068,7 +1158,10 @@ class FCPath:
             return f.write(view)
 
     def write_text(self, data: Any, **kwargs: Any) -> int:
-        """Open the file in text mode, write to it, and close the file."""
+        """Open the file in text mode, write to it, and close and upload the file.
+
+        Any additional arguments are passed to the Python ``open()`` function.
+        """
 
         if not isinstance(data, str):
             raise TypeError('data must be str, not %s' %
@@ -1077,20 +1170,20 @@ class FCPath:
             return f.write(data)
 
     def iterdir(self) -> Iterator[FCPath]:
-        """Yield path objects of the directory contents.
+        """Yield FCPath objects of the current path's directory contents.
 
-        The children are yielded in arbitrary order, and the
-        special entries '.' and '..' are not included.
+        The children are yielded in arbitrary order, and the special entries '.' and '..'
+        are not included.
         """
 
         for obj in self._filecache_to_use.iterdir(self._path):
             yield FCPath(obj, copy_from=self)
 
     def iterdir_type(self) -> Iterator[tuple[FCPath, bool]]:
-        """Yield path objects of the directory contents, indicating which is a dir.
+        """Yield FCPath objects of the current directory's contents, with an is_dir flag.
 
-        The children are yielded in arbitrary order, and the
-        special entries '.' and '..' are not included.
+        The children are yielded in arbitrary order, and the special entries '.' and '..'
+        are not included.
         """
 
         for obj, is_dir in self._filecache_to_use.iterdir_type(self._path):
@@ -1098,8 +1191,7 @@ class FCPath:
 
     def glob(self,
              pattern: str | Path | FCPath) -> Generator[FCPath]:
-        """Iterate over this subtree and yield all existing files (of any
-        kind, including directories) matching the given relative pattern.
+        """Yield all existing files and directories matching the given relative pattern.
 
         Notes:
             If the FCPath is local, then the normal `pathlib.Path.glob()` method is
@@ -1122,15 +1214,24 @@ class FCPath:
             return
 
         parts = pattern.path.split('/')
-        select = StringGlobber(self, recursive=True).selector(parts[::-1])
+        select = _StringGlobber(self, recursive=True).selector(parts[::-1])
         for path in select(self.path):
             yield FCPath(path, copy_from=self)
 
     def rglob(self,
               pattern: str | Path | FCPath) -> Generator[FCPath]:
-        """Recursively yield all existing files (of any kind, including
-        directories) matching the given relative pattern, anywhere in
-        this subtree.
+        """Yield all existing files and directories matching the given relative pattern.
+
+        This is like calling :meth:`FCPath.glob()` with ``**/`` added in front of the
+        pattern.
+
+        Notes:
+            If the FCPath is local, then the normal `pathlib.Path.glob()` method is
+            called. If the pattern is only `**`, this function had different behavior
+            before Python 3.13 (only directories returned) and in Python 3.13 and later
+            (both files and directories are returned). In contrast, when the FCPath is
+            remote, we always return all files and directories. To be safe, do not use
+            `**` but instead always use `**/*`.
         """
 
         if not isinstance(pattern, FCPath):
@@ -1141,7 +1242,10 @@ class FCPath:
     def walk(self,
              top_down: bool = True
              ) -> Iterator[tuple[FCPath, list[str], list[str]]]:
-        """Walk the directory tree from this directory, similar to os.walk()."""
+        """Walk the directory tree from this directory.
+
+        See `pathlib.Path.walk` for full documentation.
+        """
 
         paths: list[FCPath | tuple[FCPath, list[str], list[str]]] = [self]
         while paths:
@@ -1165,40 +1269,82 @@ class FCPath:
                 paths += [path.joinpath(d) for d in reversed(dirnames)]
 
     def rename(self,
-               target: str | FCPath) -> None:
-        """
-        Rename this path to the target path.
+               target: str | Path | FCPath) -> FCPath:
+        """Rename this path to the target path.
 
-        The target path may be absolute or relative. Relative paths are
-        interpreted relative to the current working directory, *not* the
-        directory of the Path object.
+        Both the source and target paths must be absolute, and must be in the same
+        location (e.g. both local files or both in the same GS bucket). Because cloud
+        platforms do not support renaming of files, this is accomplished by downloading
+        the source file, uploading it with the new name, and deleting the original
+        version. If the target already exists, it will be overwritten.
 
-        Returns the new Path instance pointing to the target path.
+        Parameters:
+            target: The path to rename to.
+
+        Returns:
+            The new FCPath instance pointing to the target path.
         """
-        raise NotImplementedError
+
+        if not isinstance(target, FCPath):
+            target = FCPath(target)
+
+        if not self.is_absolute() or not target.is_absolute():
+            raise ValueError('Source and target files must be absolute '
+                             f'{self.path!r} and f{target.path!r}')
+
+        if self.is_local() != target.is_local():
+            raise ValueError('Unable to rename files between local and remote locations: '
+                             f'{self.path!r} and f{target.path!r}')
+
+        drive1, root1, subpath1 = FCPath._split_parts(self.path)
+        drive2, root2, subpath2 = FCPath._split_parts(target.path)
+
+        if drive1 != drive2 or root1 != root2:
+            raise ValueError('Unable to rename files across location: '
+                             f'{self.path!r} and f{target.path!r}')
+
+        if self.is_local():
+            # Local to local - just do an OS rename and be done with it
+            self.as_pathlib().rename(target.as_pathlib())
+            return target
+
+        # Since you generally can't rename on a remote cloud location, first
+        # download the file, then rename it locally, then upload it to the new name,
+        # then delete the old name
+        local_path = cast(Path, self.retrieve())
+        target_local_path = cast(Path, target.get_local_path())
+        local_path.rename(target_local_path)  # Rename in the cache
+        target.upload()  # Upload the new version
+        self.unlink()  # Delete the old version
+
+        return target
 
     def replace(self, target: str | FCPath) -> None:
+        """Rename this path to the target path, overwriting if that path exists.
+
+        Both the source and target paths must be absolute, and must be in the same
+        location (e.g. both local files or both in the same GS bucket). Because cloud
+        platforms do not support renaming of files, this is accomplished by downloading
+        the source file, uploading it with the new name, and deleting the original
+        version. If the target already exists, it will be overwritten.
+
+        Parameters:
+            target: The path to rename to.
+
+        Returns:
+            The new FCPath instance pointing to the target path.
         """
-        Rename this path to the target path, overwriting if that path exists.
 
-        The target path may be absolute or relative. Relative paths are
-        interpreted relative to the current working directory, *not* the
-        directory of the Path object.
-
-        Returns the new Path instance pointing to the target path.
-        """
-        raise NotImplementedError
-
-    # Operations not supported by FCPath
+        return self.replace(target)
 
     if sys.version_info >= (3, 12):
         def relative_to(self,
                         other: str | Path | FCPath,
                         *,
                         walk_up: bool = False) -> FCPath:
-            """Return the relative path to another path identified by the passed
-            arguments.  If the operation is not possible (because this is not
-            related to the other path), raise ValueError.
+            """Return the relative path to another path.
+
+            See `pathlib.Path.relative_to` for full documentation.
             """
 
             if not isinstance(other, FCPath):
@@ -1220,9 +1366,9 @@ class FCPath:
     else:
         def relative_to(self,
                         other: str | Path | FCPath) -> FCPath:
-            """Return the relative path to another path identified by the passed
-            arguments.  If the operation is not possible (because this is not
-            related to the other path), raise ValueError.
+            """Return the relative path to another path.
+
+            See `pathlib.Path.relative_to` for full documentation.
             """
 
             if not isinstance(other, FCPath):
@@ -1239,7 +1385,10 @@ class FCPath:
 
     def is_relative_to(self,
                        other: str | Path | FCPath) -> bool:
-        """Return True if the path is relative to another path or False."""
+        """Return True if the path is relative to another path.
+
+        See `pathlib.Path.is_relative_to` for full documentation.
+        """
 
         if not isinstance(other, FCPath):
             other = FCPath(other)
@@ -1247,16 +1396,19 @@ class FCPath:
         return self._path.startswith(other._path)
 
     def is_reserved(self) -> None:
-        """Return True if the path contains one of the special names reserved
-        by the system, if any."""
+        """True if the path contains a special reserved name.
+
+        See `pathlib.Path.is_reserved` for full documentation.
+        """
 
         raise NotImplementedError
 
     def stat(self,
              *,
              follow_symlinks: bool = True) -> Any:
-        """Return the result of the stat() system call on this path, like
-        os.stat() does.
+        """Return the result of the stat() system call on this path.
+
+        Only valid for local files. See `pathlib.Path.stat` for full documentation.
         """
 
         if not self.is_local():
@@ -1267,6 +1419,8 @@ class FCPath:
     def lstat(self) -> Any:
         """Like stat(), except if the path points to a symlink, the symlink's
         status information is returned, rather than its target's.
+
+        Only valid for local files. See `pathlib.Path.lstat` for full documentation.
         """
 
         if not self.is_local():
@@ -1276,10 +1430,15 @@ class FCPath:
 
     def is_dir(self, *, follow_symlinks: bool = True) -> None:
         """Path function not supported by FCPath."""
+
         raise NotImplementedError
 
     def is_mount(self) -> bool:
-        """Check if this path is a mount point."""
+        """Check if this path is a mount point.
+
+        Only valid for local directories. See `pathlib.Path.is_mount` for full
+        documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError('is_mount on a remote directory is not implemented')
@@ -1287,7 +1446,10 @@ class FCPath:
         return self.as_pathlib().is_mount()
 
     def is_symlink(self) -> bool:
-        """Whether this path is a symbolic link."""
+        """Whether this path is a symbolic link.
+
+        Only valid for local files. See `pathlib.Path.is_symlink` for full documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError('is_symlink on a remote file is not implemented')
@@ -1296,7 +1458,11 @@ class FCPath:
 
     if sys.version_info >= (3, 12):
         def is_junction(self) -> bool:
-            """Whether this path is a junction."""
+            """Whether this path is a junction.
+
+            Only valid for local files. See `pathlib.Path.is_junction` for full
+            documentation.
+            """
 
             if not self.is_local():
                 raise NotImplementedError(
@@ -1305,7 +1471,11 @@ class FCPath:
             return self.as_pathlib().is_junction()
 
     def is_block_device(self) -> bool:
-        """Whether this path is a block device."""
+        """Whether this path is a block device.
+
+        Only valid for local files. See `pathlib.Path.is_block_device` for full
+        documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError(
@@ -1314,7 +1484,11 @@ class FCPath:
         return self.as_pathlib().is_block_device()
 
     def is_char_device(self) -> bool:
-        """Whether this path is a character device."""
+        """Whether this path is a character device.
+
+        Only valid for local files. See `pathlib.Path.is_char_device` for full
+        documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError(
@@ -1323,7 +1497,10 @@ class FCPath:
         return self.as_pathlib().is_char_device()
 
     def is_fifo(self) -> bool:
-        """Whether this path is a FIFO."""
+        """Whether this path is a FIFO.
+
+        Only valid for local files. See `pathlib.Path.is_fifo` for full documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError('is_fifo on a remote file is not implemented')
@@ -1331,7 +1508,10 @@ class FCPath:
         return self.as_pathlib().is_fifo()
 
     def is_socket(self) -> bool:
-        """Whether this path is a socket."""
+        """Whether this path is a socket.
+
+        Only valid for local files. See `pathlib.Path.is_socket` for full documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError('is_socket on a remote file is not implemented')
@@ -1340,8 +1520,10 @@ class FCPath:
 
     def samefile(self,
                  other_path: str | Path | FCPath) -> bool:
-        """Return whether other_path is the same or not as this file
-        (as returned by os.path.samefile()).
+        """True if this path and the given path refer to the same file.
+
+        Unlink the `pathlib.Path.samefile` version, this function only looks to see
+        if the URLs are identical. Thus symlinks, hardlinks, etc. are ignored.
         """
 
         if not isinstance(other_path, FCPath):
@@ -1350,10 +1532,11 @@ class FCPath:
         return self._path == other_path._path
 
     def absolute(self) -> FCPath:
-        """Return an absolute version of this path
-        No normalization or symlink resolution is performed.
+        """Return an absolute version of this path.
 
-        Use resolve() to resolve symlinks and remove '..' segments.
+        For non-local paths, this just returns the URL. For local paths, it does the same
+        operations as `pathlib.Path.absolute`. See `pathlib.Path.absolute` for full
+        documentation.
         """
 
         if not self.is_local():
@@ -1363,13 +1546,17 @@ class FCPath:
 
     @classmethod
     def cwd(cls) -> FCPath:
-        """Return a new path pointing to the current working directory."""
+        """Return a new FCPath pointing to the current working directory.
+
+        See `pathlib.Path.cwd` for full documentation.
+        """
 
         return FCPath(Path.cwd())
 
     def expanduser(self) -> FCPath:
-        """Return a new path with expanded ~ and ~user constructs
-        (as returned by os.path.expanduser)
+        """Return a new FCPath with expanded ~ and ~user constructs.
+
+        See `pathlib.Path.expanduser` for full documentation.
         """
 
         if self.is_local():
@@ -1379,12 +1566,18 @@ class FCPath:
 
     @classmethod
     def home(cls) -> FCPath:
-        """Return a new path pointing to expanduser('~')."""
+        """Return a new FCPath pointing to expanduser('~').
+
+        See `pathlib.Path.home` for full documentation.
+        """
 
         return FCPath(os.path.expanduser('~'))
 
     def readlink(self) -> FCPath:
-        """Return the path to which the symbolic link points."""
+        """Return the FCPath to which the symbolic link points.
+
+        Only valid for local files. See `pathlib.Path.readlink` for full documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError('readlink on a remote file is not implemented')
@@ -1393,9 +1586,9 @@ class FCPath:
 
     def resolve(self,
                 strict: bool = False) -> FCPath:
-        """
-        Make the path absolute, resolving all symlinks on the way and also
-        normalizing it.
+        """Return the absolute path with resolved symlinks.
+
+        See `pathlib.Path.resolve` for full documentation.
         """
 
         if self.is_local():
@@ -1403,16 +1596,12 @@ class FCPath:
 
         return self
 
-    def realpath(self) -> None:
-        """Path function not supported by FCPath."""
-        raise NotImplementedError
-
     def symlink_to(self,
                    target: str,
                    target_is_directory: bool = False) -> None:
         """Make this path a symlink pointing to the target path.
 
-        Note the order of arguments (link, target) is the reverse of os.symlink.
+        Only valid for local files. See `pathlib.Path.symlink_to` for full documentation.
         """
 
         if not self.is_local():
@@ -1424,7 +1613,7 @@ class FCPath:
                     target: str) -> None:
         """Make this path a hard link pointing to the same file as *target*.
 
-        Note the order of arguments (self, target) is the reverse of os.link's.
+        Only valid for local files. See `pathlib.Path.hardlink_to` for full documentation.
         """
 
         if not self.is_local():
@@ -1435,18 +1624,29 @@ class FCPath:
     def touch(self,
               mode: int = 0o666,
               exist_ok: bool = True) -> None:
-        """Create this file with the given access mode, if it doesn't exist."""
+        """Create this file, if it doesn't exist.
 
-        if not self.is_local():
-            raise NotImplementedError('touch on a remote file is not implemented')  # XXX
+        See `pathlib.Path.touch` for full documentation.
+        """
 
-        self.as_pathlib().touch(mode=mode, exist_ok=exist_ok)
+        if self.is_local():
+            self.as_pathlib().touch(mode=mode, exist_ok=exist_ok)
+
+        if not self.exists():
+            self.write_bytes(b'')
+        else:
+            # Read and write the file to update the creation time
+            self.retrieve()
+            self.upload()
 
     def mkdir(self,
               mode: int = 0o777,
               parents: bool = False,
               exist_ok: bool = False) -> None:
-        """Create a new directory at this given path."""
+        """Create a new directory at this given path.
+
+        Only valid for local directories. See `pathlib.Path.mkdir` for full documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError('mkdir on a remote directory is not implemented')
@@ -1457,7 +1657,10 @@ class FCPath:
               mode: int,
               *,
               follow_symlinks: bool = True) -> None:
-        """Change the permissions of the path, like os.chmod()."""
+        """Change the permissions of the path, like os.chmod().
+
+        Only valid for local files. See `pathlib.Path.chmod` for full documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError('chmod on a remote file is not implemented')
@@ -1468,6 +1671,8 @@ class FCPath:
                mode: int) -> None:
         """Like chmod(), except if the path points to a symlink, the symlink's
         permissions are changed, rather than its target's.
+
+        Only valid for local files. See `pathlib.Path.lchmod` for full documentation.
         """
 
         if not self.is_local():
@@ -1475,13 +1680,11 @@ class FCPath:
 
         self.as_pathlib().lchmod(mode=mode)
 
-    def unlink(self,
-               missing_ok: bool = False) -> None:
-        """Path function not supported by FCPath."""  # XXX
-        raise NotImplementedError
-
     def rmdir(self) -> None:
-        """Remove this directory.  The directory must be empty."""
+        """Remove this directory. The directory must be empty.
+
+        Only valid for local directories. See `pathlib.Path.rmdir` for full documentation.
+        """
 
         if not self.is_local():
             raise NotImplementedError('rmdir on a remote directory is not implemented')
@@ -1491,7 +1694,10 @@ class FCPath:
     if sys.version_info >= (3, 13):
         def owner(self, *,
                   follow_symlinks: bool = True) -> str:
-            """Return the login name of the file owner."""
+            """Return the login name of the file owner.
+
+            Only valid for local files. See `pathlib.Path.owner` for full documentation.
+            """
 
             if not self.is_local():
                 raise NotImplementedError('owner on a remote file is not implemented')
@@ -1500,7 +1706,10 @@ class FCPath:
 
         def group(self, *,
                   follow_symlinks: bool = True) -> str:
-            """Return the group name of the file gid."""
+            """Return the group name of the file gid.
+
+            Only valid for local files. See `pathlib.Path.group` for full documentation.
+            """
 
             if not self.is_local():
                 raise NotImplementedError('group on a remote file is not implemented')
@@ -1508,7 +1717,10 @@ class FCPath:
             return self.as_pathlib().group(follow_symlinks=follow_symlinks)
     else:
         def owner(self) -> str:
-            """Return the login name of the file owner."""
+            """Return the login name of the file owner.
+
+            Only valid for local files. See `pathlib.Path.owner` for full documentation.
+            """
 
             if not self.is_local():
                 raise NotImplementedError('owner on a remote file is not implemented')
@@ -1516,7 +1728,10 @@ class FCPath:
             return self.as_pathlib().owner()
 
         def group(self) -> str:
-            """Return the group name of the file gid."""
+            """Return the group name of the file gid.
+
+            Only valid for local files. See `pathlib.Path.group` for full documentation.
+            """
 
             if not self.is_local():
                 raise NotImplementedError('group on a remote file is not implemented')
@@ -1526,12 +1741,12 @@ class FCPath:
     @classmethod
     def from_uri(cls,
                  uri: str) -> FCPath:
-        """Return a new path from the given URI."""
+        """Return a new FCPath from the given URI."""
 
         return FCPath(uri)
 
     def as_uri(self) -> str:
-        """Path function not supported by FCPath."""
+        """Return the path as a URI."""
 
         if not self.is_absolute():
             raise ValueError("relative path can't be expressed as a file URI")
@@ -1550,9 +1765,9 @@ class FCPath:
         return f'file://{self._path}'
 
 
-def _translate(pat: str,
-               STAR: str,
-               QUESTION_MARK: str) -> list[str]:
+def _translate2(pat: str,
+                STAR: str,
+                QUESTION_MARK: str) -> list[str]:
     res: list[str] = []
     add = res.append
     i, n = 0, len(pat)
@@ -1628,9 +1843,9 @@ magic_check = re.compile('([*?[])')
 magic_check_bytes = re.compile(b'([*?[])')
 
 
-def translate(pat: str,
-              *,
-              recursive: bool = False) -> str:
+def _translate(pat: str,
+               *,
+               recursive: bool = False) -> str:
     """Translate a pathname with shell wildcards to a regular expression.
 
     If `recursive` is true, the pattern segment '**' will match any number of
@@ -1658,7 +1873,7 @@ def translate(pat: str,
             if part:
                 if part[0] in '*?':
                     results.append(r'(?!\.)')
-                results.extend(_translate(part, f'{not_sep}*', not_sep))
+                results.extend(_translate2(part, f'{not_sep}*', not_sep))
             if idx < last_part_idx:
                 results.append('/')
     res = ''.join(results)
@@ -1670,11 +1885,11 @@ def _compile_pattern(pat: str,
                      recursive: bool = True) -> Any:
     """Compile given glob pattern to a re.Pattern object (observing case
     sensitivity)."""
-    regex = translate(pat, recursive=recursive)
+    regex = _translate(pat, recursive=recursive)
     return re.compile(regex).match
 
 
-class StringGlobber:
+class _StringGlobber:
     """Class providing shell-style pattern matching and globbing.
     """
 

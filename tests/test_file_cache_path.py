@@ -180,6 +180,7 @@ def test_comparison():
     p1a = FCPath('/a/b/c1.py')
     p1b = FCPath('/a/b/c1.py')
     p2 = FCPath('/a/b/c2.py')
+    p3 = Path('/a/b/c3.py')
     assert p1a == p1a
     assert p1a == p1b
     assert p2 == p2
@@ -195,6 +196,16 @@ def test_comparison():
     assert p2 >= p1a
     assert not (p1a >= p2)
     assert p1b >= p1a
+    assert not (p1a == p3)
+    assert p1a != p3
+    with pytest.raises(TypeError):
+        p1a < p3
+    with pytest.raises(TypeError):
+        p1a <= p3
+    with pytest.raises(TypeError):
+        p1a > p3
+    with pytest.raises(TypeError):
+        p1a >= p3
 
 
 def test_as_pathlib():
@@ -202,6 +213,8 @@ def test_as_pathlib():
     assert FCPath('a/b').as_pathlib() == Path('a/b')
     with pytest.raises(ValueError):
         FCPath('gs://x/a').as_pathlib()
+    p = FCPath('a/b')
+    assert p.as_pathlib() == p.as_pathlib()
 
 
 def test_as_posix():
@@ -688,6 +701,10 @@ def test_operations_relative_paths():
         p.upload('d')
     with pytest.raises(ValueError):
         p.upload(['d', 'e'])
+    with pytest.raises(ValueError):
+        p.unlink('d')
+    with pytest.raises(ValueError):
+        p.unlink(['d', 'e'])
 
 
 def test_relative():
