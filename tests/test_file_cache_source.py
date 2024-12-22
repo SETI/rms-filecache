@@ -59,7 +59,7 @@ def test_source_notimp():
     with pytest.raises(NotImplementedError):
         FileCacheSourceHTTP('http', 'fred').iterdir_type('')
     with pytest.raises(NotImplementedError):
-        FileCacheSourceHTTP('http', 'fred').unlink('', '')
+        FileCacheSourceHTTP('http', 'fred').unlink('')
 
 
 def test_source_nthreads_bad():
