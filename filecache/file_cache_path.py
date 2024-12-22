@@ -1435,7 +1435,7 @@ class FCPath:
     def touch(self,
               mode: int = 0o666,
               exist_ok: bool = True) -> None:
-        """ Create this file with the given access mode, if it doesn't exist."""
+        """Create this file with the given access mode, if it doesn't exist."""
 
         if not self.is_local():
             raise NotImplementedError('touch on a remote file is not implemented')  # XXX
@@ -1490,7 +1490,7 @@ class FCPath:
 
     if sys.version_info >= (3, 13):
         def owner(self, *,
-                follow_symlinks: bool = True) -> str:
+                  follow_symlinks: bool = True) -> str:
             """Return the login name of the file owner."""
 
             if not self.is_local():

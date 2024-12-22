@@ -725,7 +725,11 @@ def test_as_uri():
 def test_misc_os():
     with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').is_mount()
-    assert not FCPath(EXPECTED_DIR).is_mount()
+    if platform.system() == 'Windows':
+        with pytest.raises(NotImplementedError):
+            assert not FCPath(EXPECTED_DIR).is_mount()
+    else:
+        assert not FCPath(EXPECTED_DIR).is_mount()
     with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').is_symlink()
     assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_symlink()
