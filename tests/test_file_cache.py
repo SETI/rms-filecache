@@ -1958,7 +1958,7 @@ def test_local_unlink_good():
             path = temp_dir / 'test_file.txt'
             path.write_text('Hello')
             assert path.exists()
-            assert fc.unlink(path) == str(path)
+            assert fc.unlink(path) == str(path).replace('\\', '/')
             assert not path.exists()
 
 
@@ -1988,7 +1988,8 @@ def test_local_unlink_bad():
             path.write_text('Hello')
             assert path.exists()
             assert not path2.exists()
-            assert fc.unlink(path, exception_on_fail=False) == str(path)
+            assert fc.unlink(path, exception_on_fail=False) == \
+                str(path).replace('\\', '/')
             with pytest.raises(FileNotFoundError):
                 assert fc.unlink(path2)
             assert isinstance(fc.unlink(path2, exception_on_fail=False), FileNotFoundError)
@@ -2022,7 +2023,7 @@ def test_local_unlink_multi_bad():
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_unlink(prefix):
-    with FileCache(cache_name=None) as fc:
+    with FileCache(anonymous=True, cache_name=None) as fc:
         new_path = f'{prefix}/{uuid.uuid4()}'
         path = f'{new_path}/test_file.txt'
         local_path = fc.get_local_path(path)
@@ -2054,7 +2055,7 @@ def test_cloud_unlink(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_unlink_multi(prefix):
-    with FileCache(cache_name=None) as fc:
+    with FileCache(anonymous=True, cache_name=None) as fc:
         new_path = f'{prefix}/{uuid.uuid4()}'
         paths = [f'{new_path}/test_file{x}.txt' for x in range(5)]
         local_paths = [fc.get_local_path(x) for x in paths]
@@ -2146,7 +2147,7 @@ def test_cloud_unlink_multi(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_unlink_multi_pfx(prefix):
-    with FileCache(cache_name=None) as fc:
+    with FileCache(anonymous=True, cache_name=None) as fc:
         new_path = f'{prefix}/{uuid.uuid4()}'
         pfx = fc.new_path(new_path, anonymous=True)
         paths = [f'test_file{x}.txt' for x in range(5)]
@@ -2239,7 +2240,7 @@ def test_cloud_unlink_multi_pfx(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_unlink_pfx(prefix):
-    with FileCache(cache_name=None) as fc:
+    with FileCache(anonymous=True, cache_name=None) as fc:
         new_path = f'{prefix}/{uuid.uuid4()}'
         path = 'test_file.txt'
         pfx = fc.new_path(new_path, anonymous=True)

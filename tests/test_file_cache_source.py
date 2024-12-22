@@ -57,7 +57,7 @@ def test_source_notimp():
     with pytest.raises(NotImplementedError):
         FileCacheSourceHTTP('http', 'fred').upload('', '')
     with pytest.raises(NotImplementedError):
-        FileCacheSourceHTTP('http', 'fred').iterdir('', '')
+        FileCacheSourceHTTP('http', 'fred').iterdir_type('', '')
     with pytest.raises(NotImplementedError):
         FileCacheSourceHTTP('http', 'fred').unlink('', '')
 
