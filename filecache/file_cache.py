@@ -1470,8 +1470,8 @@ class FileCache:
                 sources.append(source)
                 sub_paths.append(sub_path)
                 local_paths.append(local_path)
-            return self._unlink_multi(list(url), sources, sub_paths, local_paths, missing_ok,
-                                      nthreads, exception_on_fail)
+            return self._unlink_multi(list(url), sources, sub_paths, local_paths,
+                                      missing_ok, nthreads, exception_on_fail)
 
         url = str(url)
         source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
