@@ -4,6 +4,7 @@
 
 import os
 from pathlib import Path, PurePath
+import sys
 import uuid
 
 import pytest
@@ -703,8 +704,9 @@ def test_relative():
             .relative_to(r'C:')) == FCPath('a/b/c.txt')
     with pytest.raises(ValueError):
         FCPath('/a/b/c/d/e.txt').relative_to('/a/b/c/f/g')
-    assert (FCPath('/a/b/c/d/e.txt').relative_to('/a/b/c/f/g', walk_up=True) ==
-            FCPath('../../d/e.txt'))
+    if sys.version_info >= (3,12):
+        assert (FCPath('/a/b/c/d/e.txt').relative_to('/a/b/c/f/g', walk_up=True) ==
+                FCPath('../../d/e.txt'))
     assert FCPath('/a/b/c.txt').is_relative_to('/a/b')
     assert FCPath('/a/b/c.txt').is_relative_to('/a/b/')
 
@@ -727,9 +729,10 @@ def test_misc_os():
     with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').is_symlink()
     assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_symlink()
-    with pytest.raises(NotImplementedError):
-        FCPath('https://x.com/a/b').is_junction()
-    assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_junction()
+    if sys.version_info >= (3,12):
+        with pytest.raises(NotImplementedError):
+            FCPath('https://x.com/a/b').is_junction()
+        assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_junction()
     with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').is_block_device()
     assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_block_device()
