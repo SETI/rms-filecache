@@ -757,6 +757,7 @@ def test_misc_os():
         FCPath(f'{GS_TEST_BUCKET_ROOT}/~{username}/b/c.txt').expanduser()
     assert FCPath.home() == FCPath(Path('~').expanduser())
 
+
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_walk(prefix):
     prefix = str(prefix)

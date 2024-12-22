@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import contextlib
 import functools
-from itertools import chain
 import os
 from pathlib import Path
 import re
@@ -496,30 +495,35 @@ class FCPath:
         else:
             return FCPath(other, self._path, copy_from=self)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'FCPath({self._path!r})'
 
-    def __eq__(self, other):
+    def __eq__(self,
+               other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path == other._path
 
-    def __lt__(self, other):
+    def __lt__(self,
+               other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path < other._path
 
-    def __le__(self, other):
+    def __le__(self,
+               other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path <= other._path
 
-    def __gt__(self, other):
+    def __gt__(self,
+               other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path > other._path
 
-    def __ge__(self, other):
+    def __ge__(self,
+               other: object) -> bool:
         if not isinstance(other, FCPath):
             return NotImplemented
         return self._path >= other._path
@@ -579,7 +583,7 @@ class FCPath:
             return False
         if len(path_parts) > len(pattern_parts) and path_pattern.anchor:
             return False
-        globber = StringGlobber()
+        globber = StringGlobber(self)
         for path_part, pattern_part in zip(path_parts, pattern_parts):
             match = globber.compile(pattern_part)
             if match(path_part) is None:
@@ -595,7 +599,7 @@ class FCPath:
 
         if not isinstance(pattern, FCPath):
             pattern = FCPath(pattern)
-        globber = StringGlobber(recursive=True)
+        globber = StringGlobber(self, recursive=True)
         match = globber.compile(str(pattern))
         return match(self._path) is not None
 
@@ -1117,7 +1121,7 @@ class FCPath:
             return
 
         parts = pattern.path.split('/')
-        select = StringGlobber(recursive=True).selector(parts[::-1])
+        select = StringGlobber(self, recursive=True).selector(parts[::-1])
         for path in select(self.path):
             yield FCPath(path, copy_from=self)
 
@@ -1189,7 +1193,7 @@ class FCPath:
     def relative_to(self,
                     other: str | Path | FCPath,
                     *,
-                    walk_up: bool = False) -> bool:
+                    walk_up: bool = False) -> FCPath:
         """Return the relative path to another path identified by the passed
         arguments.  If the operation is not possible (because this is not
         related to the other path), raise ValueError.
@@ -1220,7 +1224,7 @@ class FCPath:
 
         return self._path.startswith(other._path)
 
-    def is_reserved(self):
+    def is_reserved(self) -> None:
         """Return True if the path contains one of the special names reserved
         by the system, if any."""
 
@@ -1236,7 +1240,7 @@ class FCPath:
         if not self.is_local():
             raise NotImplementedError('stat on a remote file is not implemented')
 
-        return self.as_pathlib().stat(self, follow_symlinks=follow_symlinks)
+        return self.as_pathlib().stat(follow_symlinks=follow_symlinks)
 
     def lstat(self) -> Any:
         """Like stat(), except if the path points to a symlink, the symlink's
@@ -1246,7 +1250,7 @@ class FCPath:
         if not self.is_local():
             raise NotImplementedError('lstat on a remote file is not implemented')
 
-        return self.as_pathlib().lstat(self)
+        return self.as_pathlib().lstat()
 
     def is_dir(self, *, follow_symlinks: bool = True) -> None:
         """Path function not supported by FCPath."""
@@ -1280,7 +1284,8 @@ class FCPath:
         """Whether this path is a block device."""
 
         if not self.is_local():
-            raise NotImplementedError('is_block_device on a remote file is not implemented')
+            raise NotImplementedError(
+                'is_block_device on a remote file is not implemented')
 
         return self.as_pathlib().is_block_device()
 
@@ -1288,7 +1293,8 @@ class FCPath:
         """Whether this path is a character device."""
 
         if not self.is_local():
-            raise NotImplementedError('is_char_device on a remote file is not implemented')
+            raise NotImplementedError(
+                'is_char_device on a remote file is not implemented')
 
         return self.as_pathlib().is_char_device()
 
@@ -1468,7 +1474,7 @@ class FCPath:
         return self.as_pathlib().owner(follow_symlinks=follow_symlinks)
 
     def group(self, *,
-              follow_symlinks: bool = True) -> None:
+              follow_symlinks: bool = True) -> str:
         """Return the group name of the file gid."""
 
         if not self.is_local():
@@ -1478,7 +1484,7 @@ class FCPath:
 
     @classmethod
     def from_uri(cls,
-                 uri: str) -> None:
+                 uri: str) -> FCPath:
         """Return a new path from the given URI."""
 
         return FCPath(uri)
@@ -1501,6 +1507,7 @@ class FCPath:
             return f'file:{self._path}'
         # It's a posix path => 'file:///etc/hosts'
         return f'file://{self._path}'
+
 
 def _translate(pat: str,
                STAR: str,
@@ -1631,8 +1638,10 @@ class StringGlobber:
     """
 
     def __init__(self,
+                 copy_from: FCPath,
                  recursive: bool = False) -> None:
         self.recursive = recursive
+        self.copy_from = copy_from
 
     # High-level methods
 
@@ -1668,7 +1677,7 @@ class StringGlobber:
 
         def select_wildcard(path: str,
                             exists: bool = False) -> Generator[FCPath]:
-            entries = list(FCPath(path).iterdir_type())
+            entries = list(FCPath(path, copy_from=self.copy_from).iterdir_type())
             for entry, dir in entries:
                 if match is None or match(entry.name):
                     if dir_only and not dir:
@@ -1713,7 +1722,7 @@ class StringGlobber:
         def select_recursive_step(stack: list[str],
                                   match_pos: int) -> Generator[Any]:
             path = stack.pop()
-            entries = list(FCPath(path).iterdir_type())
+            entries = list(FCPath(path, copy_from=self.copy_from).iterdir_type())
             for entry, is_dir in entries:
                 if is_dir or not dir_only:
                     if match is None or match(str(entry), match_pos):
@@ -1738,5 +1747,5 @@ class StringGlobber:
             # it was returned from os.iterdir(), so we skip calling exists().
             yield path
         else:
-            if FCPath(path).exists():
+            if FCPath(path, copy_from=self.copy_from).exists():
                 yield path
