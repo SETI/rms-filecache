@@ -1488,23 +1488,40 @@ class FCPath:
 
         self.as_pathlib().rmdir()
 
-    def owner(self, *,
-              follow_symlinks: bool = True) -> str:
-        """Return the login name of the file owner."""
+    if sys.version_info >= (3, 13):
+        def owner(self, *,
+                follow_symlinks: bool = True) -> str:
+            """Return the login name of the file owner."""
 
-        if not self.is_local():
-            raise NotImplementedError('owner on a remote file is not implemented')
+            if not self.is_local():
+                raise NotImplementedError('owner on a remote file is not implemented')
 
-        return self.as_pathlib().owner(follow_symlinks=follow_symlinks)
+            return self.as_pathlib().owner(follow_symlinks=follow_symlinks)
 
-    def group(self, *,
-              follow_symlinks: bool = True) -> str:
-        """Return the group name of the file gid."""
+        def group(self, *,
+                  follow_symlinks: bool = True) -> str:
+            """Return the group name of the file gid."""
 
-        if not self.is_local():
-            raise NotImplementedError('group on a remote file is not implemented')
+            if not self.is_local():
+                raise NotImplementedError('group on a remote file is not implemented')
 
-        return self.as_pathlib().group(follow_symlinks=follow_symlinks)
+            return self.as_pathlib().group(follow_symlinks=follow_symlinks)
+    else:
+        def owner(self) -> str:
+            """Return the login name of the file owner."""
+
+            if not self.is_local():
+                raise NotImplementedError('owner on a remote file is not implemented')
+
+            return self.as_pathlib().owner()
+
+        def group(self) -> str:
+            """Return the group name of the file gid."""
+
+            if not self.is_local():
+                raise NotImplementedError('group on a remote file is not implemented')
+
+            return self.as_pathlib().group()
 
     @classmethod
     def from_uri(cls,

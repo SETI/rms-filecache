@@ -774,7 +774,7 @@ def test_walk(prefix):
             files.sort()
             results.append((str(path), dirs, files))
         assert len(results) == 4
-        assert results[0] == (prefix, ['subdir1'], ['lorem1.txt'])
+        assert results[0] == (wprefix, ['subdir1'], ['lorem1.txt'])
         assert results[1] == (f'{wprefix}/subdir1',
                               ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[2][0].endswith('2a'):
@@ -800,7 +800,7 @@ def test_walk(prefix):
         results.sort()
         print(results)
         assert len(results) == 3
-        assert results[0] == (prefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+        assert results[0] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[1][0].endswith('2a'):
             assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
             assert results[2] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
@@ -822,7 +822,7 @@ def test_walk_topdown(prefix):
             files.sort()
             results.append((str(path), dirs, files))
         assert len(results) == 4
-        assert results[3] == (prefix, ['subdir1'], ['lorem1.txt'])
+        assert results[3] == (wprefix, ['subdir1'], ['lorem1.txt'])
         assert results[2] == (f'{wprefix}/subdir1',
                               ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[1][0].endswith('2a'):
@@ -846,7 +846,7 @@ def test_walk_topdown(prefix):
             files.sort()
             results.append((str(path), dirs, files))
         assert len(results) == 3
-        assert results[2] == (prefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+        assert results[2] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
         if results[1][0].endswith('2a'):
             assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
             assert results[0] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
@@ -891,13 +891,14 @@ def test_walk_topdown(prefix):
 ))
 def test_glob(prefix, pattern):
     prefix = str(f'{prefix}{pattern[0]}')
+    wprefix = prefix.replace('\\', '/')
     with FileCache(anonymous=True) as fc:
         pfx1 = fc.new_path(prefix)
         if prefix.startswith('gs://'):
             results = list(pfx1.glob(pattern[1]))
         else:
             results = list(pfx1.glob(FCPath(pattern[1])))
-        results = sorted([x.path.replace(prefix, '').lstrip('/') for x in results])
+        results = sorted([x.path.replace(wprefix, '').lstrip('/') for x in results])
         assert results == pattern[2]
 
 
@@ -909,13 +910,15 @@ def test_glob_fail():
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_rglob(prefix):
+    prefix = str(prefix)
+    wprefix = prefix.replace('\\', '/')
     with FileCache(anonymous=True) as fc:
         pfx = fc.new_path(prefix)
         if str(prefix).startswith('gs://'):
             results = list(pfx.rglob('binary1.bin'))
         else:
             results = list(pfx.rglob(FCPath('binary1.bin')))
-        results = sorted([x.path.replace(str(prefix), '').lstrip('/') for x in results])
+        results = sorted([x.path.replace(str(wprefix), '').lstrip('/') for x in results])
         assert results == ['subdir1/subdir2a/binary1.bin',
                            'subdir1/subdir2b/binary1.bin']
 

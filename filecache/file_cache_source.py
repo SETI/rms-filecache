@@ -400,7 +400,7 @@ class FileCacheSourceFile(FileCacheSource):
         sub_path_p = Path(sub_path)
         for obj_name in sub_path_p.iterdir():
             is_dir = obj_name.is_dir()
-            yield str(obj_name), is_dir
+            yield str(obj_name).replace('\\', '/'), is_dir
 
 
 class FileCacheSourceHTTP(FileCacheSource):
