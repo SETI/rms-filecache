@@ -56,6 +56,10 @@ def test_source_notimp():
         FileCacheSource('', '').exists('')
     with pytest.raises(NotImplementedError):
         FileCacheSourceHTTP('http', 'fred').upload('', '')
+    with pytest.raises(NotImplementedError):
+        FileCacheSourceHTTP('http', 'fred').iterdir_type('')
+    with pytest.raises(NotImplementedError):
+        FileCacheSourceHTTP('http', 'fred').unlink('')
 
 
 def test_source_nthreads_bad():
@@ -71,3 +75,7 @@ def test_source_nthreads_bad():
         FileCacheSourceFile('file', '').exists_multi(['/test'], nthreads=-1)
     with pytest.raises(ValueError):
         FileCacheSourceFile('file', '').exists_multi(['/test'], nthreads=4.5)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').unlink_multi(['/test'], nthreads=-1)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').unlink_multi(['/test'], nthreads=4.5)
