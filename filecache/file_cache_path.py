@@ -1996,8 +1996,8 @@ class _StringGlobber:
                 path_str = f'{path_str}/'
             match_pos = len(path_str)
             if match is None or match(path_str, match_pos):
-                yield from select_next(path, exists)
-            stack = [path]
+                yield from select_next(path_str, exists)
+            stack = [path_str]
             while stack:
                 yield from select_recursive_step(stack, match_pos)
 
