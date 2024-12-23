@@ -10,7 +10,7 @@ from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import requests
-from typing import Generator
+from typing import Iterator
 import uuid
 
 import boto3
@@ -32,6 +32,7 @@ class FileCacheSource(ABC):
     def __init__(self,
                  scheme: str,
                  remote: str,
+                 *,
                  anonymous: bool = False):
         """Initialization for the FileCacheSource superclass.
 
@@ -72,6 +73,7 @@ class FileCacheSource(ABC):
     @classmethod
     def primary_scheme(self) -> str:
         """The primary URL scheme supported by this class."""
+
         return self.schemes()[0]
 
     @classmethod
@@ -122,7 +124,7 @@ class FileCacheSource(ABC):
 
     def _exists_object_parallel(self,
                                 sub_paths: Sequence[str],
-                                nthreads: int) -> Generator[tuple[str, bool]]:
+                                nthreads: int) -> Iterator[tuple[str, bool]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._exists_object, x): x
                                for x in sub_paths}
@@ -185,7 +187,7 @@ class FileCacheSource(ABC):
     def _download_object_parallel(self,
                                   sub_paths: Sequence[str],
                                   local_paths: Sequence[str | Path],
-                                  nthreads: int) -> Generator[
+                                  nthreads: int) -> Iterator[
                                       tuple[str, Path | BaseException]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._download_object, x[0], x[1]): x[0]
@@ -207,6 +209,7 @@ class FileCacheSource(ABC):
     def upload_multi(self,
                      sub_paths: Sequence[str],
                      local_paths: Sequence[str | Path],
+                     *,
                      nthreads: int = 8) -> list[Path | BaseException]:
         """Upload multiple files to a storage location.
 
@@ -226,7 +229,7 @@ class FileCacheSource(ABC):
 
         results = {}
         for sub_path, result in self._upload_object_parallel(sub_paths, local_paths,
-                                                             nthreads):
+                                                             nthreads=nthreads):
             results[sub_path] = result
 
         ret = []
@@ -244,11 +247,101 @@ class FileCacheSource(ABC):
     def _upload_object_parallel(self,
                                 sub_paths: Sequence[str],
                                 local_paths: Sequence[str | Path],
-                                nthreads: int) -> Generator[tuple[str,
-                                                                  Path | BaseException]]:
+                                nthreads: int) -> Iterator[tuple[str,
+                                                                 Path | BaseException]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._upload_object, x[0], x[1]): x[0]
                                for x in zip(sub_paths, local_paths)}
+            for future in futures.as_completed(future_to_paths):
+                sub_path = future_to_paths[future]
+                exception = future.exception()
+                if not exception:
+                    yield sub_path, future.result()
+                else:
+                    yield sub_path, exception
+
+    @abstractmethod
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The path of the directory relative to the source prefix.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored. The bool is True if the
+            returned name is a directory, False if it is a file.
+        """
+        ...  # pragma: no cover
+
+    @abstractmethod
+    def unlink(self,
+               sub_path: str,
+               *,
+               missing_ok: bool = False) -> str:
+        """Remove the given object.
+
+        Parameters:
+            sub_path: The path of the file relative to the source prefix to delete.
+            missing_ok: True if it is OK to unlink a file that doesn't exist; False to
+                raise a FileNotFoundError in this case.
+
+        Returns:
+            The sub_path.
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist and `missing_ok` is False.
+        """
+        ...  # pragma: no cover
+
+    def unlink_multi(self,
+                     sub_paths: Sequence[str],
+                     *,
+                     missing_ok: bool = False,
+                     nthreads: int = 8) -> list[str | BaseException]:
+        """Unlink multiple files in a storage location.
+
+        Parameters:
+            sub_paths: The path of the destination files relative to the source prefix.
+            missing_ok: True if it is OK to unlink a file that doesn't exist; False to
+                raise a FileNotFoundError in this case.
+            nthreads: The maximum number of threads to use.
+
+        Returns:
+            A list containing the paths of the unlink files. If a file failed to unlink,
+            the entry is the Exception that caused the failure. This list is in the same
+            order and has the same length as `sub_paths`.
+        """
+
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
+        results = {}
+        for sub_path, result in self._unlink_object_parallel(sub_paths, missing_ok,
+                                                             nthreads):
+            results[sub_path] = result
+
+        ret = []
+        for sub_path in sub_paths:
+            ret.append(results[sub_path])
+
+        return ret
+
+    def _unlink_object(self,
+                       sub_path: str,
+                       missing_ok: bool) -> str:
+        self.unlink(sub_path, missing_ok=missing_ok)
+        return sub_path
+
+    def _unlink_object_parallel(self,
+                                sub_paths: Sequence[str],
+                                missing_ok: bool,
+                                nthreads: int) -> Iterator[tuple[str,
+                                                                 str | BaseException]]:
+        with ThreadPoolExecutor(max_workers=nthreads) as executor:
+            future_to_paths = {executor.submit(self._unlink_object, x, missing_ok): x
+                               for x in sub_paths}
             for future in futures.as_completed(future_to_paths):
                 sub_path = future_to_paths[future]
                 exception = future.exception()
@@ -268,6 +361,7 @@ class FileCacheSourceFile(FileCacheSource):
     def __init__(self,
                  scheme: str,
                  remote: str,
+                 *,
                  anonymous: bool = False):
         """Initialization for the FileCacheLocal class.
 
@@ -283,18 +377,20 @@ class FileCacheSourceFile(FileCacheSource):
         if remote != '':
             raise ValueError(f'UNC shares are not supported: {remote}')
 
-        super().__init__(scheme, remote, anonymous)
+        super().__init__(scheme, remote, anonymous=anonymous)
 
         self._cache_subdir = ''
 
     @classmethod
     def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
+
         return ('file',)
 
     @classmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
+
         return False
 
     def exists(self,
@@ -369,6 +465,46 @@ class FileCacheSourceFile(FileCacheSource):
         # correct location.
         return local_path_p
 
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The absolute path of the directory.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored. The bool is True if the
+            returned name is a directory, False if it is a file.
+        """
+
+        sub_path_p = Path(sub_path)
+        for obj_name in sub_path_p.iterdir():
+            is_dir = obj_name.is_dir()
+            yield str(obj_name).replace('\\', '/'), is_dir
+
+    def unlink(self,
+               sub_path: str,
+               *,
+               missing_ok: bool = False) -> str:
+        """Remove the given object.
+
+        Parameters:
+            sub_path: The path of the file.
+            missing_ok: True if it is OK to unlink a file that doesn't exist; False to
+                raise a FileNotFoundError in this case.
+
+        Returns:
+            The sub_path.
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist and `missing_ok` is False.
+        """
+
+        Path(sub_path).unlink(missing_ok=missing_ok)
+
+        return sub_path
+
 
 class FileCacheSourceHTTP(FileCacheSource):
     """Class that provides access to files stored on a webserver."""
@@ -376,6 +512,7 @@ class FileCacheSourceHTTP(FileCacheSource):
     def __init__(self,
                  scheme: str,
                  remote: str,
+                 *,
                  anonymous: bool = False):
         """Initialization for the FileCacheHTTP class.
 
@@ -390,7 +527,7 @@ class FileCacheSourceHTTP(FileCacheSource):
         if remote == '':
             raise ValueError('remote parameter must have a value')
 
-        super().__init__(scheme, remote, anonymous)
+        super().__init__(scheme, remote, anonymous=anonymous)
 
         self._prefix_type = 'web'
         self._cache_subdir = (self._src_prefix
@@ -400,11 +537,13 @@ class FileCacheSourceHTTP(FileCacheSource):
     @classmethod
     def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
+
         return ('http', 'https')
 
     @classmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
+
         return False
 
     def exists(self,
@@ -412,7 +551,7 @@ class FileCacheSourceHTTP(FileCacheSource):
         """Check if a file exists without downloading it.
 
         Parameters:
-            sub_path: The path of the file on the webserver given by the source prefix.
+            sub_path: The path of the file on the webserver relative to the source prefix.
 
         Returns:
             True if the file (including the webserver) exists. Note that it is possible
@@ -452,6 +591,9 @@ class FileCacheSourceHTTP(FileCacheSource):
             The download is an atomic operation.
         """
 
+        if sub_path == '':
+            raise ValueError('sub_path can not be empty')
+
         local_path = Path(local_path)
 
         url = self._src_prefix_ + sub_path
@@ -483,6 +625,42 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         raise NotImplementedError
 
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The path of the directory on the webserver relative to the source
+                prefix.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored.
+        """
+
+        raise NotImplementedError
+
+    def unlink(self,
+               sub_path: str,
+               *,
+               missing_ok: bool = False) -> str:
+        """Remove the given object.
+
+        Parameters:
+            sub_path: The path of the file on the webserver relative to the source prefix
+                to delete.
+            missing_ok: True if it is OK to unlink a file that doesn't exist; False to
+                raise a FileNotFoundError in this case.
+
+        Returns:
+            The sub_path.
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist and `missing_ok` is False.
+        """
+
+        raise NotImplementedError
+
 
 class FileCacheSourceGS(FileCacheSource):
     """Class that provides access to files stored in Google Storage."""
@@ -490,6 +668,7 @@ class FileCacheSourceGS(FileCacheSource):
     def __init__(self,
                  scheme: str,
                  remote: str,
+                 *,
                  anonymous: bool = False):
         """Initialization for the FileCacheGS class.
 
@@ -504,7 +683,7 @@ class FileCacheSourceGS(FileCacheSource):
         if remote == '':
             raise ValueError('remote parameter must have a value')
 
-        super().__init__(scheme, remote, anonymous)
+        super().__init__(scheme, remote, anonymous=anonymous)
 
         self._client = (gs_storage.Client.create_anonymous_client()
                         if anonymous else gs_storage.Client())
@@ -515,11 +694,13 @@ class FileCacheSourceGS(FileCacheSource):
     @classmethod
     def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
+
         return ('gs',)
 
     @classmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
+
         return True
 
     def exists(self,
@@ -567,6 +748,9 @@ class FileCacheSourceGS(FileCacheSource):
 
             The download is an atomic operation.
         """
+
+        if sub_path == '':
+            raise ValueError('sub_path can not be empty')
 
         local_path = Path(local_path)
 
@@ -618,6 +802,66 @@ class FileCacheSourceGS(FileCacheSource):
 
         return local_path
 
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The path of the directory in the Google Storage bucket given
+                by the source prefix.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored.
+        """
+
+        if sub_path:
+            sub_prefix = f'{sub_path}/'
+        else:
+            sub_prefix = None
+        blobs = self._client.list_blobs(self._bucket_name,
+                                        prefix=sub_prefix, delimiter='/')
+
+        # Yield filenames
+        for blob in blobs:
+            if blob.name.rstrip('/') != sub_path:
+                yield f'{self._src_prefix_}{blob.name}', False
+
+        # Yield sub-directories
+        for prefix in blobs.prefixes:
+            prefix = prefix.rstrip('/')
+            if prefix != sub_path:
+                yield f'{self._src_prefix_}{prefix}', True
+
+    def unlink(self,
+               sub_path: str,
+               *,
+               missing_ok: bool = False) -> str:
+        """Remove the given object.
+
+        Parameters:
+            sub_path: The path of the file in the Google Storage bucket given by the
+                source prefix to delete.
+            missing_ok: True if it is OK to unlink a file that doesn't exist; False to
+                raise a FileNotFoundError in this case.
+
+        Returns:
+            The sub_path.
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist and `missing_ok` is False.
+        """
+
+        blob = self._bucket.blob(sub_path)
+
+        try:
+            blob.delete()
+        except Exception:
+            if not missing_ok:
+                raise FileNotFoundError
+
+        return sub_path
+
 
 class FileCacheSourceS3(FileCacheSource):
     """Class that provides access to files stored in AWS S3."""
@@ -625,6 +869,7 @@ class FileCacheSourceS3(FileCacheSource):
     def __init__(self,
                  scheme: str,
                  remote: str,
+                 *,
                  anonymous: bool = False):
         """Initialization for the FileCacheS3 class.
 
@@ -639,7 +884,7 @@ class FileCacheSourceS3(FileCacheSource):
         if remote == '':
             raise ValueError('remote parameter must have a value')
 
-        super().__init__(scheme, remote, anonymous)
+        super().__init__(scheme, remote, anonymous=anonymous)
 
         self._client = (boto3.client('s3',
                                      config=botocore.client.Config(
@@ -651,11 +896,13 @@ class FileCacheSourceS3(FileCacheSource):
     @classmethod
     def schemes(self) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
+
         return ('s3',)
 
     @classmethod
     def uses_anonymous(self) -> bool:
         """Whether this class has the concept of anonymous accesses."""
+
         return True
 
     def exists(self,
@@ -709,6 +956,9 @@ class FileCacheSourceS3(FileCacheSource):
             The download is an atomic operation.
         """
 
+        if sub_path == '':
+            raise ValueError('sub_path can not be empty')
+
         local_path = Path(local_path)
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -750,3 +1000,71 @@ class FileCacheSourceS3(FileCacheSource):
         self._client.upload_file(str(local_path), self._bucket_name, sub_path)
 
         return local_path
+
+    def iterdir_type(self,
+                     sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory.
+
+        Parameters:
+            sub_path: The path of the directory in the AWS S3 bucket given by the source
+                prefix.
+
+        Yields:
+            All files and sub-directories in the given directory, in no particular order.
+            Special directories ``.`` and ``..`` are ignored.
+        """
+
+        if sub_path:
+            sub_prefix = f'{sub_path}/'
+        else:
+            sub_prefix = ''
+        response = self._client.list_objects_v2(Bucket=self._bucket_name,
+                                                Prefix=sub_prefix, Delimiter='/')
+
+        if response is not None:
+            # Yield filenames
+            contents = response.get('Contents')
+            if contents is not None:
+                for content in contents:
+                    name = content.get('Key')
+                    if name is not None:
+                        if name.rstrip('/') != sub_path:
+                            yield f'{self._src_prefix_}{name}', False
+
+            # Yield sub-directories
+            contents2 = response.get('CommonPrefixes', [])
+            if contents2 is not None:
+                for content2 in contents2:
+                    prefix = content2.get('Prefix')
+                    if prefix is not None:
+                        prefix = str(prefix).rstrip('/')
+                        yield f'{self._src_prefix_}{prefix}', True
+
+    def unlink(self,
+               sub_path: str,
+               *,
+               missing_ok: bool = False) -> str:
+        """Remove the given object.
+
+        Parameters:
+            sub_path: The path of the file in the Google Storage bucket given by the
+                source prefix to delete.
+            missing_ok: True if it is OK to unlink a file that doesn't exist; False to
+                raise a FileNotFoundError in this case.
+
+        Returns:
+            The sub_path.
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist and `missing_ok` is False.
+        """
+
+        if not missing_ok:
+            # S3 doesn't raise an exception when the object doesn't exist so we have
+            # check separately.
+            if not self.exists(sub_path):
+                raise FileNotFoundError
+
+        self._client.delete_object(Bucket=self._bucket_name, Key=sub_path)
+
+        return sub_path

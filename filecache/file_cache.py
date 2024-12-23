@@ -17,8 +17,8 @@ import time
 from types import TracebackType
 from typing import (cast,
                     Any,
-                    Generator,
                     IO,
+                    Iterator,
                     Literal,
                     Optional,
                     Type,
@@ -50,6 +50,7 @@ _SCHEME_CLASSES: dict[str, type[FileCacheSource]] = {}
 
 def register_filecachesource(cls: type[FileCacheSource]) -> None:
     """Register one or more URL FileCacheSource subclasses as URL schemes."""
+
     for s in cls.schemes():
         _SCHEME_CLASSES[s] = cls
 
@@ -66,12 +67,14 @@ _GLOBAL_LOGGER: Logger | None = None
 
 def set_global_logger(logger: Logger | None) -> None:
     """Set the global logger for all FileCache instances that don't specify one."""
+
     global _GLOBAL_LOGGER
     _GLOBAL_LOGGER = logger
 
 
 def set_easy_logger() -> None:
     """Set a default logger that outputs all messages to stdout."""
+
     easy_logger = logging.getLogger(__name__)
     easy_logger.setLevel(logging.DEBUG)
 
@@ -89,6 +92,7 @@ def set_easy_logger() -> None:
 
 def get_global_logger() -> Logger | None:
     """Return the current global logger."""
+
     return _GLOBAL_LOGGER
 
 
@@ -264,41 +268,49 @@ class FileCache:
     @property
     def cache_dir(self) -> Path:
         """The top-level directory of the cache as a Path object."""
+
         return self._cache_dir
 
     @property
     def download_counter(self) -> int:
         """The number of actual file downloads that have taken place."""
+
         return self._download_counter
 
     @property
     def upload_counter(self) -> int:
         """The number of actual file uploads that have taken place."""
+
         return self._upload_counter
 
     @property
     def anonymous(self) -> bool:
         """The default bool indicating whether to make all cloud accesses anonymous."""
+
         return self._anonymous
 
     @property
     def lock_timeout(self) -> int:
         """The default timeout in seconds while waiting for a file lock."""
+
         return self._lock_timeout
 
     @property
     def nthreads(self) -> int:
         """The default number of threads to use for multiple-file operations."""
+
         return self._nthreads
 
     @property
     def delete_on_exit(self) -> bool:
         """A bool indicating whether this FileCache will be deleted on exit."""
+
         return self._delete_on_exit
 
     @property
     def is_mp_safe(self) -> bool:
         """A bool indicating whether this FileCache is multi-processor safe."""
+
         return self._is_mp_safe
 
     def _log_debug(self, msg: str) -> None:
@@ -333,8 +345,10 @@ class FileCache:
         elif len(parts) == 2:
             slash_split = parts[1].split('/', maxsplit=1)
             if len(slash_split) != 2:
-                raise ValueError(f'No path after remote: {url}')
-            remote, sub_path = slash_split
+                remote = parts[1]
+                sub_path = ''
+            else:
+                remote, sub_path = slash_split
             scheme = parts[0].lower()
             if scheme == 'file':
                 # All file accesses are absolute
@@ -348,7 +362,8 @@ class FileCache:
                 else:
                     # file:///dir/file
                     # We have to add the / back on the beginning
-                    sub_path = f'/{sub_path}'
+                    if sub_path:
+                        sub_path = f'/{sub_path}'
                 sub_path = str(Path(sub_path))
             if scheme not in _SCHEME_CLASSES:
                 raise ValueError(f'Unknown scheme {scheme} in {url}')
@@ -390,7 +405,8 @@ class FileCache:
 
         key = (scheme, remote, anonymous)
         if key not in _SOURCE_CACHE:
-            _SOURCE_CACHE[key] = _SCHEME_CLASSES[scheme](scheme, remote, anonymous)
+            _SOURCE_CACHE[key] = _SCHEME_CLASSES[scheme](scheme, remote,
+                                                         anonymous=anonymous)
 
         source = _SOURCE_CACHE[key]
 
@@ -1178,7 +1194,7 @@ class FileCache:
         source_dict: dict[str, list[tuple[int, FileCacheSource, str, Path]]] = {}
 
         # First find all the files that are either local or that we have already cached.
-        # For other files, create a list of just the files we need to retrieve and
+        # For other files, create a list of just the files we need to upload and
         # organize them by source; we use the source prefix to distinguish among them.
         self._log_debug('Performing multi-file upload of:')
         for idx, (source, sub_path, local_path) in enumerate(zip(sources,
@@ -1248,7 +1264,7 @@ class FileCache:
              anonymous: Optional[bool] = None,
              lock_timeout: Optional[int] = None,
              url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
-             **kwargs: Any) -> Generator[IO[Any]]:
+             **kwargs: Any) -> Iterator[IO[Any]]:
         """Retrieve+open or open+upload a file as a context manager.
 
         If `mode` is a read mode (like ``'r'`` or ``'rb'``) then the file will be first
@@ -1259,6 +1275,7 @@ class FileCache:
         Parameters:
             url: The filename to open.
             mode: The mode string as you would specify to Python's `open()` function.
+            **args: Any additional arguments are passed to the Python ``open()`` function.
             anonymous: If True, access cloud resources without specifying credentials. If
                 False, credentials must be initialized in the program's environment. If
                 None, use the default setting for this :class:`FileCache` instance.
@@ -1292,6 +1309,8 @@ class FileCache:
                 If this parameter is specified, it replaces the default translators for
                 this :class:`FileCache` instance. If this parameter is omitted, the
                 default translators are used.
+            **kwargs: Any additional arguments are passed to the Python ``open()``
+                function.
 
         Returns:
             The same object as would be returned by the normal `open()` function.
@@ -1309,6 +1328,243 @@ class FileCache:
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
             self.upload(url, anonymous=anonymous, url_to_path=url_to_path)
+
+    def iterdir(self,
+                url: str | Path,
+                *,
+                anonymous: Optional[bool] = None,
+                ) -> Iterator[str]:
+        """Enumerate the files and sub-directories in a directory.
+
+        This function always accesses a remote location (ignoring the local cache),
+        if appropriate, because there is no way to know if the local cache contains
+        all of the files and sub-directories present in the remote.
+
+        Parameters:
+            url: The URL of the directory, including any source prefix.
+            anonymous: If specified, override the default setting for anonymous access.
+                If True, access cloud resources without specifying credentials. If False,
+                credentials must be initialized in the program's environment.
+
+        Yields:
+            All files and sub-directories in the directory given by the url, in no
+            particular order. Special directories ``.`` and ``..`` are ignored.
+        """
+
+        self._log_debug(f'Iterating directory contents: {url}')
+
+        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None)
+
+        for obj_name, _ in source.iterdir_type(sub_path):
+            yield obj_name
+
+    def iterdir_type(self,
+                     url: str | Path,
+                     *,
+                     anonymous: Optional[bool] = None,
+                     ) -> Iterator[tuple[str, bool]]:
+        """Enumerate the files and sub-dirs in a directory indicating which is a dir.
+
+        This function always accesses a remote location (ignoring the local cache),
+        if appropriate, because there is no way to know if the local cache contains
+        all of the files and sub-directories present in the remote.
+
+        Parameters:
+            url: The URL of the directory, including any source prefix.
+            anonymous: If specified, override the default setting for anonymous access.
+                If True, access cloud resources without specifying credentials. If False,
+                credentials must be initialized in the program's environment.
+
+        Yields:
+            All files and sub-directories in the directory given by the url, in no
+            particular order. Special directories ``.`` and ``..`` are ignored. The bool
+            is True if the returned name is a directory, False if it is a file.
+        """
+
+        self._log_debug(f'Iterating directory contents: {url}')
+
+        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None)
+
+        for obj_name, is_dir in source.iterdir_type(sub_path):
+            yield obj_name, is_dir
+
+    def unlink(self,
+               url: StrOrPathOrSeqType,
+               *,
+               missing_ok: bool = False,
+               anonymous: Optional[bool] = None,
+               nthreads: Optional[int] = None,
+               exception_on_fail: bool = True,
+               url_to_path: Optional[UrlToPathFuncOrSeqType] = None
+               ) -> str | Exception | list[str | Exception]:
+        """Remove a file, including any locally cached copy.
+
+        Parameters:
+            url: The URL of the file, including any source prefix. If `url` is a list or
+                tuple, all URLs are unlinked.
+            missing_ok: True if it is OK to unlink a file that doesn't exist; False to
+                raise a FileNotFoundError in this case.
+            anonymous: If specified, override the default setting for anonymous access.
+                If True, access cloud resources without specifying credentials. If False,
+                credentials must be initialized in the program's environment.
+            nthreads: The maximum number of threads to use when doing multiple-file
+                retrieval or upload. If None, use the default value for this
+                :class:`FileCache` instance.
+            exception_on_fail: If True, if any file does not exist or upload fails an
+                exception is raised. If False, the function returns normally and any
+                failed upload is marked with the Exception that caused the failure in
+                place of the returned path.
+            url_to_path: The function (or list of functions) that is used to translate
+                URLs into local paths. By default, :class:`FileCache` uses a directory
+                hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
+                where ``source`` is the URL prefix converted to a filesystem-friendly
+                format (e.g. ``gs://bucket`` is converted to ``gs_bucket``). A
+                user-specified translator function takes five arguments::
+
+                    func(scheme: str, remote: str, path: str, cache_dir: Path,
+                         cache_subdir: str) -> str | Path
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, `path` is the rest of the URL, `cache_dir` is the top-level
+                directory of the cache (``<cache_dir>/<cache_name>``), and `cache_subdir`
+                is the subdirectory specific to this scheme and remote. If the translator
+                wants to override the default translation, it can return a Path.
+                Otherwise, it returns None. If the returned Path is relative, if will be
+                appended to `cache_dir`; if it is absolute, it will be used directly (be
+                very careful with this, as it has the ability to access files outside of
+                the cache directory). If more than one translator is specified, they are
+                called in order until one returns a Path, or it falls through to the
+                default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
+
+        Returns:
+            The Path of the filename in the cache directory (or the original absolute path
+            if local). If `url` was a list or tuple of paths, then instead return a list
+            of Paths of the filenames in the temporary directory (or the original full
+            path if local). If `exception_on_fail` is False, any Path may be an Exception
+            if that file does not exist and missing_ok is True.
+
+        Notes:
+            If a URL points to a remote location, the locally cached version (if any) is
+            only removed if the unlink of the remote location succeeded.
+
+        Raises:
+            FileNotFoundError: If a file to unlink does not exist or the unlink failed,
+                and exception_on_fail is True.
+        """
+
+        nthreads = self._validate_nthreads(nthreads)
+
+        if isinstance(url, (list, tuple)):
+            sources = []
+            sub_paths = []
+            local_paths = []
+            url2 = [str(x) for x in url]
+            for one_url in url2:
+                source, sub_path, local_path = self._get_source_and_paths(one_url,
+                                                                          anonymous,
+                                                                          url_to_path)
+                sources.append(source)
+                sub_paths.append(sub_path)
+                local_paths.append(local_path)
+            return self._unlink_multi(url2, sources, sub_paths, local_paths,
+                                      missing_ok, nthreads, exception_on_fail)
+
+        url3 = str(url)
+        source, sub_path, local_path = self._get_source_and_paths(url3, anonymous,
+                                                                  url_to_path)
+
+        self._log_debug(f'Unlinking {url3}')
+        try:
+            source.unlink(sub_path, missing_ok=missing_ok)
+            local_path.unlink(missing_ok=True)  # Don't care if it's cached or not
+        except Exception as e:
+            if exception_on_fail:
+                raise e
+            else:
+                return e
+
+        return sub_path
+
+    def _unlink_multi(self,
+                      urls: list[str],
+                      sources: list[FileCacheSource],
+                      sub_paths: list[str],
+                      local_paths: list[Path],
+                      missing_ok: bool,
+                      nthreads: int,
+                      exception_on_fail: bool) -> list[str | Exception]:
+        """Unlink multiple files."""
+
+        func_ret: list[str | BaseException | None] = [None] * len(sources)
+
+        files_not_exist = []
+
+        source_dict: dict[str, list[tuple[int, FileCacheSource, str, Path]]] = {}
+
+        # First find all the files that are either local or that we have already cached.
+        # For other files, create a list of just the files we need to retrieve and
+        # organize them by source; we use the source prefix to distinguish among them.
+        self._log_debug('Performing multi-file unlink of:')
+        for idx, (url, source, sub_path, local_path) in enumerate(zip(urls, sources,
+                                                                      sub_paths,
+                                                                      local_paths)):
+            pfx = source._src_prefix_
+            if source.primary_scheme() == 'file':
+                try:
+                    source.unlink(sub_path, missing_ok=missing_ok)
+                    func_ret[idx] = str(url)
+                    self._log_debug(f'  Local file     {pfx}{sub_path}')
+                except FileNotFoundError as e:
+                    self._log_debug(f'  LOCAL FILE DOES NOT EXIST {pfx}{sub_path}')
+                    files_not_exist.append(sub_path)
+                    func_ret[idx] = e
+                continue
+            assert '://' in pfx
+            if pfx not in source_dict:
+                source_dict[pfx] = []
+            source_dict[pfx].append((idx, source, sub_path, local_path))
+
+        # Now go through the sources, package up the paths to unlink, and unlink
+        # them all at once
+        for source_pfx in source_dict:
+            source = source_dict[source_pfx][0][1]  # All the same
+            source_idxes, _, source_sub_paths, source_local_paths = list(
+                zip(*source_dict[source_pfx]))
+            self._log_debug(
+                f'Performing multi-file unlink for prefix {source_pfx}:')
+            for sub_path in source_sub_paths:
+                self._log_debug(f'  {sub_path}')
+            rets = source.unlink_multi(source_sub_paths, missing_ok=missing_ok,
+                                       nthreads=nthreads)
+            assert len(source_idxes) == len(rets)
+            for ret2, local_path, url in zip(rets, source_local_paths, urls):
+                if isinstance(ret2, Exception):
+                    self._log_debug(f'    Unlink failed: {url} {ret2}')
+                    files_not_exist.append(str(url))
+                else:
+                    local_path.unlink(missing_ok=True)  # Remove from cache
+
+            for source_ret, source_idx in zip(rets, source_idxes):
+                if isinstance(source_ret, Exception):
+                    func_ret[source_idx] = source_ret
+                else:
+                    # We want to return the entire URL, not just the sub_path,
+                    # so we have to add the prefix back on
+                    func_ret[source_idx] = str(urls[source_idx])
+
+        if exception_on_fail and not missing_ok:
+            exc_str = ''
+            if files_not_exist:
+                exc_str += f"File(s) do not exist: {', '.join(files_not_exist)}"
+            if exc_str:
+                raise FileNotFoundError(exc_str)
+
+        return cast(list[Union[str, Exception]], func_ret)
 
     def new_path(self,
                  path: str | Path | FCPath,

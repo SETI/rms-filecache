@@ -46,6 +46,8 @@ GS_WRITABLE_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests-writable'
 S3_WRITABLE_TEST_BUCKET_ROOT = 's3://rms-filecache-tests-writable'
 WRITABLE_CLOUD_PREFIXES = (GS_WRITABLE_TEST_BUCKET_ROOT, S3_WRITABLE_TEST_BUCKET_ROOT)
 
+INDEXABLE_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
+
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
@@ -71,9 +73,9 @@ def _compare_to_expected_path(cache_path, filename):
     mode = 'r'
     if filename.endswith('.bin'):
         mode = 'rb'
-    with open(cache_path, mode) as fp:
+    with open(str(cache_path), mode) as fp:
         cache_data = fp.read()
-    with open(local_path, mode) as fp:
+    with open(str(local_path), mode) as fp:
         local_data = fp.read()
     assert cache_data == local_data
 
@@ -83,15 +85,15 @@ def _compare_to_expected_data(cache_data, filename):
     mode = 'r'
     if filename.endswith('.bin'):
         mode = 'rb'
-    with open(local_path, mode) as fp:
+    with open(str(local_path), mode) as fp:
         local_data = fp.read()
     assert cache_data == local_data
 
 
 def _copy_file(src_file, dest_file):
-    with open(src_file, 'rb') as fp:
+    with open(str(src_file), 'rb') as fp:
         data = fp.read()
-    with open(dest_file, 'wb') as fp:
+    with open(str(dest_file), 'wb') as fp:
         fp.write(data)
 
 
@@ -491,7 +493,7 @@ def test_local_retr_pfx_good(cache_name):
     for pass_no in range(5):  # Make sure the expected dir doesn't get modified
         with FileCache(cache_name=cache_name) as fc:
             lf = fc.new_path(EXPECTED_DIR)
-            assert lf.is_local
+            assert lf.is_local()
             for filename in EXPECTED_FILENAMES:
                 path = lf.retrieve(filename)
                 assert str(path).replace('\\', '/') == \
@@ -531,7 +533,7 @@ def test_cloud_retr_good(cache_name, prefix):
 def test_cloud_retr_pfx_good(cache_name, prefix):
     with FileCache(cache_name=cache_name) as fc:
         pfx = fc.new_path(prefix, anonymous=True)
-        assert not pfx.is_local
+        assert not pfx.is_local()
         for filename in LIMITED_FILENAMES:
             path = pfx.retrieve(filename)
             assert str(path).replace('\\', '/').endswith(filename)
@@ -1895,6 +1897,484 @@ def test_url_bad():
             fc.retrieve('bad://bad-bucket/file.txt')
         with pytest.raises(ValueError):
             fc.retrieve('bad://non-existent.txt')
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_iterdir(prefix):
+    wprefix = str(prefix).replace('\\', '/')
+    with FileCache(anonymous=True) as fc:
+        objs = sorted(list(fc.iterdir(prefix)))
+        assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
+        objs = sorted(list(fc.iterdir(f'{prefix}/subdir1')))
+        assert objs == [f'{wprefix}/subdir1/lorem1.txt',
+                        f'{wprefix}/subdir1/subdir2a',
+                        f'{wprefix}/subdir1/subdir2b']
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_iterdir_type(prefix):
+    wprefix = str(prefix).replace('\\', '/')
+    with FileCache(anonymous=True) as fc:
+        objs = sorted(list(fc.iterdir_type(prefix)))
+        assert objs == [(f'{wprefix}/lorem1.txt', False), (f'{wprefix}/subdir1', True)]
+        objs = sorted(list(fc.iterdir_type(f'{prefix}/subdir1')))
+        assert objs == [(f'{wprefix}/subdir1/lorem1.txt', False),
+                        (f'{wprefix}/subdir1/subdir2a', True),
+                        (f'{wprefix}/subdir1/subdir2b', True)]
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_iterdir_pfx(prefix):
+    wprefix = str(prefix).replace('\\', '/')
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix)
+        objs = sorted([str(x) for x in pfx1.iterdir()])
+        assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
+        pfx2 = fc.new_path(f'{prefix}/subdir1')
+        objs = sorted([str(x) for x in pfx2.iterdir()])
+        assert objs == [f'{wprefix}/subdir1/lorem1.txt',
+                        f'{wprefix}/subdir1/subdir2a',
+                        f'{wprefix}/subdir1/subdir2b']
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_iterdir_type_pfx(prefix):
+    wprefix = str(prefix).replace('\\', '/')
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix)
+        objs = sorted([(str(x), y) for x, y in pfx1.iterdir_type()])
+        assert objs == [(f'{wprefix}/lorem1.txt', False), (f'{wprefix}/subdir1', True)]
+        pfx2 = fc.new_path(f'{prefix}/subdir1')
+        objs = sorted([(str(x), y) for x, y in pfx2.iterdir_type()])
+        assert objs == [(f'{wprefix}/subdir1/lorem1.txt', False),
+                        (f'{wprefix}/subdir1/subdir2a', True),
+                        (f'{wprefix}/subdir1/subdir2b', True)]
+
+
+def test_local_unlink_good():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir).expanduser().resolve()
+        with FileCache(cache_name=None) as fc:
+            path = temp_dir / 'test_file.txt'
+            path.write_text('Hello')
+            assert path.exists()
+            assert fc.unlink(path) == str(path).replace('\\', '/')
+            assert not path.exists()
+
+
+def test_local_unlink_multi_good():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir).expanduser().resolve()
+        with FileCache(cache_name=None) as fc:
+            path1 = temp_dir / 'test_file1.txt'
+            path2 = temp_dir / 'test_file2.txt'
+            path3 = temp_dir / 'test_file3.txt'
+            path1.write_text('Hello')
+            path2.write_text('Hello')
+            path3.write_text('Hello')
+            assert fc.unlink([path1, path2, path3]) == [str(path1), str(path2),
+                                                        str(path3)]
+            assert not path1.exists()
+            assert not path2.exists()
+            assert not path3.exists()
+
+
+def test_local_unlink_bad():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir).expanduser().resolve()
+        with FileCache(cache_name=None) as fc:
+            path = temp_dir / 'test_file.txt'
+            path2 = temp_dir / 'test_file2.txt'
+            path.write_text('Hello')
+            assert path.exists()
+            assert not path2.exists()
+            assert fc.unlink(path, exception_on_fail=False) == \
+                str(path).replace('\\', '/')
+            with pytest.raises(FileNotFoundError):
+                assert fc.unlink(path2)
+            assert isinstance(fc.unlink(path2, exception_on_fail=False), FileNotFoundError)
+
+
+def test_local_unlink_multi_bad():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir).expanduser().resolve()
+        with FileCache(cache_name=None) as fc:
+            path1 = temp_dir / 'test_file1.txt'
+            path2 = temp_dir / 'test_file2.txt'
+            path3 = temp_dir / 'test_file3.txt'
+            path1.write_text('Hello')
+            path3.write_text('Hello')
+            with pytest.raises(FileNotFoundError):
+                fc.unlink([path1, path2, path3])
+            assert not path1.exists()
+            assert not path2.exists()
+            assert not path3.exists()
+
+            path1.write_text('Hello')
+            path3.write_text('Hello')
+            ret = fc.unlink([path1, path2, path3], exception_on_fail=False)
+            assert ret[0] == str(path1)
+            assert isinstance(ret[1], FileNotFoundError)
+            assert ret[2] == str(path3)
+            assert not path1.exists()
+            assert not path2.exists()
+            assert not path3.exists()
+
+
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_cloud_unlink(prefix):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = f'{prefix}/{uuid.uuid4()}'
+        path = f'{new_path}/test_file.txt'
+        local_path = fc.get_local_path(path)
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
+        assert local_path.exists()
+        assert fc.exists(path)
+        assert not fc.exists(path, bypass_cache=True)
+        with pytest.raises(FileNotFoundError):
+            fc.unlink(path, missing_ok=False)
+        assert local_path.exists()
+        assert isinstance(fc.unlink(path, missing_ok=False, exception_on_fail=False),
+                          FileNotFoundError)
+
+        fc.unlink(path, missing_ok=True)
+        assert not local_path.exists()
+        assert not fc.exists(path)
+        assert not fc.exists(path, bypass_cache=True)
+
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
+        fc.upload(path)
+        assert local_path.exists()
+        assert fc.exists(path)
+        assert fc.exists(path, bypass_cache=True)
+        fc.unlink(path)
+        assert not local_path.exists()
+        assert not fc.exists(path)
+        assert not fc.exists(path, bypass_cache=True)
+
+
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_cloud_unlink_multi(prefix):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = f'{prefix}/{uuid.uuid4()}'
+        paths = [f'{new_path}/test_file{x}.txt' for x in range(5)]
+        local_paths = [fc.get_local_path(x) for x in paths]
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
+            assert lp.exists()
+            assert fc.exists(p)
+            assert not fc.exists(p, bypass_cache=True)
+        with pytest.raises(FileNotFoundError):
+            fc.unlink(paths, missing_ok=False)
+        for lp in local_paths:
+            assert lp.exists()
+
+        ret = fc.unlink(paths, exception_on_fail=False)
+        for r in ret:
+            assert isinstance(r, FileNotFoundError)
+        for lp in local_paths:
+            assert lp.exists()
+
+        ret = fc.unlink(paths, missing_ok=True)
+        assert ret == paths
+        for lp in local_paths:
+            assert not lp.exists()
+        for p in paths:
+            assert not fc.exists(p)
+            assert not fc.exists(p, bypass_cache=True)
+
+        for i, (lp, p) in enumerate(zip(local_paths, paths)):
+            if i != 2:
+                _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
+                assert lp.exists()
+                assert fc.exists(p)
+                assert not fc.exists(p, bypass_cache=True)
+            else:
+                assert not lp.exists()
+                assert not fc.exists(p)
+                assert not fc.exists(p, bypass_cache=True)
+        fc.upload(paths, exception_on_fail=False)
+        with pytest.raises(FileNotFoundError):
+            fc.unlink(paths, missing_ok=False)
+        for lp in local_paths:
+            assert not lp.exists()
+        for p in paths:
+            assert not fc.exists(p, bypass_cache=True)
+
+        for i, (lp, p) in enumerate(zip(local_paths, paths)):
+            if i != 2:
+                _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
+                assert lp.exists()
+                assert fc.exists(p)
+                assert not fc.exists(p, bypass_cache=True)
+            else:
+                assert not lp.exists()
+                assert not fc.exists(p)
+                assert not fc.exists(p, bypass_cache=True)
+        fc.upload(paths, exception_on_fail=False)
+
+        ret = fc.unlink(paths, exception_on_fail=False)
+        for i, r in enumerate(ret):
+            if i != 2:
+                assert r == paths[i]
+            else:
+                assert isinstance(r, FileNotFoundError)
+        for lp in local_paths:
+            assert not lp.exists()
+        for p in paths:
+            assert not fc.exists(p, bypass_cache=True)
+
+        for i, (lp, p) in enumerate(zip(local_paths, paths)):
+            if i != 2:
+                _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
+                assert lp.exists()
+                assert fc.exists(p)
+                assert not fc.exists(p, bypass_cache=True)
+            else:
+                assert not lp.exists()
+                assert not fc.exists(p)
+                assert not fc.exists(p, bypass_cache=True)
+        fc.upload(paths, exception_on_fail=False)
+
+        ret = fc.unlink(paths, missing_ok=True, exception_on_fail=False)
+        for i, r in enumerate(ret):
+            assert r == paths[i]
+        for lp in local_paths:
+            assert not lp.exists()
+        for p in paths:
+            assert not fc.exists(p, bypass_cache=True)
+
+
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_cloud_unlink_multi_pfx(prefix):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = f'{prefix}/{uuid.uuid4()}'
+        pfx = fc.new_path(new_path, anonymous=True)
+        paths = [f'test_file{x}.txt' for x in range(5)]
+        local_paths = [pfx.get_local_path(x) for x in paths]
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
+            assert lp.exists()
+            assert pfx.exists(p)
+            assert not pfx.exists(p, bypass_cache=True)
+        with pytest.raises(FileNotFoundError):
+            pfx.unlink(paths, missing_ok=False)
+        for lp in local_paths:
+            assert lp.exists()
+
+        ret = pfx.unlink(paths, exception_on_fail=False)
+        for r in ret:
+            assert isinstance(r, FileNotFoundError)
+        for lp in local_paths:
+            assert lp.exists()
+
+        ret = pfx.unlink(paths, missing_ok=True)
+        assert ret == [f'{new_path}/{x}' for x in paths]
+        for lp in local_paths:
+            assert not lp.exists()
+        for p in paths:
+            assert not pfx.exists(p)
+            assert not pfx.exists(p, bypass_cache=True)
+
+        for i, (lp, p) in enumerate(zip(local_paths, paths)):
+            if i != 2:
+                _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
+                assert lp.exists()
+                assert pfx.exists(p)
+                assert not pfx.exists(p, bypass_cache=True)
+            else:
+                assert not lp.exists()
+                assert not pfx.exists(p)
+                assert not pfx.exists(p, bypass_cache=True)
+        pfx.upload(paths, exception_on_fail=False)
+        with pytest.raises(FileNotFoundError):
+            pfx.unlink(paths, missing_ok=False)
+        for lp in local_paths:
+            assert not lp.exists()
+        for p in paths:
+            assert not pfx.exists(p, bypass_cache=True)
+
+        for i, (lp, p) in enumerate(zip(local_paths, paths)):
+            if i != 2:
+                _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
+                assert lp.exists()
+                assert pfx.exists(p)
+                assert not pfx.exists(p, bypass_cache=True)
+            else:
+                assert not lp.exists()
+                assert not pfx.exists(p)
+                assert not pfx.exists(p, bypass_cache=True)
+        pfx.upload(paths, exception_on_fail=False)
+
+        ret = pfx.unlink(paths, exception_on_fail=False)
+        for i, r in enumerate(ret):
+            if i != 2:
+                assert r == f'{new_path}/{paths[i]}'
+            else:
+                assert isinstance(r, FileNotFoundError)
+        for lp in local_paths:
+            assert not lp.exists()
+        for p in paths:
+            assert not pfx.exists(p, bypass_cache=True)
+
+        for i, (lp, p) in enumerate(zip(local_paths, paths)):
+            if i != 2:
+                _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
+                assert lp.exists()
+                assert pfx.exists(p)
+                assert not pfx.exists(p, bypass_cache=True)
+            else:
+                assert not lp.exists()
+                assert not pfx.exists(p)
+                assert not pfx.exists(p, bypass_cache=True)
+        pfx.upload(paths, exception_on_fail=False)
+
+        ret = pfx.unlink(paths, missing_ok=True, exception_on_fail=False)
+        for i, r in enumerate(ret):
+            assert r == f'{new_path}/{paths[i]}'
+        for lp in local_paths:
+            assert not lp.exists()
+        for p in paths:
+            assert not pfx.exists(p, bypass_cache=True)
+
+
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_cloud_unlink_pfx(prefix):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = f'{prefix}/{uuid.uuid4()}'
+        path = 'test_file.txt'
+        pfx = fc.new_path(new_path, anonymous=True)
+        local_path = pfx.get_local_path(path)
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
+        assert local_path.exists()
+        assert pfx.exists(path)
+        assert not pfx.exists(path, bypass_cache=True)
+        with pytest.raises(FileNotFoundError):
+            pfx.unlink(path)
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
+        pfx.unlink(path, missing_ok=True)
+        assert not local_path.exists()
+        assert not pfx.exists(path)
+        assert not pfx.exists(path, bypass_cache=True)
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
+        pfx.upload(path)
+        assert local_path.exists()
+        assert pfx.exists(path)
+        assert pfx.exists(path, bypass_cache=True)
+        pfx.unlink(path)
+        assert not local_path.exists()
+        assert not pfx.exists(path)
+        assert not pfx.exists(path, bypass_cache=True)
+
+
+def test_local_rename():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = FCPath(Path(temp_dir).expanduser().resolve())
+        with FileCache(cache_name=None):
+            path1 = temp_dir / 'test_file1.txt'
+            path2 = temp_dir / 'test_file2.txt'
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], path1)
+            assert path1.exists()
+            assert not path2.exists()
+            path1.rename(path2)
+            assert not path1.exists()
+            assert path2.exists()
+            _compare_to_expected_path(path2, LIMITED_FILENAMES[0])
+
+            with pytest.raises(FileNotFoundError):
+                path1.rename(path2)
+
+
+def test_local_replace():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = FCPath(Path(temp_dir).expanduser().resolve())
+        with FileCache(cache_name=None):
+            path1 = temp_dir / 'test_file1.txt'
+            path2 = temp_dir / 'test_file2.txt'
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], path1)
+            assert path1.exists()
+            assert not path2.exists()
+            path1.replace(path2)
+            assert not path1.exists()
+            assert path2.exists()
+            _compare_to_expected_path(path2, LIMITED_FILENAMES[0])
+
+            with pytest.raises(FileNotFoundError):
+                path1.replace(path2)
+
+
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_cloud_rename_good(prefix):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = fc.new_path(f'{prefix}/{uuid.uuid4()}')
+        path1 = new_path / 'test_file1.txt'
+        path2 = new_path / 'test_file2.txt'
+        local_path1 = path1.get_local_path()
+        local_path2 = path2.get_local_path()
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path1)
+        assert path1.exists()
+        assert not path1.exists(bypass_cache=True)
+        assert not path2.exists()
+        path1.rename(path2)
+        assert not local_path1.exists()
+        assert local_path2.exists()
+        path2.unlink()
+
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = fc.new_path(f'{prefix}/{uuid.uuid4()}')
+        path1 = new_path / 'test_file1.txt'
+        path2 = new_path / 'test_file2.txt'
+        local_path1 = path1.get_local_path()
+        local_path2 = path2.get_local_path()
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path1)
+        path1.upload()
+        assert path1.exists(bypass_cache=True)
+        assert not path2.exists()
+        path1.rename(path2)
+        assert not local_path1.exists()
+        assert not path1.exists()
+        assert not path1.exists(bypass_cache=True)
+        assert local_path2.exists()
+        assert path2.exists()
+        assert path2.exists(bypass_cache=True)
+        _compare_to_expected_path(local_path2, LIMITED_FILENAMES[0])
+
+        path2.get_local_path().unlink()
+        path2.retrieve()
+        _compare_to_expected_path(local_path2, LIMITED_FILENAMES[0])
+
+
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_cloud_rename_bad(prefix):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = fc.new_path(f'{prefix}/{uuid.uuid4()}')
+        path1 = new_path / 'test_file1.txt'
+        path2 = new_path / 'test_file2.txt'
+        with pytest.raises(FileNotFoundError):
+            path1.rename(path2)
+        assert not path1.exists()
+        assert not path2.exists()
+
+
+def test_rename_bad():
+    gpath = FCPath(f'{GS_TEST_BUCKET_ROOT}/{uuid.uuid4()}')
+    spath = FCPath(f'{S3_TEST_BUCKET_ROOT}/{uuid.uuid4()}')
+    gpath1 = gpath / 'test_file1.txt'
+    spath1 = spath / 'test_file1.txt'
+    apath1 = '/tmp/test_file1.txt'
+    lpath1 = 'test_file1.txt'
+    fpath1 = FCPath('/tmp/test_file1.txt')
+    flpath1 = FCPath('test_file1.txt')
+    with pytest.raises(ValueError):
+        flpath1.rename(apath1)
+    with pytest.raises(ValueError):
+        fpath1.rename(flpath1)
+    with pytest.raises(ValueError):
+        fpath1.rename(lpath1)
+    with pytest.raises(ValueError):
+        gpath1.rename(spath1)
+    with pytest.raises(ValueError):
+        fpath1.rename(gpath1)
 
 
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK
