@@ -73,9 +73,9 @@ def _compare_to_expected_path(cache_path, filename):
     mode = 'r'
     if filename.endswith('.bin'):
         mode = 'rb'
-    with open(cache_path, mode) as fp:
+    with open(str(cache_path), mode) as fp:
         cache_data = fp.read()
-    with open(local_path, mode) as fp:
+    with open(str(local_path), mode) as fp:
         local_data = fp.read()
     assert cache_data == local_data
 
@@ -85,15 +85,15 @@ def _compare_to_expected_data(cache_data, filename):
     mode = 'r'
     if filename.endswith('.bin'):
         mode = 'rb'
-    with open(local_path, mode) as fp:
+    with open(str(local_path), mode) as fp:
         local_data = fp.read()
     assert cache_data == local_data
 
 
 def _copy_file(src_file, dest_file):
-    with open(src_file, 'rb') as fp:
+    with open(str(src_file), 'rb') as fp:
         data = fp.read()
-    with open(dest_file, 'wb') as fp:
+    with open(str(dest_file), 'wb') as fp:
         fp.write(data)
 
 
@@ -2265,6 +2265,113 @@ def test_cloud_unlink_pfx(prefix):
         assert not local_path.exists()
         assert not pfx.exists(path)
         assert not pfx.exists(path, bypass_cache=True)
+
+
+def test_local_rename():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = FCPath(Path(temp_dir).expanduser().resolve())
+        with FileCache(cache_name=None):
+            path1 = temp_dir / 'test_file1.txt'
+            path2 = temp_dir / 'test_file2.txt'
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], path1)
+            assert path1.exists()
+            assert not path2.exists()
+            path1.rename(path2)
+            assert not path1.exists()
+            assert path2.exists()
+            _compare_to_expected_path(path2, LIMITED_FILENAMES[0])
+
+            with pytest.raises(FileNotFoundError):
+                path1.rename(path2)
+
+
+def test_local_replace():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = FCPath(Path(temp_dir).expanduser().resolve())
+        with FileCache(cache_name=None):
+            path1 = temp_dir / 'test_file1.txt'
+            path2 = temp_dir / 'test_file2.txt'
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], path1)
+            assert path1.exists()
+            assert not path2.exists()
+            path1.replace(path2)
+            assert not path1.exists()
+            assert path2.exists()
+            _compare_to_expected_path(path2, LIMITED_FILENAMES[0])
+
+            with pytest.raises(FileNotFoundError):
+                path1.replace(path2)
+
+
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_cloud_rename_good(prefix):
+    new_path = FCPath(f'{prefix}/{uuid.uuid4()}')
+    path1 = new_path / 'test_file1.txt'
+    path2 = new_path / 'test_file2.txt'
+    with FileCache(cache_name=None):
+        local_path1 = path1.get_local_path()
+        local_path2 = path2.get_local_path()
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path1)
+        assert path1.exists()
+        assert not path1.exists(bypass_cache=True)
+        assert not path2.exists()
+        path1.rename(path2)
+        assert not local_path1.exists()
+        assert local_path2.exists()
+        path2.unlink()
+
+    with FileCache(cache_name=None):
+        local_path1 = path1.get_local_path()
+        local_path2 = path2.get_local_path()
+        _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path1)
+        path1.upload()
+        assert path1.exists(bypass_cache=True)
+        assert not path2.exists()
+        path1.rename(path2)
+        assert not local_path1.exists()
+        assert not path1.exists()
+        assert not path1.exists(bypass_cache=True)
+        assert local_path2.exists()
+        assert path2.exists()
+        assert path2.exists(bypass_cache=True)
+        _compare_to_expected_path(local_path2, LIMITED_FILENAMES[0])
+
+        path2.get_local_path().unlink()
+        path2.retrieve()
+        _compare_to_expected_path(local_path2, LIMITED_FILENAMES[0])
+
+
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_cloud_rename_bad(prefix):
+    new_path = FCPath(f'{prefix}/{uuid.uuid4()}')
+    path1 = new_path / 'test_file1.txt'
+    path2 = new_path / 'test_file2.txt'
+    with FileCache(cache_name=None):
+        with pytest.raises(FileNotFoundError):
+            path1.rename(path2)
+        assert not path1.exists()
+        assert not path2.exists()
+
+
+def test_rename_bad():
+    gpath = FCPath(f'{GS_TEST_BUCKET_ROOT}/{uuid.uuid4()}')
+    spath = FCPath(f'{S3_TEST_BUCKET_ROOT}/{uuid.uuid4()}')
+    gpath1 = gpath / 'test_file1.txt'
+    spath1 = spath / 'test_file1.txt'
+    apath1 = '/tmp/test_file1.txt'
+    lpath1 = 'test_file1.txt'
+    fpath1 = FCPath('/tmp/test_file1.txt')
+    flpath1 = FCPath('test_file1.txt')
+    with pytest.raises(ValueError):
+        flpath1.rename(apath1)
+    with pytest.raises(ValueError):
+        fpath1.rename(flpath1)
+    with pytest.raises(ValueError):
+        fpath1.rename(lpath1)
+    with pytest.raises(ValueError):
+        gpath1.rename(spath1)
+    with pytest.raises(ValueError):
+        fpath1.rename(gpath1)
 
 
 # THIS MUST BE AT THE END IN ORDER FOR CODE COVERAGE TO WORK

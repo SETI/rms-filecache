@@ -1276,7 +1276,10 @@ class FCPath:
         location (e.g. both local files or both in the same GS bucket). Because cloud
         platforms do not support renaming of files, this is accomplished by downloading
         the source file, uploading it with the new name, and deleting the original
-        version. If the target already exists, it will be overwritten.
+        version. If the target already exists, it will be overwritten. If the downloading
+        or uploading fails, the copy in the local cache is removed to eliminate ambiguity.
+        If there is only a copy in the local cache and the source path does not exist on
+        the remote, the rename will still succeed by uploading a copy to the target path.
 
         Parameters:
             target: The path to rename to.
@@ -1305,6 +1308,7 @@ class FCPath:
 
         if self.is_local():
             # Local to local - just do an OS rename and be done with it
+            target.parent.mkdir(parents=True, exist_ok=True)
             self.as_pathlib().rename(target.as_pathlib())
             return target
 
@@ -1314,12 +1318,16 @@ class FCPath:
         local_path = cast(Path, self.retrieve())
         target_local_path = cast(Path, target.get_local_path())
         local_path.rename(target_local_path)  # Rename in the cache
-        target.upload()  # Upload the new version
-        self.unlink()  # Delete the old version
+        try:
+            target.upload()  # Upload the new version
+        except Exception:
+            target_local_path.unlink(missing_ok=True)
+            raise
+        self.unlink(missing_ok=True)  # Delete the old version
 
         return target
 
-    def replace(self, target: str | FCPath) -> None:
+    def replace(self, target: str | FCPath) -> FCPath:
         """Rename this path to the target path, overwriting if that path exists.
 
         Both the source and target paths must be absolute, and must be in the same
@@ -1335,7 +1343,7 @@ class FCPath:
             The new FCPath instance pointing to the target path.
         """
 
-        return self.replace(target)
+        return self.rename(target)
 
     if sys.version_info >= (3, 12):
         def relative_to(self,
@@ -1395,13 +1403,16 @@ class FCPath:
 
         return self._path.startswith(other._path)
 
-    def is_reserved(self) -> None:
+    def is_reserved(self) -> bool:
         """True if the path contains a special reserved name.
 
         See `pathlib.Path.is_reserved` for full documentation.
         """
 
-        raise NotImplementedError
+        if not self.is_local():
+            raise NotImplementedError('is_reserved on a remote file is not implemented')
+
+        return self.as_pathlib().is_reserved()
 
     def stat(self,
              *,

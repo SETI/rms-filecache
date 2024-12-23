@@ -13,6 +13,7 @@ import pytest
 from filecache import FileCache, FCPath
 
 from tests.test_file_cache import (GS_TEST_BUCKET_ROOT,
+                                   S3_TEST_BUCKET_ROOT,
                                    INDEXABLE_PREFIXES,
                                    EXPECTED_DIR,
                                    EXPECTED_FILENAMES,
@@ -768,6 +769,7 @@ def test_misc_os():
         FCPath('https://x.com/a/b').is_socket()
     assert not FCPath(EXPECTED_DIR / EXPECTED_FILENAMES[0]).is_socket()
     assert FCPath('C:/a/b/c.txt').samefile('C:/a/b/c.txt')
+    assert FCPath('C:/a/b/c.txt').samefile(FCPath('C:/a/b/c.txt'))
     assert not FCPath('/a/b/c.txt').samefile('/a/b/d.txt')
     assert FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt').absolute() == \
         FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt')
@@ -781,6 +783,37 @@ def test_misc_os():
     assert FCPath(f'{GS_TEST_BUCKET_ROOT}/~{username}/b/c.txt').expanduser() == \
         FCPath(f'{GS_TEST_BUCKET_ROOT}/~{username}/b/c.txt').expanduser()
     assert FCPath.home() == FCPath(Path('~').expanduser())
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_reserved()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').stat()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').lstat()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').is_dir()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').readlink()
+    assert FCPath(f'{GS_TEST_BUCKET_ROOT}/a/~b/c.txt').resolve() == \
+        FCPath(f'{GS_TEST_BUCKET_ROOT}/a/~b/c.txt')
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').symlink_to('')
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').hardlink_to('')
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').mkdir('')
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').chmod(0)
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').lchmod(0)
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').rmdir()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').owner()
+    with pytest.raises(NotImplementedError):
+        FCPath('https://x.com/a/b').group()
+    assert FCPath.from_uri('/a/b/c.txt') == FCPath('/a/b/c.txt')
+    assert FCPath.from_uri(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt') == \
+        FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt')
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
@@ -943,6 +976,33 @@ def test_rglob(prefix):
         results = sorted([x.path.replace(str(wprefix), '').lstrip('/') for x in results])
         assert results == ['subdir1/subdir2a/binary1.bin',
                            'subdir1/subdir2b/binary1.bin']
+
+
+def test_relative_to():
+    assert FCPath('/a/b/c/d.txt').relative_to('/a/b/c') == FCPath('d.txt')
+    assert FCPath('a/b/c/d.txt').relative_to('a/b/c') == FCPath('d.txt')
+    with pytest.raises(ValueError):
+        FCPath('/a/b/c/d.txt').relative_to('a/b/c')
+    assert FCPath('C:/a/b/c/d.txt').relative_to('C:/a/b/c') == FCPath('d.txt')
+    with pytest.raises(ValueError):
+        FCPath('C:/a/b/c/d.txt').relative_to('/a/b/c')
+    assert (FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c/d.txt')
+            .relative_to(f'{GS_TEST_BUCKET_ROOT}/a/b/c') == FCPath('d.txt'))
+    with pytest.raises(ValueError):
+        FCPath('/a/d/c/d.txt').relative_to('/a/b/c')
+    with pytest.raises(ValueError):
+        (FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c/d.txt')
+         .relative_to(f'{S3_TEST_BUCKET_ROOT}/a/b/c'))
+
+    if sys.version_info >= (3, 12):
+        assert FCPath('/a/b/c/d.txt').relative_to('/a/b/e', walk_up=True) == \
+            FCPath('../c/d.txt')
+
+
+def test_is_relative_to():
+    assert FCPath('/a/b/c/d.txt').is_relative_to('/a/b/c')
+    assert FCPath('a/b/c/d.txt').is_relative_to('a/b/c')
+    assert not FCPath('/a/b/c/d.txt').is_relative_to('a/b/c')
 
 
 def test_bad_threads():

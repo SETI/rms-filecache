@@ -1542,10 +1542,10 @@ class FileCache:
             rets = source.unlink_multi(source_sub_paths, missing_ok=missing_ok,
                                        nthreads=nthreads)
             assert len(source_idxes) == len(rets)
-            for ret2, local_path in zip(rets, source_local_paths):
+            for ret2, local_path, url in zip(rets, source_local_paths, urls):
                 if isinstance(ret2, Exception):
-                    self._log_debug(f'    Unlink failed: {sub_path} {ret2}')
-                    files_not_exist.append(str(local_path))
+                    self._log_debug(f'    Unlink failed: {url} {ret2}')
+                    files_not_exist.append(str(url))
                 else:
                     local_path.unlink(missing_ok=True)  # Remove from cache
 
