@@ -1439,10 +1439,24 @@ class FCPath:
 
         return self.as_pathlib().lstat()
 
-    def is_dir(self, *, follow_symlinks: bool = True) -> None:
-        """Path function not supported by FCPath."""
+    if sys.version_info >= (3, 13):
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            """Whether this path is a directory."""
 
-        raise NotImplementedError
+            if not self.is_local():
+                raise NotImplementedError(
+                    'is_dir on a remote directory is not implemented')
+
+            return self.as_pathlib().is_dir(follow_symlinks=follow_symlinks)
+    else:
+        def is_dir(self) -> bool:
+            """Whether this path is a directory."""
+
+            if not self.is_local():
+                raise NotImplementedError(
+                    'is_dir on a remote directory is not implemented')
+
+            return self.as_pathlib().is_dir()
 
     def is_mount(self) -> bool:
         """Check if this path is a mount point.
