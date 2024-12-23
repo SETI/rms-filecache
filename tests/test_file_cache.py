@@ -2305,10 +2305,10 @@ def test_local_replace():
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_rename_good(prefix):
-    new_path = FCPath(f'{prefix}/{uuid.uuid4()}')
-    path1 = new_path / 'test_file1.txt'
-    path2 = new_path / 'test_file2.txt'
-    with FileCache(anonymous=True, cache_name=None):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = fc.new_path(f'{prefix}/{uuid.uuid4()}')
+        path1 = new_path / 'test_file1.txt'
+        path2 = new_path / 'test_file2.txt'
         local_path1 = path1.get_local_path()
         local_path2 = path2.get_local_path()
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path1)
@@ -2320,7 +2320,10 @@ def test_cloud_rename_good(prefix):
         assert local_path2.exists()
         path2.unlink()
 
-    with FileCache(anonymous=True, cache_name=None):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = fc.new_path(f'{prefix}/{uuid.uuid4()}')
+        path1 = new_path / 'test_file1.txt'
+        path2 = new_path / 'test_file2.txt'
         local_path1 = path1.get_local_path()
         local_path2 = path2.get_local_path()
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path1)
@@ -2343,10 +2346,10 @@ def test_cloud_rename_good(prefix):
 
 @pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
 def test_cloud_rename_bad(prefix):
-    new_path = FCPath(f'{prefix}/{uuid.uuid4()}')
-    path1 = new_path / 'test_file1.txt'
-    path2 = new_path / 'test_file2.txt'
-    with FileCache(anonymous=True, cache_name=None):
+    with FileCache(anonymous=True, cache_name=None) as fc:
+        new_path = fc.new_path(f'{prefix}/{uuid.uuid4()}')
+        path1 = new_path / 'test_file1.txt'
+        path2 = new_path / 'test_file2.txt'
         with pytest.raises(FileNotFoundError):
             path1.rename(path2)
         assert not path1.exists()
