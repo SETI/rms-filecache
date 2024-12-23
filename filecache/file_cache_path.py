@@ -1991,12 +1991,13 @@ class _StringGlobber:
 
         def select_recursive(path: str,
                              exists: bool = False) -> Generator[FCPath]:
-            if path and path[-1] != '/':
-                path = f'{path}/'
-            match_pos = len(str(path))
-            if match is None or match(str(path), match_pos):
-                yield from select_next(path, exists)
-            stack = [path]
+            path_str = str(path)
+            if path_str and path_str[-1] != '/':
+                path_str = f'{path_str}/'
+            match_pos = len(path_str)
+            if match is None or match(path_str, match_pos):
+                yield from select_next(path_str, exists)
+            stack = [path_str]
             while stack:
                 yield from select_recursive_step(stack, match_pos)
 
