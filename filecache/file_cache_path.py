@@ -688,13 +688,6 @@ class FCPath:
 
         new_sub_path = self._make_paths_absolute(sub_path)
 
-        if isinstance(new_sub_path, (list, tuple)):
-            return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
-                                                              new_sub_path),
-                                                         anonymous=self._anonymous,
-                                                         create_parents=create_parents,
-                                                         url_to_path=url_to_path)
-
         return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
                                                           new_sub_path),
                                                      anonymous=self._anonymous,
@@ -757,17 +750,10 @@ class FCPath:
 
         new_sub_path = self._make_paths_absolute(sub_path)
 
-        if isinstance(new_sub_path, (list, tuple)):
-            return self._filecache_to_use.exists(cast(StrOrPathOrSeqType,
-                                                      new_sub_path),
-                                                 bypass_cache=bypass_cache,
-                                                 nthreads=nthreads,
-                                                 anonymous=self._anonymous,
-                                                 url_to_path=url_to_path)
-
         return self._filecache_to_use.exists(cast(StrOrPathOrSeqType,
                                                   new_sub_path),
                                              bypass_cache=bypass_cache,
+                                             nthreads=nthreads,
                                              anonymous=self._anonymous,
                                              url_to_path=url_to_path)
 
@@ -860,21 +846,13 @@ class FCPath:
         new_sub_path = self._make_paths_absolute(sub_path)
 
         try:
-            if isinstance(new_sub_path, (list, tuple)):
-                ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
-                                                           new_sub_path),
-                                                      anonymous=self._anonymous,
-                                                      lock_timeout=lock_timeout,
-                                                      nthreads=nthreads,
-                                                      exception_on_fail=exception_on_fail,
-                                                      url_to_path=url_to_path)
-            else:
-                ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
-                                                           new_sub_path),
-                                                      anonymous=self._anonymous,
-                                                      lock_timeout=lock_timeout,
-                                                      exception_on_fail=exception_on_fail,
-                                                      url_to_path=url_to_path)
+            ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
+                                                       new_sub_path),
+                                                  anonymous=self._anonymous,
+                                                  lock_timeout=lock_timeout,
+                                                  nthreads=nthreads,
+                                                  exception_on_fail=exception_on_fail,
+                                                  url_to_path=url_to_path)
         finally:
             self._download_counter += (self._filecache_to_use.download_counter -
                                        old_download_counter)
@@ -948,19 +926,12 @@ class FCPath:
         new_sub_path = self._make_paths_absolute(sub_path)
 
         try:
-            if isinstance(sub_path, (list, tuple)):
-                ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
-                                                         new_sub_path),
-                                                    anonymous=self._anonymous,
-                                                    nthreads=nthreads,
-                                                    exception_on_fail=exception_on_fail,
-                                                    url_to_path=url_to_path)
-            else:
-                ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
-                                                         new_sub_path),
-                                                    anonymous=self._anonymous,
-                                                    exception_on_fail=exception_on_fail,
-                                                    url_to_path=url_to_path)
+            ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
+                                                     new_sub_path),
+                                                anonymous=self._anonymous,
+                                                nthreads=nthreads,
+                                                exception_on_fail=exception_on_fail,
+                                                url_to_path=url_to_path)
         finally:
             self._upload_counter += (self._filecache_to_use.upload_counter -
                                      old_upload_counter)
@@ -1031,7 +1002,7 @@ class FCPath:
             self.upload(sub_path, url_to_path=url_to_path)
 
     def unlink(self,
-               sub_path: Optional[StrOrSeqType] = None,
+               sub_path: Optional[StrOrPathOrSeqType] = None,
                *,
                missing_ok: bool = False,
                nthreads: Optional[int] = None,
@@ -1085,16 +1056,9 @@ class FCPath:
         See `pathlib.Path.unlink` for full documentation.
         """
 
-        new_sub_path = self._make_paths_absolute(sub_path)
+        nthreads = self._validate_nthreads(nthreads)
 
-        if isinstance(new_sub_path, (list, tuple)):
-            return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
-                                                      new_sub_path),
-                                                 missing_ok=missing_ok,
-                                                 anonymous=self._anonymous,
-                                                 nthreads=nthreads,
-                                                 exception_on_fail=exception_on_fail,
-                                                 url_to_path=url_to_path)
+        new_sub_path = self._make_paths_absolute(sub_path)
 
         return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
                                                   new_sub_path),
