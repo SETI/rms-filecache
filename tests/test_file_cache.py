@@ -2361,10 +2361,7 @@ def test_rename_bad():
     spath = FCPath(f'{S3_TEST_BUCKET_ROOT}/{uuid.uuid4()}')
     gpath1 = gpath / 'test_file1.txt'
     spath1 = spath / 'test_file1.txt'
-    apath1 = '/tmp/test_file1.txt'
-    lpath1 = 'test_file1.txt'
     fpath1 = FCPath('/tmp/test_file1.txt')
-    flpath1 = FCPath('test_file1.txt')
     with pytest.raises(ValueError):
         gpath1.rename(spath1)
     with pytest.raises(ValueError):
