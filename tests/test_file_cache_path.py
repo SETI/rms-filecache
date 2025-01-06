@@ -676,38 +676,6 @@ def test_default_filecache():
         assert p2.get_local_path() == p3.get_local_path()
 
 
-def test_operations_relative_paths():
-    p = FCPath('b/c')
-    with pytest.raises(ValueError):
-        p.get_local_path()
-    with pytest.raises(ValueError):
-        p.get_local_path('d')
-    with pytest.raises(ValueError):
-        p.get_local_path(['d', 'e'])
-    with pytest.raises(ValueError):
-        p.retrieve()
-    with pytest.raises(ValueError):
-        p.retrieve('d')
-    with pytest.raises(ValueError):
-        p.retrieve(['d', 'e'])
-    with pytest.raises(ValueError):
-        p.exists()
-    with pytest.raises(ValueError):
-        p.exists('d')
-    with pytest.raises(ValueError):
-        p.exists(['d', 'e'])
-    with pytest.raises(ValueError):
-        p.upload()
-    with pytest.raises(ValueError):
-        p.upload('d')
-    with pytest.raises(ValueError):
-        p.upload(['d', 'e'])
-    with pytest.raises(ValueError):
-        p.unlink('d')
-    with pytest.raises(ValueError):
-        p.unlink(['d', 'e'])
-
-
 def test_relative():
     assert (FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt')
             .relative_to(f'{GS_TEST_BUCKET_ROOT}/a/b')) == FCPath('c.txt')

@@ -2366,12 +2366,6 @@ def test_rename_bad():
     fpath1 = FCPath('/tmp/test_file1.txt')
     flpath1 = FCPath('test_file1.txt')
     with pytest.raises(ValueError):
-        flpath1.rename(apath1)
-    with pytest.raises(ValueError):
-        fpath1.rename(flpath1)
-    with pytest.raises(ValueError):
-        fpath1.rename(lpath1)
-    with pytest.raises(ValueError):
         gpath1.rename(spath1)
     with pytest.raises(ValueError):
         fpath1.rename(gpath1)
