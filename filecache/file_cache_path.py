@@ -23,7 +23,6 @@ if TYPE_CHECKING:  # pragma: no cover
     from .file_cache import FileCache  # Circular import
 
 from .file_cache_types import (StrOrPathOrSeqType,
-                               StrOrSeqType,
                                UrlToPathFuncOrSeqType)
 
 
