@@ -986,7 +986,6 @@ def test_relative_paths():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
         os.chdir(str(temp_dir))
-        f_temp_dir = FCPath(temp_dir)
         with FileCache(cache_name=None) as fc:
             rp1 = 'file1.txt'
             rp2 = 'file2.txt'
