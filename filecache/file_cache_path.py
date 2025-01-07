@@ -223,7 +223,7 @@ class FCPath:
     @staticmethod
     def _is_absolute(path: str) -> bool:
         """Check if a path string is an absolute path."""
-        print(path, FCPath._split_parts(path))
+
         return FCPath._split_parts(path)[1] == '/'
 
     @staticmethod
@@ -626,14 +626,20 @@ class FCPath:
             new_sub_paths: list[str] = []
             for p in sub_path:
                 new_sub_path = FCPath._join(self._path, p)
+                print('A', new_sub_path)
                 if not FCPath._is_absolute(new_sub_path):
                     new_sub_path = (FCPath(Path(new_sub_path).expanduser().resolve())
                                     .as_posix())
+                    print('B', new_sub_path)
                 new_sub_paths.append(new_sub_path)
+            print('C', new_sub_paths)
             return new_sub_paths
         new_sub_path = FCPath._join(self._path, sub_path)
+        print('D', new_sub_path)
         if not FCPath._is_absolute(new_sub_path):
+            print('E', FCPath(Path(new_sub_path).expanduser().resolve()).as_posix())
             return FCPath(Path(new_sub_path).expanduser().resolve()).as_posix()
+        print('F', new_sub_path)
         return new_sub_path
 
     def get_local_path(self,
