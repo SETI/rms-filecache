@@ -985,64 +985,66 @@ def test_relative_paths():
     f_cur_dir = FCPath.cwd()
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir).expanduser().resolve()
-        os.chdir(str(temp_dir))
-        with FileCache(cache_name=None) as fc:
-            rp1 = 'file1.txt'
-            rp2 = 'file2.txt'
-            ap1 = temp_dir / rp1
-            ap2 = temp_dir / rp2
-            frp1 = fc.new_path(rp1)
-            frp2 = fc.new_path(rp2)
-            fap1 = fc.new_path(ap1)
-            fap2 = fc.new_path(ap2)
-            assert fap1.get_local_path() == ap1
-            assert fap2.get_local_path() == ap2
-            assert frp1.get_local_path() == ap1
-            assert frp2.get_local_path() == ap2
-            assert FCPath('').get_local_path([rp1, rp2]) == [ap1, ap2]
+        try:
+            os.chdir(str(temp_dir))
+            with FileCache(cache_name=None) as fc:
+                rp1 = 'file1.txt'
+                rp2 = 'file2.txt'
+                ap1 = temp_dir / rp1
+                ap2 = temp_dir / rp2
+                frp1 = fc.new_path(rp1)
+                frp2 = fc.new_path(rp2)
+                fap1 = fc.new_path(ap1)
+                fap2 = fc.new_path(ap2)
+                assert fap1.get_local_path() == ap1
+                assert fap2.get_local_path() == ap2
+                assert frp1.get_local_path() == ap1
+                assert frp2.get_local_path() == ap2
+                assert FCPath('').get_local_path([rp1, rp2]) == [ap1, ap2]
 
-            frp2.touch()
+                frp2.touch()
 
-            assert not fap1.exists()
-            assert fap2.exists()
-            assert not frp1.exists()
-            assert frp2.exists()
-            assert FCPath('').exists([rp1, rp2]) == [False, True]
+                assert not fap1.exists()
+                assert fap2.exists()
+                assert not frp1.exists()
+                assert frp2.exists()
+                assert FCPath('').exists([rp1, rp2]) == [False, True]
 
-            with pytest.raises(FileNotFoundError):
-                frp1.retrieve()
-            assert frp2.retrieve() == ap2
-            ret = FCPath('').retrieve([rp1, rp2], exception_on_fail=False)
-            assert isinstance(ret[0], FileNotFoundError)
-            assert ret[1] == ap2
+                with pytest.raises(FileNotFoundError):
+                    frp1.retrieve()
+                assert frp2.retrieve() == ap2
+                ret = FCPath('').retrieve([rp1, rp2], exception_on_fail=False)
+                assert isinstance(ret[0], FileNotFoundError)
+                assert ret[1] == ap2
 
-            with pytest.raises(FileNotFoundError):
-                frp1.upload()
-            assert frp2.upload() == ap2
-            ret = FCPath('').upload([rp1, rp2], exception_on_fail=False)
-            assert isinstance(ret[0], FileNotFoundError)
-            assert ret[1] == ap2
+                with pytest.raises(FileNotFoundError):
+                    frp1.upload()
+                assert frp2.upload() == ap2
+                ret = FCPath('').upload([rp1, rp2], exception_on_fail=False)
+                assert isinstance(ret[0], FileNotFoundError)
+                assert ret[1] == ap2
 
-            assert ap2.exists()
-            frp2.unlink()
-            assert not ap2.exists()
+                assert ap2.exists()
+                frp2.unlink()
+                assert not ap2.exists()
 
-            frp1.touch()
-            frp2.touch()
-            assert ap1.exists()
-            assert ap2.exists()
-            FCPath('').unlink([rp1, rp2])
-            assert not ap1.exists()
-            assert not ap2.exists()
+                frp1.touch()
+                frp2.touch()
+                assert ap1.exists()
+                assert ap2.exists()
+                FCPath('').unlink([rp1, rp2])
+                assert not ap1.exists()
+                assert not ap2.exists()
 
-            frp1.touch()
-            frp1.rename(frp2)
-            assert not ap1.exists()
-            assert ap2.exists()
+                frp1.touch()
+                frp1.rename(frp2)
+                assert not ap1.exists()
+                assert ap2.exists()
 
-            frp1.touch()
-            frp1.rename(rp2)
-            assert not ap1.exists()
-            assert ap2.exists()
+                frp1.touch()
+                frp1.rename(rp2)
+                assert not ap1.exists()
+                assert ap2.exists()
 
-        os.chdir(f_cur_dir.as_posix())
+        finally:
+            os.chdir(f_cur_dir.as_posix())

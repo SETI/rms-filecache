@@ -686,7 +686,7 @@ class FCPath:
         """
 
         new_sub_path = self._make_paths_absolute(sub_path)
-
+        print('XXXXX', new_sub_path)
         return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
                                                           new_sub_path),
                                                      anonymous=self._anonymous,
