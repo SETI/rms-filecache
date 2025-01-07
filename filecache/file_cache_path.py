@@ -565,7 +565,8 @@ class FCPath:
 
         if FCPath._is_absolute(self._path):
             return self
-        return FCPath(self.as_pathlib().expanduser().resolve(), copy_from=self)
+        return FCPath(self.as_pathlib().expanduser().absolute().resolve(),
+                      copy_from=self)
 
     def match(self,
               path_pattern: str | Path | FCPath) -> bool:
@@ -626,22 +627,16 @@ class FCPath:
             new_sub_paths: list[str] = []
             for p in sub_path:
                 new_sub_path = FCPath._join(self._path, p)
-                print('A', new_sub_path)
                 if not FCPath._is_absolute(new_sub_path):
                     new_sub_path = (FCPath(Path(new_sub_path)
                                            .expanduser().absolute().resolve())
                                     .as_posix())
-                    print('B', new_sub_path)
                 new_sub_paths.append(new_sub_path)
-            print('C', new_sub_paths)
             return new_sub_paths
         new_sub_path = FCPath._join(self._path, sub_path)
-        print('D', new_sub_path)
         if not FCPath._is_absolute(new_sub_path):
-            print('E', FCPath(Path(new_sub_path).expanduser().absolute().resolve()).as_posix())
             return (FCPath(Path(new_sub_path).expanduser().absolute().resolve())
                     .as_posix())
-        print('F', new_sub_path)
         return new_sub_path
 
     def get_local_path(self,
@@ -1585,7 +1580,8 @@ class FCPath:
         """
 
         if self.is_local():
-            return FCPath(self.as_pathlib().resolve(strict=strict), copy_from=self)
+            return FCPath(self.as_pathlib().absolute().resolve(strict=strict),
+                          copy_from=self)
 
         return self
 
