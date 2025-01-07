@@ -983,18 +983,21 @@ def test_bad_threads():
 
 def test_relative_paths():
     f_cur_dir = FCPath.cwd()
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir = Path(temp_dir).expanduser().resolve()
-        os.chdir(str(temp_dir))
-        with FileCache(cache_name=None) as fc:
-            rp1 = 'file1.txt'
-            rp2 = 'file2.txt'
-            ap1 = temp_dir / rp1
-            ap2 = temp_dir / rp2
-            frp1 = fc.new_path(rp1)
-            frp2 = fc.new_path(rp2)
-            fap1 = fc.new_path(ap1)
-            fap2 = fc.new_path(ap2)
+    # We put the files in the actual repo because we always have write acccess to the
+    # repo, while the Windows GitHub runner doesn't seem to be able to rename files in
+    # a temporary directory.
+    temp_dir = Path(__file__).resolve().parent
+    os.chdir(str(temp_dir))
+    with FileCache(cache_name=None) as fc:
+        rp1 = '_test_file1.txt'
+        rp2 = '_test_file2.txt'
+        ap1 = temp_dir / rp1
+        ap2 = temp_dir / rp2
+        frp1 = fc.new_path(rp1)
+        frp2 = fc.new_path(rp2)
+        fap1 = fc.new_path(ap1)
+        fap2 = fc.new_path(ap2)
+        try:
             assert fap1.get_local_path() == ap1
             assert fap2.get_local_path() == ap2
             assert frp1.get_local_path() == ap1
@@ -1044,5 +1047,9 @@ def test_relative_paths():
             frp1.rename(rp2)
             assert not ap1.exists()
             assert ap2.exists()
+
+        finally:
+            ap1.unlink(missing_ok=True)
+            ap2.unlink(missing_ok=True)
 
     os.chdir(f_cur_dir.as_posix())
