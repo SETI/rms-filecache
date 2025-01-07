@@ -223,7 +223,7 @@ class FCPath:
     @staticmethod
     def _is_absolute(path: str) -> bool:
         """Check if a path string is an absolute path."""
-
+        print(path, FCPath._split_parts(path))
         return FCPath._split_parts(path)[1] == '/'
 
     @staticmethod
@@ -686,7 +686,7 @@ class FCPath:
         """
 
         new_sub_path = self._make_paths_absolute(sub_path)
-        print('XXXXX', new_sub_path)
+
         return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
                                                           new_sub_path),
                                                      anonymous=self._anonymous,
