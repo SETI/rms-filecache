@@ -628,7 +628,8 @@ class FCPath:
                 new_sub_path = FCPath._join(self._path, p)
                 print('A', new_sub_path)
                 if not FCPath._is_absolute(new_sub_path):
-                    new_sub_path = (FCPath(Path(new_sub_path).expanduser().resolve())
+                    new_sub_path = (FCPath(Path(new_sub_path)
+                                           .expanduser().absolute().resolve())
                                     .as_posix())
                     print('B', new_sub_path)
                 new_sub_paths.append(new_sub_path)
@@ -637,8 +638,9 @@ class FCPath:
         new_sub_path = FCPath._join(self._path, sub_path)
         print('D', new_sub_path)
         if not FCPath._is_absolute(new_sub_path):
-            print('E', FCPath(Path(new_sub_path).expanduser().resolve()).as_posix())
-            return FCPath(Path(new_sub_path).expanduser().resolve()).as_posix()
+            print('E', FCPath(Path(new_sub_path).expanduser().absolute().resolve()).as_posix())
+            return (FCPath(Path(new_sub_path).expanduser().absolute().resolve())
+                    .as_posix())
         print('F', new_sub_path)
         return new_sub_path
 
