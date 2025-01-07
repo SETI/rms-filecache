@@ -1045,4 +1045,4 @@ def test_relative_paths():
             # assert not ap1.exists()
             # assert ap2.exists()
 
-    os.chdir(f_cur_dir.as_posix())
+        os.chdir(f_cur_dir.as_posix())
