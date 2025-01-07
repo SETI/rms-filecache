@@ -1035,14 +1035,14 @@ def test_relative_paths():
             assert not ap1.exists()
             assert not ap2.exists()
 
-            # frp1.touch()
-            # frp1.rename(frp2)
-            # assert not ap1.exists()
-            # assert ap2.exists()
+            frp1.touch()
+            frp1.rename(frp2)
+            assert not ap1.exists()
+            assert ap2.exists()
 
-            # frp1.touch()
-            # frp1.rename(rp2)
-            # assert not ap1.exists()
-            # assert ap2.exists()
+            frp1.touch()
+            frp1.rename(rp2)
+            assert not ap1.exists()
+            assert ap2.exists()
 
         os.chdir(f_cur_dir.as_posix())
