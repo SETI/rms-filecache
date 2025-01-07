@@ -6,6 +6,7 @@ import os
 from pathlib import Path, PurePath
 import platform
 import sys
+import tempfile
 import uuid
 
 import pytest
@@ -676,38 +677,6 @@ def test_default_filecache():
         assert p2.get_local_path() == p3.get_local_path()
 
 
-def test_operations_relative_paths():
-    p = FCPath('b/c')
-    with pytest.raises(ValueError):
-        p.get_local_path()
-    with pytest.raises(ValueError):
-        p.get_local_path('d')
-    with pytest.raises(ValueError):
-        p.get_local_path(['d', 'e'])
-    with pytest.raises(ValueError):
-        p.retrieve()
-    with pytest.raises(ValueError):
-        p.retrieve('d')
-    with pytest.raises(ValueError):
-        p.retrieve(['d', 'e'])
-    with pytest.raises(ValueError):
-        p.exists()
-    with pytest.raises(ValueError):
-        p.exists('d')
-    with pytest.raises(ValueError):
-        p.exists(['d', 'e'])
-    with pytest.raises(ValueError):
-        p.upload()
-    with pytest.raises(ValueError):
-        p.upload('d')
-    with pytest.raises(ValueError):
-        p.upload(['d', 'e'])
-    with pytest.raises(ValueError):
-        p.unlink('d')
-    with pytest.raises(ValueError):
-        p.unlink(['d', 'e'])
-
-
 def test_relative():
     assert (FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b/c.txt')
             .relative_to(f'{GS_TEST_BUCKET_ROOT}/a/b')) == FCPath('c.txt')
@@ -1010,3 +979,74 @@ def test_bad_threads():
         FCPath('http://bucket/a/b/c', nthreads='a')
     with pytest.raises(ValueError):
         FCPath('http://bucket/a/b/c', nthreads=-1)
+
+
+def test_relative_paths():
+    f_cur_dir = FCPath.cwd()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir).expanduser().resolve()
+        try:
+            os.chdir(str(temp_dir))
+            with FileCache(cache_name=None) as fc:
+                rp1 = 'file1.txt'
+                rp2 = 'file2.txt'
+                ap1 = temp_dir / rp1
+                ap2 = temp_dir / rp2
+                frp1 = fc.new_path(rp1)
+                frp2 = fc.new_path(rp2)
+                fap1 = fc.new_path(ap1)
+                fap2 = fc.new_path(ap2)
+                assert fap1.get_local_path() == ap1
+                assert fap2.get_local_path() == ap2
+                assert frp1.get_local_path() == ap1
+                assert frp2.get_local_path() == ap2
+                assert FCPath('').get_local_path([rp1, rp2]) == [ap1, ap2]
+
+                frp2.touch()
+
+                assert not fap1.exists()
+                assert fap2.exists()
+                assert not frp1.exists()
+                assert frp2.exists()
+                assert FCPath('').exists([rp1, rp2]) == [False, True]
+
+                with pytest.raises(FileNotFoundError):
+                    frp1.retrieve()
+                assert frp2.retrieve() == ap2
+                ret = FCPath('').retrieve([rp1, rp2], exception_on_fail=False)
+                assert isinstance(ret[0], FileNotFoundError)
+                assert ret[1] == ap2
+
+                with pytest.raises(FileNotFoundError):
+                    frp1.upload()
+                assert frp2.upload() == ap2
+                ret = FCPath('').upload([rp1, rp2], exception_on_fail=False)
+                assert isinstance(ret[0], FileNotFoundError)
+                assert ret[1] == ap2
+
+                assert ap2.exists()
+                frp2.unlink()
+                assert not ap2.exists()
+
+                frp1.touch()
+                frp2.touch()
+                assert ap1.exists()
+                assert ap2.exists()
+                FCPath('').unlink([rp1, rp2])
+                assert not ap1.exists()
+                assert not ap2.exists()
+
+                frp1.touch()
+                frp1.rename(frp2)
+                assert not ap1.exists()
+                assert ap2.exists()
+                ap2.unlink()
+
+                frp1.touch()
+                frp1.rename(rp2)
+                assert not ap1.exists()
+                assert ap2.exists()
+                ap2.unlink()
+
+        finally:
+            os.chdir(f_cur_dir.as_posix())

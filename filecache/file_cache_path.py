@@ -23,7 +23,6 @@ if TYPE_CHECKING:  # pragma: no cover
     from .file_cache import FileCache  # Circular import
 
 from .file_cache_types import (StrOrPathOrSeqType,
-                               StrOrSeqType,
                                UrlToPathFuncOrSeqType)
 
 
@@ -561,6 +560,14 @@ class FCPath:
 
         return FCPath._is_absolute(self._path)
 
+    def as_absolute(self) -> FCPath:
+        """Return the absolute version of this possibly-relative path."""
+
+        if FCPath._is_absolute(self._path):
+            return self
+        return FCPath(self.as_pathlib().expanduser().absolute().resolve(),
+                      copy_from=self)
+
     def match(self,
               path_pattern: str | Path | FCPath) -> bool:
         """Return True if this path matches the given pattern.
@@ -614,6 +621,24 @@ class FCPath:
             return _DEFAULT_FILECACHE
         return self._filecache
 
+    def _make_paths_absolute(self,
+                             sub_path: Optional[StrOrPathOrSeqType]) -> str | list[str]:
+        if isinstance(sub_path, (list, tuple)):
+            new_sub_paths: list[str] = []
+            for p in sub_path:
+                new_sub_path = FCPath._join(self._path, p)
+                if not FCPath._is_absolute(new_sub_path):
+                    new_sub_path = (FCPath(Path(new_sub_path)
+                                           .expanduser().absolute().resolve())
+                                    .as_posix())
+                new_sub_paths.append(new_sub_path)
+            return new_sub_paths
+        new_sub_path = FCPath._join(self._path, sub_path)
+        if not FCPath._is_absolute(new_sub_path):
+            return (FCPath(Path(new_sub_path).expanduser().absolute().resolve())
+                    .as_posix())
+        return new_sub_path
+
     def get_local_path(self,
                        sub_path: Optional[StrOrPathOrSeqType] = None,
                        *,
@@ -625,6 +650,9 @@ class FCPath:
         Parameters:
             sub_path: The path of the file relative to this path. If not specified, this
                 path is used. If `sub_path` is a list or tuple, all paths are processed.
+                If the resulting derived path is not absolute, it is assumed to be a
+                relative local path and is converted to an absolute path by expanding
+                usernames and resolving links.
             create_parents: If True, create all parent directories. This is useful when
                 getting the local path of a file that will be uploaded.
             url_to_path: The function (or list of functions) that is used to translate
@@ -658,26 +686,10 @@ class FCPath:
             because a Path could be used for writing a file to upload. To facilitate this,
             a side effect of this call (if `create_parents` is True) is that the complete
             parent directory structure will be created for each returned Path.
-
-        Raises:
-            ValueError: If the derived path is not absolute.
         """
 
-        if isinstance(sub_path, (list, tuple)):
-            new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
-            if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
-                raise ValueError(
-                    f'Derived paths must be absolute, got {new_sub_paths}')
-            return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
-                                                         new_sub_paths),
-                                                         anonymous=self._anonymous,
-                                                         create_parents=create_parents,
-                                                         url_to_path=url_to_path)
+        new_sub_path = self._make_paths_absolute(sub_path)
 
-        new_sub_path = FCPath._join(self._path, sub_path)
-        if not FCPath._is_absolute(str(new_sub_path)):
-            raise ValueError(
-                f'Derived path must be absolute, got {new_sub_path}')
         return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
                                                           new_sub_path),
                                                      anonymous=self._anonymous,
@@ -695,7 +707,9 @@ class FCPath:
 
         Parameters:
             sub_path: The path of the file relative to this path. If not specified, this
-                path is used.
+                path is used. If the resulting derived path is not absolute, it is assumed
+                to be a relative local path and is converted to an absolute path by
+                expanding usernames and resolving links.
             bypass_cache: If False, check for the file first in the local cache, and if
                 not found there then on the remote server. If True, only check on the
                 remote server.
@@ -732,37 +746,21 @@ class FCPath:
             still not be downloadable due to permissions. False if the file does not
             exist. This includes bad bucket or webserver names, lack of permission to
             examine a bucket's contents, etc.
-
-        Raises:
-            ValueError: If the derived path is not absolute.
         """
 
         nthreads = self._validate_nthreads(nthreads)
 
-        if isinstance(sub_path, (list, tuple)):
-            new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
-            if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
-                raise ValueError(
-                    f'Derived paths must be absolute, got {new_sub_paths}')
-            return self._filecache_to_use.exists(cast(StrOrPathOrSeqType,
-                                                      new_sub_paths),
-                                                 bypass_cache=bypass_cache,
-                                                 nthreads=nthreads,
-                                                 anonymous=self._anonymous,
-                                                 url_to_path=url_to_path)
+        new_sub_path = self._make_paths_absolute(sub_path)
 
-        new_sub_path = FCPath._join(self._path, sub_path)
-        if not FCPath._is_absolute(str(new_sub_path)):
-            raise ValueError(
-                f'Derived path must be absolute, got {new_sub_path}')
         return self._filecache_to_use.exists(cast(StrOrPathOrSeqType,
                                                   new_sub_path),
                                              bypass_cache=bypass_cache,
+                                             nthreads=nthreads,
                                              anonymous=self._anonymous,
                                              url_to_path=url_to_path)
 
     def retrieve(self,
-                 sub_path: Optional[StrOrSeqType] = None,
+                 sub_path: Optional[StrOrPathOrSeqType] = None,
                  *,
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
@@ -775,7 +773,10 @@ class FCPath:
             sub_path: The path of the file relative to this path. If not specified, this
                 path is used. If `sub_path` is a list or tuple, the complete list of files
                 is retrieved. Depending on the storage location, this may be more
-                efficient because files can be downloaded in parallel.
+                efficient because files can be downloaded in parallel. If the resulting
+                derived path is not absolute, it is assumed to be a relative local path
+                and is converted to an absolute path by expanding usernames and resolving
+                links.
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value given when this
                 :class:`FCPath` was created.
@@ -829,7 +830,6 @@ class FCPath:
                 within the given timeout or, for a multi-file download, if we timed out
                 waiting for other processes to download locked files, and
                 exception_on_fail is True.
-            ValueError: If the derived path is not absolute.
 
         Notes:
             File download is normally an atomic operation; a program will never see a
@@ -845,30 +845,16 @@ class FCPath:
         if lock_timeout is None:
             lock_timeout = self._lock_timeout
 
+        new_sub_path = self._make_paths_absolute(sub_path)
+
         try:
-            if isinstance(sub_path, (list, tuple)):
-                new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
-                if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
-                    raise ValueError(
-                        f'Derived paths must be absolute, got {new_sub_paths}')
-                ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
-                                                           new_sub_paths),
-                                                      anonymous=self._anonymous,
-                                                      lock_timeout=lock_timeout,
-                                                      nthreads=nthreads,
-                                                      exception_on_fail=exception_on_fail,
-                                                      url_to_path=url_to_path)
-            else:
-                new_sub_path2 = FCPath._join(self._path, sub_path)
-                if not FCPath._is_absolute(str(new_sub_path2)):
-                    raise ValueError(
-                        f'Derived path must be absolute, got {new_sub_path2}')
-                ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
-                                                           new_sub_path2),
-                                                      anonymous=self._anonymous,
-                                                      lock_timeout=lock_timeout,
-                                                      exception_on_fail=exception_on_fail,
-                                                      url_to_path=url_to_path)
+            ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
+                                                       new_sub_path),
+                                                  anonymous=self._anonymous,
+                                                  lock_timeout=lock_timeout,
+                                                  nthreads=nthreads,
+                                                  exception_on_fail=exception_on_fail,
+                                                  url_to_path=url_to_path)
         finally:
             self._download_counter += (self._filecache_to_use.download_counter -
                                        old_download_counter)
@@ -876,7 +862,7 @@ class FCPath:
         return ret
 
     def upload(self,
-               sub_path: Optional[StrOrSeqType] = None,
+               sub_path: Optional[StrOrPathOrSeqType] = None,
                *,
                nthreads: Optional[int] = None,
                exception_on_fail: bool = True,
@@ -888,7 +874,9 @@ class FCPath:
             sub_path: The path of the file relative to this path. If not specified, this
                 path is used. If `sub_path` is a list or tuple, the complete list of files
                 is uploaded. This may be more efficient because files can be uploaded in
-                parallel.
+                parallel. If the resulting derived path is not absolute, it is assumed to
+                be a relative local path and is converted to an absolute path by expanding
+                usernames and resolving links.
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value given when this
                 :class:`FileCache` was created.
@@ -931,35 +919,21 @@ class FCPath:
         Raises:
             FileNotFoundError: If a file to upload does not exist or the upload failed,
                 and exception_on_fail is True.
-            ValueError: If the derived path is not absolute.
         """
 
         old_upload_counter = self._filecache_to_use.upload_counter
 
         nthreads = self._validate_nthreads(nthreads)
 
+        new_sub_path = self._make_paths_absolute(sub_path)
+
         try:
-            if isinstance(sub_path, (list, tuple)):
-                new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
-                if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
-                    raise ValueError(
-                        f'Derived paths must be absolute, got {new_sub_paths}')
-                ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
-                                                         new_sub_paths),
-                                                    anonymous=self._anonymous,
-                                                    nthreads=nthreads,
-                                                    exception_on_fail=exception_on_fail,
-                                                    url_to_path=url_to_path)
-            else:
-                new_sub_path = FCPath._join(self._path, sub_path)
-                if not FCPath._is_absolute(str(new_sub_path)):
-                    raise ValueError(
-                        f'Derived path must be absolute, got {new_sub_path}')
-                ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
-                                                         new_sub_path),
-                                                    anonymous=self._anonymous,
-                                                    exception_on_fail=exception_on_fail,
-                                                    url_to_path=url_to_path)
+            ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
+                                                     new_sub_path),
+                                                anonymous=self._anonymous,
+                                                nthreads=nthreads,
+                                                exception_on_fail=exception_on_fail,
+                                                url_to_path=url_to_path)
         finally:
             self._upload_counter += (self._filecache_to_use.upload_counter -
                                      old_upload_counter)
@@ -1030,7 +1004,7 @@ class FCPath:
             self.upload(sub_path, url_to_path=url_to_path)
 
     def unlink(self,
-               sub_path: Optional[StrOrSeqType] = None,
+               sub_path: Optional[StrOrPathOrSeqType] = None,
                *,
                missing_ok: bool = False,
                nthreads: Optional[int] = None,
@@ -1043,7 +1017,10 @@ class FCPath:
             sub_path: The path of the file relative to this path. If not specified, this
                 path is used. If `sub_path` is a list or tuple, the complete list of files
                 is retrieved. Depending on the storage location, this may be more
-                efficient because files can be downloaded in parallel.
+                efficient because files can be downloaded in parallel. If the resulting
+                derived path is not absolute, it is assumed to be a relative local path
+                and is converted to an absolute path by expanding usernames and resolving
+                links.
             missing_ok: True to ignore attempting to unlink a file that doesn't exist.
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value given when this
@@ -1081,30 +1058,17 @@ class FCPath:
         See `pathlib.Path.unlink` for full documentation.
         """
 
-        if isinstance(sub_path, (list, tuple)):
-            new_sub_paths = [FCPath._join(self._path, p) for p in sub_path]
-            if not all([FCPath._is_absolute(x) for x in new_sub_paths]):
-                raise ValueError(
-                    f'Derived paths must be absolute, got {new_sub_paths}')
-            return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
-                                                      new_sub_paths),
-                                                 missing_ok=missing_ok,
-                                                 anonymous=self._anonymous,
-                                                 nthreads=nthreads,
-                                                 exception_on_fail=exception_on_fail,
-                                                 url_to_path=url_to_path)
-        else:
-            new_sub_path2 = FCPath._join(self._path, sub_path)
-            if not FCPath._is_absolute(str(new_sub_path2)):
-                raise ValueError(
-                    f'Derived path must be absolute, got {new_sub_path2}')
-            return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
-                                                      new_sub_path2),
-                                                 missing_ok=missing_ok,
-                                                 anonymous=self._anonymous,
-                                                 nthreads=nthreads,
-                                                 exception_on_fail=exception_on_fail,
-                                                 url_to_path=url_to_path)
+        nthreads = self._validate_nthreads(nthreads)
+
+        new_sub_path = self._make_paths_absolute(sub_path)
+
+        return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
+                                                  new_sub_path),
+                                             missing_ok=missing_ok,
+                                             anonymous=self._anonymous,
+                                             nthreads=nthreads,
+                                             exception_on_fail=exception_on_fail,
+                                             url_to_path=url_to_path)
 
     @property
     def download_counter(self) -> int:
@@ -1290,32 +1254,31 @@ class FCPath:
 
         if not isinstance(target, FCPath):
             target = FCPath(target)
+        target = target.as_absolute()
 
-        if not self.is_absolute() or not target.is_absolute():
-            raise ValueError('Source and target files must be absolute '
-                             f'{self.path!r} and f{target.path!r}')
+        src = self.as_absolute()
 
-        if self.is_local() != target.is_local():
+        if src.is_local() != target.is_local():
             raise ValueError('Unable to rename files between local and remote locations: '
-                             f'{self.path!r} and f{target.path!r}')
+                             f'{src.path!r} and f{target.path!r}')
 
-        drive1, root1, subpath1 = FCPath._split_parts(self.path)
+        drive1, root1, subpath1 = FCPath._split_parts(src.path)
         drive2, root2, subpath2 = FCPath._split_parts(target.path)
 
         if drive1 != drive2 or root1 != root2:
-            raise ValueError('Unable to rename files across location: '
-                             f'{self.path!r} and f{target.path!r}')
+            raise ValueError('Unable to rename files across locations: '
+                             f'{src.path!r} and f{target.path!r}')
 
-        if self.is_local():
+        if src.is_local():
             # Local to local - just do an OS rename and be done with it
             target.parent.mkdir(parents=True, exist_ok=True)
-            self.as_pathlib().rename(target.as_pathlib())
+            src.as_pathlib().rename(target.as_pathlib())
             return target
 
         # Since you generally can't rename on a remote cloud location, first
         # download the file, then rename it locally, then upload it to the new name,
         # then delete the old name
-        local_path = cast(Path, self.retrieve())
+        local_path = cast(Path, src.retrieve())
         target_local_path = cast(Path, target.get_local_path())
         local_path.rename(target_local_path)  # Rename in the cache
         try:
@@ -1323,7 +1286,7 @@ class FCPath:
         except Exception:
             target_local_path.unlink(missing_ok=True)
             raise
-        self.unlink(missing_ok=True)  # Delete the old version
+        src.unlink(missing_ok=True)  # Delete the old version
 
         return target
 
@@ -1617,7 +1580,8 @@ class FCPath:
         """
 
         if self.is_local():
-            return FCPath(self.as_pathlib().resolve(strict=strict), copy_from=self)
+            return FCPath(self.as_pathlib().absolute().resolve(strict=strict),
+                          copy_from=self)
 
         return self
 
