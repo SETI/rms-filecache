@@ -10,6 +10,7 @@ from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import requests
+import shutil
 from typing import Iterator
 import uuid
 
@@ -1066,5 +1067,172 @@ class FileCacheSourceS3(FileCacheSource):
                 raise FileNotFoundError
 
         self._client.delete_object(Bucket=self._bucket_name, Key=sub_path)
+
+        return sub_path
+
+
+class FileCacheSourceFake(FileCacheSource):
+    """Class that simulates a remote file source using a local directory structure.
+
+    This class is useful for testing file operations without requiring actual remote
+    connections. Files are stored in a local directory that simulates the remote storage.
+    """
+
+    def __init__(self,
+                 scheme: str,
+                 remote: str,
+                 *,
+                 anonymous: bool = False,
+                 storage_dir: str | Path = Path('fake_remote')):
+        """Initialize the FileCacheSourceFake class.
+
+        Parameters:
+            scheme: The scheme of the source. Must be "fake".
+            remote: The simulated remote/bucket name.
+            anonymous: Not used for this class.
+            storage_dir: Base directory to store the fake remote files. Defaults to
+                'fake_remote'.
+        """
+
+        if scheme != 'fake':
+            raise ValueError('Scheme must be "fake"')
+
+        if remote == '':
+            raise ValueError('remote parameter must have a value')
+
+        super().__init__(scheme, remote, anonymous=anonymous)
+
+        self._storage_base = Path(storage_dir)
+        self._storage_dir = self._storage_base / remote
+        self._storage_dir.mkdir(parents=True, exist_ok=True)
+        self._cache_subdir = self._src_prefix.replace('fake://', 'fake_')
+
+    @classmethod
+    def schemes(cls) -> tuple[str, ...]:
+
+        """The URL schemes supported by this class."""
+        return ('fake',)
+
+    @classmethod
+    def uses_anonymous(cls) -> bool:
+
+        """Whether this class has the concept of anonymous accesses."""
+        return False
+
+    def exists(self, sub_path: str) -> bool:
+
+        """Check if a file exists in the fake remote storage.
+
+        Parameters:
+            sub_path: The path of the file relative to the storage directory.
+
+        Returns:
+            True if the file exists, False otherwise.
+        """
+        return (self._storage_dir / sub_path).is_file()
+
+    def retrieve(self,
+                 sub_path: str,
+                 local_path: str | Path) -> Path:
+        """Retrieve a file from the fake remote storage.
+
+        Parameters:
+            sub_path: The path of the file relative to the storage directory.
+            local_path: The path where the file should be copied to.
+
+        Returns:
+            The Path where the file was stored (same as local_path).
+
+        Raises:
+            FileNotFoundError: If the remote file does not exist.
+        """
+
+        source_path = self._storage_dir / sub_path
+        local_path = Path(local_path)
+
+        if not source_path.is_file():
+            raise FileNotFoundError(f'File does not exist: {self._src_prefix_}{sub_path}')
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_local_path = local_path.with_suffix(f'{local_path.suffix}.{uuid.uuid4()}')
+        try:
+            shutil.copy2(source_path, temp_local_path)
+            temp_local_path.rename(local_path)
+        except Exception:
+            temp_local_path.unlink(missing_ok=True)
+            raise
+
+        return local_path
+
+    def upload(self,
+               sub_path: str,
+               local_path: str | Path) -> Path:
+        """Upload a file to the fake remote storage.
+
+        Parameters:
+            sub_path: The destination path relative to the storage directory.
+            local_path: The path of the local file to upload.
+
+        Returns:
+            The Path of the local file that was uploaded.
+
+        Raises:
+            FileNotFoundError: If the local file does not exist.
+        """
+
+        local_path = Path(local_path)
+        if not local_path.is_file():
+            raise FileNotFoundError(f'File does not exist: {local_path}')
+
+        dest_path = self._storage_dir / sub_path
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        shutil.copy2(local_path, dest_path)
+
+        return local_path
+
+    def iterdir_type(self, sub_path: str) -> Iterator[tuple[str, bool]]:
+        """Iterate over the contents of a directory in the fake remote storage.
+
+        Parameters:
+            sub_path: The path of the directory relative to the storage directory.
+
+        Yields:
+            Tuples of (path, is_dir) for each item in the directory.
+        """
+
+        dir_path = self._storage_dir / sub_path if sub_path else self._storage_dir
+
+        if not dir_path.is_dir():
+            return
+
+        for item in dir_path.iterdir():
+            relative_path = str(item.relative_to(self._storage_dir)).replace('\\', '/')
+            yield f'{self._src_prefix_}{relative_path}', item.is_dir()
+
+    def unlink(self,
+               sub_path: str,
+               *,
+               missing_ok: bool = False) -> str:
+        """Remove a file from the fake remote storage.
+
+        Parameters:
+            sub_path: The path of the file relative to the storage directory.
+            missing_ok: If True, don't raise an error if the file doesn't exist.
+
+        Returns:
+            The sub_path that was removed.
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist and missing_ok is False.
+        """
+
+        file_path = self._storage_dir / sub_path
+        try:
+            file_path.unlink()
+        except FileNotFoundError:
+            if not missing_ok:
+                raise
 
         return sub_path

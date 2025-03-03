@@ -184,15 +184,37 @@ voldesc_path = p / 'volumes/COISS_2xxx/COISS_2001/voldesc.cat'
 contents = voldesc_path.read_text()
 ```
 
-Finally, there are four classes that allow direct access to the four possible storage
-locations without invoking any caching behavior: `FileCacheSourceLocal`,
-`FileCacheSourceHTTP`, `FileCacheSourceGS`, and `FileSourceCacheS3`:
+Finally, there are five classes that allow direct access to the five possible storage
+locations without invoking any caching behavior: `FileCacheSourceFile`,
+`FileCacheSourceHTTP`, `FileCacheSourceGS`, `FileSourceCacheS3`, and `FileCacheSourceFake`.
+The first four provide access to real storage locations, while `FileCacheSourceFake`
+simulates a remote source for testing purposes:
 
 ```python
 from filecache import FileCacheSourceGS
 src = FileCacheSourceGS('gs://rms-filecache-tests', anonymous=True)
 src.retrieve('subdir1/subdir2a/binary1.bin', 'local_file.bin')
 ```
+
+`FileCacheSourceFake` provides a way to simulate remote storage operations without
+requiring actual remote connections:
+
+```python
+from filecache import FileCache
+# Create a cache that uses the fake remote storage
+with FileCache(None) as fc:
+    # Write to simulated remote storage using fake:// scheme
+    with fc.open('fake://test-bucket/test.txt', 'w') as fp:
+        fp.write('test content')
+
+    # Read from simulated remote storage
+    with fc.open('fake://test-bucket/test.txt', 'r') as fp:
+        content = fp.read()
+    assert content == 'test content'
+```
+
+The fake storage behaves exactly like a remote source, including atomic operations and
+proper error handling, but stores files locally for testing purposes.
 
 Details of each class are available in the [module documentation](https://rms-filecache.readthedocs.io/en/latest/module.html).
 

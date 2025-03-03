@@ -64,6 +64,25 @@ Usage examples::
         with fc.open('gs://my-writable-bucket/output.txt', 'r') as fp:
             print(fp.read())
 
+For testing purposes, there is also a :class:`FileCacheSourceFake` class that simulates
+a remote storage location using a local directory structure. This allows testing code that
+uses remote storage without requiring actual remote connections::
+
+    from filecache import FileCache
+    # Create a cache that uses the fake remote storage
+    with FileCache(None) as fc:
+        # Write to simulated remote storage using fake:// scheme
+        with fc.open('fake://test-bucket/test.txt', 'w') as fp:
+            fp.write('test content')
+
+        # Read from simulated remote storage
+        with fc.open('fake://test-bucket/test.txt', 'r') as fp:
+            content = fp.read()
+        assert content == 'test content'
+
+The fake storage behaves exactly like a remote source, including atomic operations and
+proper error handling, but stores files locally for testing purposes.
+
 The :class:`FCPath` class is a reimplementation of the Python `Path` class to support
 remote acess using an associated :class:`FileCache`. Like `Path`, an :class:`FCPath`
 instance can contain any part of a URI, but only an absolute URI can be used when actually
@@ -143,7 +162,9 @@ defaults to ``"global"``); also :class:`FCPath` defaults to using the global cac
 
 Finally, there are four classes that allow direct access to the four possible storage
 locations without invoking any caching behavior: :class:`FileCacheSourceFile`,
-:class:`FileCacheSourceHTTP`, :class:`FileCacheSourceGS`, and :class:`FileSourceCacheS3`::
+:class:`FileCacheSourceHTTP`, :class:`FileCacheSourceGS`, :class:`FileSourceCacheS3`, and
+:class:`FileCacheSourceFake`. The first four provide access to real storage locations,
+while :class:`FileCacheSourceFake` simulates a remote source for testing purposes::
 
     from filecache import FileCacheSourceGS
     src = FileCacheSourceGS('gs://rms-filecache-tests', anonymous=True)
@@ -168,7 +189,8 @@ from .file_cache_source import (FileCacheSource,  # noqa: ignore E401
                                 FileCacheSourceFile,
                                 FileCacheSourceHTTP,
                                 FileCacheSourceGS,
-                                FileCacheSourceS3)
+                                FileCacheSourceS3,
+                                FileCacheSourceFake)
 
 __all__ = ['get_global_logger',
            'register_filecachesource',
@@ -180,4 +202,5 @@ __all__ = ['get_global_logger',
            'FileCacheSourceFile',
            'FileCacheSourceHTTP',
            'FileCacheSourceGS',
-           'FileCacheSourceS3']
+           'FileCacheSourceS3',
+           'FileCacheSourceFake']

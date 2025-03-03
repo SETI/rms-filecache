@@ -667,6 +667,42 @@ def test_read_write():
         p = FCPath('a')
         p.write_text(5)
 
+    # Test FileCacheSourceFake operations
+    with FileCache(cache_name=None) as fc:
+        fake_prefix = 'fake://test-bucket'
+        pfx = fc.new_path(fake_prefix)
+        p1 = pfx / 'test_file.bin'
+        p2 = pfx / 'test_file.txt'
+
+        p1.write_bytes(b'A')
+        p2.write_text('ABC\n')
+        assert p1.read_bytes() == b'A'
+        assert p2.read_text() == 'ABC\n'
+
+        # Should behave like a remote source with uploads
+        assert fc.download_counter == 0
+        assert fc.upload_counter == 2
+        assert p1.download_counter == 0
+        assert p1.upload_counter == 1
+        assert p2.download_counter == 0
+        assert p2.upload_counter == 1
+
+    # Test in new cache to verify persistence
+    with FileCache(cache_name=None) as fc:
+        pfx = fc.new_path(fake_prefix)
+        p1 = pfx / 'test_file.bin'
+        p2 = pfx / 'test_file.txt'
+
+        # Reading should require downloads from "remote" storage
+        assert p1.read_bytes() == b'A'
+        assert p2.read_text() == 'ABC\n'
+        assert fc.download_counter == 2
+        assert fc.upload_counter == 0
+        assert p1.download_counter == 1
+        assert p1.upload_counter == 0
+        assert p2.download_counter == 1
+        assert p2.upload_counter == 0
+
 
 def test_default_filecache():
     with FileCache(delete_on_exit=True) as fc:
@@ -674,6 +710,17 @@ def test_default_filecache():
         p2 = fc.new_path(GS_WRITABLE_TEST_BUCKET_ROOT) / EXPECTED_FILENAMES[0]
         assert p.get_local_path() == p2.get_local_path()
         p3 = FCPath(GS_WRITABLE_TEST_BUCKET_ROOT) / EXPECTED_FILENAMES[0]
+        assert p2.get_local_path() == p3.get_local_path()
+
+    # Test with FileCacheSourceFake
+    with FileCache(delete_on_exit=True) as fc:
+        fake_path = 'fake://test-bucket/test.txt'
+        p1 = FCPath(fake_path)
+        p2 = fc.new_path(fake_path)
+        p1.write_text('test content')  # Write using default FileCache
+        assert p2.read_text() == 'test content'  # Read using explicit FileCache
+        assert p1.get_local_path() == p2.get_local_path()
+        p3 = FCPath(fake_path)  # Create new path with default FileCache
         assert p2.get_local_path() == p3.get_local_path()
 
 
