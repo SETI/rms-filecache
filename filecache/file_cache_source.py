@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import requests
 import shutil
+import tempfile
 from typing import Iterator
 import uuid
 
@@ -1078,20 +1079,52 @@ class FileCacheSourceFake(FileCacheSource):
     connections. Files are stored in a local directory that simulates the remote storage.
     """
 
+    _DEFAULT_STORAGE_DIR = Path(tempfile.gettempdir()) / '.filecache_fake_remote'
+
+    @classmethod
+    def get_default_storage_dir(cls) -> Path:
+        """Get the current default storage directory for fake remote files.
+
+        Returns:
+            The current default storage directory Path.
+        """
+
+        return cls._DEFAULT_STORAGE_DIR
+
+    @classmethod
+    def set_default_storage_dir(cls, directory: str | Path) -> None:
+        """Set the default storage directory for fake remote files.
+
+        Parameters:
+            directory: The directory to use as the default storage location.
+        """
+
+        cls._DEFAULT_STORAGE_DIR = Path(directory)
+
+    @classmethod
+    def delete_default_storage_dir(cls) -> None:
+        """Delete the current default storage directory and all its contents.
+
+        This is useful for cleanup after testing.
+        """
+
+        if cls._DEFAULT_STORAGE_DIR.exists():
+            shutil.rmtree(cls._DEFAULT_STORAGE_DIR)
+
     def __init__(self,
                  scheme: str,
                  remote: str,
                  *,
                  anonymous: bool = False,
-                 storage_dir: str | Path = Path('fake_remote')):
+                 storage_dir: str | Path | None = None):
         """Initialize the FileCacheSourceFake class.
 
         Parameters:
             scheme: The scheme of the source. Must be "fake".
             remote: The simulated remote/bucket name.
             anonymous: Not used for this class.
-            storage_dir: Base directory to store the fake remote files. Defaults to
-                'fake_remote'.
+            storage_dir: Base directory to store the fake remote files. If None,
+                uses the class default storage directory.
         """
 
         if scheme != 'fake':
@@ -1102,25 +1135,23 @@ class FileCacheSourceFake(FileCacheSource):
 
         super().__init__(scheme, remote, anonymous=anonymous)
 
-        self._storage_base = Path(storage_dir)
+        self._storage_base = (Path(storage_dir) if storage_dir is not None
+                              else self._DEFAULT_STORAGE_DIR)
         self._storage_dir = self._storage_base / remote
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._cache_subdir = self._src_prefix.replace('fake://', 'fake_')
 
     @classmethod
     def schemes(cls) -> tuple[str, ...]:
-
         """The URL schemes supported by this class."""
         return ('fake',)
 
     @classmethod
     def uses_anonymous(cls) -> bool:
-
         """Whether this class has the concept of anonymous accesses."""
         return False
 
     def exists(self, sub_path: str) -> bool:
-
         """Check if a file exists in the fake remote storage.
 
         Parameters:

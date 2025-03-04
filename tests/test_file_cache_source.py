@@ -93,200 +93,248 @@ def test_source_nthreads_bad():
 
 def test_fake_source_init():
     """Test FileCacheSourceFake initialization."""
-    # Test valid initialization
-    fake = FileCacheSourceFake('fake', 'test-bucket')
-    assert fake.schemes() == ('fake',)
-    assert not fake.uses_anonymous()
+    FileCacheSourceFake.delete_default_storage_dir()
+    try:
+        # Test valid initialization
+        fake = FileCacheSourceFake('fake', 'test-bucket')
+        assert fake.schemes() == ('fake',)
+        assert not fake.uses_anonymous()
 
-    # Test invalid scheme
-    with pytest.raises(ValueError, match='Scheme must be "fake"'):
-        FileCacheSourceFake('not-fake', 'test-bucket')
+        # Test invalid scheme
+        with pytest.raises(ValueError, match='Scheme must be "fake"'):
+            FileCacheSourceFake('not-fake', 'test-bucket')
 
-    # Test empty remote
-    with pytest.raises(ValueError, match='remote parameter must have a value'):
-        FileCacheSourceFake('fake', '')
+        # Test empty remote
+        with pytest.raises(ValueError, match='remote parameter must have a value'):
+            FileCacheSourceFake('fake', '')
+    finally:
+        FileCacheSourceFake.delete_default_storage_dir()
+
+
+def test_fake_source_default_storage_dir(tmp_path):
+    """Test the default storage directory management."""
+    FileCacheSourceFake.delete_default_storage_dir()
+    try:
+        # Test getting default directory
+        default_dir = FileCacheSourceFake.get_default_storage_dir()
+        assert '.filecache_fake_remote' in str(default_dir)
+
+        # Test setting default directory
+        FileCacheSourceFake.set_default_storage_dir(tmp_path)
+        assert FileCacheSourceFake.get_default_storage_dir() == tmp_path
+
+        # Test creating a source uses the default directory
+        fake = FileCacheSourceFake('fake', 'test-bucket')
+        assert fake._storage_base == tmp_path
+
+        # Test deleting default directory
+        (tmp_path / 'test.txt').write_text('test')
+        FileCacheSourceFake.delete_default_storage_dir()
+        assert not tmp_path.exists()
+    finally:
+        FileCacheSourceFake.delete_default_storage_dir()
 
 
 def test_fake_source_file_operations(tmp_path):
     """Test basic file operations with FileCacheSourceFake."""
-    fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
+    FileCacheSourceFake.delete_default_storage_dir()
+    try:
+        fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
 
-    # Test file that doesn't exist
-    assert not fake.exists('test.txt')
+        # Test file that doesn't exist
+        assert not fake.exists('test.txt')
 
-    # Test upload
-    source_file = tmp_path / 'source.txt'
-    source_file.write_text('test content')
+        # Test upload
+        source_file = tmp_path / 'source.txt'
+        source_file.write_text('test content')
 
-    fake.upload('test.txt', source_file)
-    assert fake.exists('test.txt')
+        fake.upload('test.txt', source_file)
+        assert fake.exists('test.txt')
 
-    # Test retrieve
-    dest_file = tmp_path / 'dest.txt'
-    fake.retrieve('test.txt', dest_file)
-    assert dest_file.read_text() == 'test content'
+        # Test retrieve
+        dest_file = tmp_path / 'dest.txt'
+        fake.retrieve('test.txt', dest_file)
+        assert dest_file.read_text() == 'test content'
 
-    # Test unlink
-    fake.unlink('test.txt')
-    assert not fake.exists('test.txt')
+        # Test unlink
+        fake.unlink('test.txt')
+        assert not fake.exists('test.txt')
 
-    # Test unlink missing file
-    with pytest.raises(FileNotFoundError):
-        fake.unlink('missing.txt')
+        # Test unlink missing file
+        with pytest.raises(FileNotFoundError):
+            fake.unlink('missing.txt')
 
-    # Test unlink missing file with missing_ok=True
-    fake.unlink('missing.txt', missing_ok=True)
+        # Test unlink missing file with missing_ok=True
+        fake.unlink('missing.txt', missing_ok=True)
+    finally:
+        FileCacheSourceFake.delete_default_storage_dir()
 
 
 def test_fake_source_directory_operations(tmp_path):
     """Test directory operations with FileCacheSourceFake."""
-    fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
+    FileCacheSourceFake.delete_default_storage_dir()
+    try:
+        fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
 
-    # Create some test files and directories
-    (tmp_path / 'test-bucket/dir1').mkdir(parents=True)
-    (tmp_path / 'test-bucket/dir1/file1.txt').write_text('content1')
-    (tmp_path / 'test-bucket/dir2').mkdir(parents=True)
-    (tmp_path / 'test-bucket/dir2/file2.txt').write_text('content2')
-    (tmp_path / 'test-bucket/file3.txt').write_text('content3')
+        # Create some test files and directories
+        (tmp_path / 'test-bucket/dir1').mkdir(parents=True)
+        (tmp_path / 'test-bucket/dir1/file1.txt').write_text('content1')
+        (tmp_path / 'test-bucket/dir2').mkdir(parents=True)
+        (tmp_path / 'test-bucket/dir2/file2.txt').write_text('content2')
+        (tmp_path / 'test-bucket/file3.txt').write_text('content3')
 
-    # Test iterdir_type
-    entries = list(fake.iterdir_type(''))
-    assert len(entries) == 3
+        # Test iterdir_type
+        entries = list(fake.iterdir_type(''))
+        assert len(entries) == 3
 
-    # Sort entries for consistent testing
-    entries.sort()
+        # Sort entries for consistent testing
+        entries.sort()
 
-    # Test full paths and types
-    assert entries[0] == ('fake://test-bucket/dir1', True)
-    assert entries[1] == ('fake://test-bucket/dir2', True)
-    assert entries[2] == ('fake://test-bucket/file3.txt', False)
+        # Test full paths and types
+        assert entries[0] == ('fake://test-bucket/dir1', True)
+        assert entries[1] == ('fake://test-bucket/dir2', True)
+        assert entries[2] == ('fake://test-bucket/file3.txt', False)
 
-    # Test subdirectory listing
-    entries = list(fake.iterdir_type('dir1'))
-    assert len(entries) == 1
-    assert entries[0] == ('fake://test-bucket/dir1/file1.txt', False)
+        # Test subdirectory listing
+        entries = list(fake.iterdir_type('dir1'))
+        assert len(entries) == 1
+        assert entries[0] == ('fake://test-bucket/dir1/file1.txt', False)
+    finally:
+        FileCacheSourceFake.delete_default_storage_dir()
 
 
 def test_fake_source_error_cases(tmp_path):
     """Test error cases with FileCacheSourceFake."""
-    fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
-
-    # Test retrieve non-existent file
-    with pytest.raises(FileNotFoundError):
-        fake.retrieve('missing.txt', tmp_path / 'dest.txt')
-
-    # Test upload non-existent file
-    with pytest.raises(FileNotFoundError):
-        fake.upload('dest.txt', tmp_path / 'missing.txt')
-
-    # Test iterdir_type on non-existent directory
-    assert list(fake.iterdir_type('missing-dir')) == []
-
-    # Create a test file
-    source_path = tmp_path / 'test-bucket/test.txt'
-    source_path.parent.mkdir(parents=True, exist_ok=True)
-    source_path.write_text('test content')
-
-    # Create a destination directory that exists but is not writable
-    dest_dir = tmp_path / 'dest'
-    dest_dir.mkdir()
-    dest_path = dest_dir / 'test.txt'
-
-    # Mock shutil.copy2 to raise an error after creating the temp file
-    original_copy2 = shutil.copy2
-
-    def mock_copy2(src, dst):
-        # Create the temp file
-        with open(dst, 'w') as f:
-            f.write('partial content')
-        # Then raise an error
-        raise OSError("Mock copy error")
-
-    shutil.copy2 = mock_copy2
+    FileCacheSourceFake.delete_default_storage_dir()
     try:
-        with pytest.raises(OSError, match="Mock copy error"):
-            fake.retrieve('test.txt', dest_path)
-        # Verify temp file was cleaned up
-        assert not any(dest_dir.glob('*.uuid*'))
+        fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
+
+        # Test retrieve non-existent file
+        with pytest.raises(FileNotFoundError):
+            fake.retrieve('missing.txt', tmp_path / 'dest.txt')
+
+        # Test upload non-existent file
+        with pytest.raises(FileNotFoundError):
+            fake.upload('dest.txt', tmp_path / 'missing.txt')
+
+        # Test iterdir_type on non-existent directory
+        assert list(fake.iterdir_type('missing-dir')) == []
+
+        # Create a test file
+        source_path = tmp_path / 'test-bucket/test.txt'
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text('test content')
+
+        # Create a destination directory that exists but is not writable
+        dest_dir = tmp_path / 'dest'
+        dest_dir.mkdir()
+        dest_path = dest_dir / 'test.txt'
+
+        # Mock shutil.copy2 to raise an error after creating the temp file
+        original_copy2 = shutil.copy2
+
+        def mock_copy2(src, dst):
+            # Create the temp file
+            with open(dst, 'w') as f:
+                f.write('partial content')
+            # Then raise an error
+            raise OSError("Mock copy error")
+
+        shutil.copy2 = mock_copy2
+        try:
+            with pytest.raises(OSError, match="Mock copy error"):
+                fake.retrieve('test.txt', dest_path)
+            # Verify temp file was cleaned up
+            assert not any(dest_dir.glob('*.uuid*'))
+        finally:
+            shutil.copy2 = original_copy2
     finally:
-        shutil.copy2 = original_copy2
+        FileCacheSourceFake.delete_default_storage_dir()
 
 
 def test_fake_source_multi_operations(tmp_path):
     """Test multi-file operations with FileCacheSourceFake."""
-    fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
+    FileCacheSourceFake.delete_default_storage_dir()
+    try:
+        fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
 
-    # Create test files
-    files = []
-    for i in range(3):
-        path = tmp_path / f'source{i}.txt'
-        path.write_text(f'content{i}')
-        files.append(path)
+        # Create test files
+        files = []
+        for i in range(3):
+            path = tmp_path / f'source{i}.txt'
+            path.write_text(f'content{i}')
+            files.append(path)
 
-    # Test exists_multi
-    results = fake.exists_multi(['test1.txt', 'test2.txt', 'test3.txt'])
-    assert results == [False, False, False]
+        # Test exists_multi
+        results = fake.exists_multi(['test1.txt', 'test2.txt', 'test3.txt'])
+        assert results == [False, False, False]
 
-    # Test upload_multi
-    sub_paths = [f'test{i}.txt' for i in range(3)]
-    results = fake.upload_multi(sub_paths, files)
-    assert all(isinstance(r, Path) for r in results)
+        # Test upload_multi
+        sub_paths = [f'test{i}.txt' for i in range(3)]
+        results = fake.upload_multi(sub_paths, files)
+        assert all(isinstance(r, Path) for r in results)
 
-    # Test exists_multi after upload
-    results = fake.exists_multi(sub_paths)
-    assert results == [True, True, True]
+        # Test exists_multi after upload
+        results = fake.exists_multi(sub_paths)
+        assert results == [True, True, True]
 
-    # Test retrieve_multi
-    dest_files = [tmp_path / f'dest{i}.txt' for i in range(3)]
-    results = fake.retrieve_multi(sub_paths, dest_files)
-    assert all(isinstance(r, Path) for r in results)
-    assert all(f.exists() for f in dest_files)
+        # Test retrieve_multi
+        dest_files = [tmp_path / f'dest{i}.txt' for i in range(3)]
+        results = fake.retrieve_multi(sub_paths, dest_files)
+        assert all(isinstance(r, Path) for r in results)
+        assert all(f.exists() for f in dest_files)
 
-    # Test unlink_multi
-    results = fake.unlink_multi(sub_paths)
-    assert all(isinstance(r, str) for r in results)
-    assert not any(fake.exists(p) for p in sub_paths)
+        # Test unlink_multi
+        results = fake.unlink_multi(sub_paths)
+        assert all(isinstance(r, str) for r in results)
+        assert not any(fake.exists(p) for p in sub_paths)
+    finally:
+        FileCacheSourceFake.delete_default_storage_dir()
 
 
 def test_fake_source_atomic_operations(tmp_path):
     """Test that uploads and downloads are atomic operations."""
-    fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
-
-    # Test atomic upload
-    source_file = tmp_path / 'source.txt'
-    source_file.write_text('test content')
-
-    # Verify upload creates temp file and then renames
-    def mock_rename(src, dst):
-        # Verify temp file exists and destination doesn't
-        assert src.exists()
-        assert not dst.exists()
-        # Just verify it's a temp file with a UUID-like pattern
-        assert '.txt.' in str(src)
-        os.rename(str(src), str(dst))  # Use os.rename to avoid recursion
-
-    import pathlib
-    original_rename = pathlib.Path.rename
-    pathlib.Path.rename = mock_rename
+    FileCacheSourceFake.delete_default_storage_dir()
     try:
-        fake.upload('test.txt', source_file)
+        fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
+
+        # Test atomic upload
+        source_file = tmp_path / 'source.txt'
+        source_file.write_text('test content')
+
+        # Verify upload creates temp file and then renames
+        def mock_rename(src, dst):
+            # Verify temp file exists and destination doesn't
+            assert src.exists()
+            assert not dst.exists()
+            # Just verify it's a temp file with a UUID-like pattern
+            assert '.txt.' in str(src)
+            os.rename(str(src), str(dst))  # Use os.rename to avoid recursion
+
+        import pathlib
+        original_rename = pathlib.Path.rename
+        pathlib.Path.rename = mock_rename
+        try:
+            fake.upload('test.txt', source_file)
+        finally:
+            pathlib.Path.rename = original_rename
+
+        # Test atomic download
+        dest_file = tmp_path / 'dest.txt'
+
+        # Verify download creates temp file and then renames
+        def mock_rename2(src, dst):
+            # Verify temp file exists and destination doesn't
+            assert src.exists()
+            assert not dst.exists()
+            # Just verify it's a temp file with a UUID-like pattern
+            assert '.txt.' in str(src)
+            os.rename(str(src), str(dst))  # Use os.rename to avoid recursion
+
+        pathlib.Path.rename = mock_rename2
+        try:
+            fake.retrieve('test.txt', dest_file)
+        finally:
+            pathlib.Path.rename = original_rename
     finally:
-        pathlib.Path.rename = original_rename
-
-    # Test atomic download
-    dest_file = tmp_path / 'dest.txt'
-
-    # Verify download creates temp file and then renames
-    def mock_rename2(src, dst):
-        # Verify temp file exists and destination doesn't
-        assert src.exists()
-        assert not dst.exists()
-        # Just verify it's a temp file with a UUID-like pattern
-        assert '.txt.' in str(src)
-        os.rename(str(src), str(dst))  # Use os.rename to avoid recursion
-
-    pathlib.Path.rename = mock_rename2
-    try:
-        fake.retrieve('test.txt', dest_file)
-    finally:
-        pathlib.Path.rename = original_rename
+        FileCacheSourceFake.delete_default_storage_dir()
