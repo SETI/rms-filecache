@@ -1099,7 +1099,7 @@ class FileCacheSourceFake(FileCacheSource):
             directory: The directory to use as the default storage location.
         """
 
-        cls._DEFAULT_STORAGE_DIR = Path(directory)
+        cls._DEFAULT_STORAGE_DIR = Path(directory).expanduser().resolve()
 
     @classmethod
     def delete_default_storage_dir(cls) -> None:
@@ -1135,7 +1135,8 @@ class FileCacheSourceFake(FileCacheSource):
 
         super().__init__(scheme, remote, anonymous=anonymous)
 
-        self._storage_base = (Path(storage_dir) if storage_dir is not None
+        self._storage_base = (Path(storage_dir).expanduser().resolve()
+                              if storage_dir is not None
                               else self._DEFAULT_STORAGE_DIR)
         self._storage_dir = self._storage_base / remote
         self._storage_dir.mkdir(parents=True, exist_ok=True)
