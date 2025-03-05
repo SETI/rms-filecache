@@ -608,7 +608,7 @@ class FileCacheSourceHTTP(FileCacheSource):
         except requests.exceptions.RequestException as e:
             raise FileNotFoundError(f'Failed to download file: {url}') from e
 
-        temp_local_path = local_path.with_suffix(local_path.suffix + str(uuid.uuid4()))
+        temp_local_path = local_path.with_suffix(f'{local_path.suffix}.{uuid.uuid4()}')
         try:
             with open(temp_local_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024*1024):
@@ -1076,7 +1076,9 @@ class FileCacheSourceFake(FileCacheSource):
     """Class that simulates a remote file source using a local directory structure.
 
     This class is useful for testing file operations without requiring actual remote
-    connections. Files are stored in a local directory that simulates the remote storage.
+    connections. Files are stored in a local directory that simulates the remote storage,
+    including the need for uploads and downloads. By default, the storage directory is
+    ``<TEMPDIR>/.filecache_fake_remote`` and persists across program runs.
     """
 
     _DEFAULT_STORAGE_DIR = Path(tempfile.gettempdir()) / '.filecache_fake_remote'
@@ -1096,7 +1098,8 @@ class FileCacheSourceFake(FileCacheSource):
         """Set the default storage directory for fake remote files.
 
         Parameters:
-            directory: The directory to use as the default storage location.
+            directory: The directory to use as the default storage location. The directory
+                is expanded and resolved to an absolute path.
         """
 
         cls._DEFAULT_STORAGE_DIR = Path(directory).expanduser().resolve()
@@ -1123,7 +1126,7 @@ class FileCacheSourceFake(FileCacheSource):
             scheme: The scheme of the source. Must be "fake".
             remote: The simulated remote/bucket name.
             anonymous: Not used for this class.
-            storage_dir: Base directory to store the fake remote files. If None,
+            storage_dir: Base directory in which to store the fake remote files. If None,
                 uses the class default storage directory.
         """
 
@@ -1145,11 +1148,13 @@ class FileCacheSourceFake(FileCacheSource):
     @classmethod
     def schemes(cls) -> tuple[str, ...]:
         """The URL schemes supported by this class."""
+
         return ('fake',)
 
     @classmethod
     def uses_anonymous(cls) -> bool:
         """Whether this class has the concept of anonymous accesses."""
+
         return False
 
     def exists(self, sub_path: str) -> bool:
@@ -1161,6 +1166,7 @@ class FileCacheSourceFake(FileCacheSource):
         Returns:
             True if the file exists, False otherwise.
         """
+
         return (self._storage_dir / sub_path).is_file()
 
     def retrieve(self,
@@ -1220,7 +1226,13 @@ class FileCacheSourceFake(FileCacheSource):
         dest_path = self._storage_dir / sub_path
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        shutil.copy2(local_path, dest_path)
+        temp_dest_path = dest_path.with_suffix(f'{dest_path.suffix}.{uuid.uuid4()}')
+        try:
+            shutil.copy2(local_path, temp_dest_path)
+            temp_dest_path.rename(dest_path)
+        except Exception:
+            temp_dest_path.unlink(missing_ok=True)
+            raise
 
         return local_path
 

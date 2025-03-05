@@ -33,8 +33,7 @@ from .file_cache_source import (FileCacheSource,
                                 FileCacheSourceHTTP,
                                 FileCacheSourceGS,
                                 FileCacheSourceS3,
-                                FileCacheSourceFake
-                                )
+                                FileCacheSourceFake)
 from .file_cache_path import FCPath
 from .file_cache_types import (StrOrPathOrSeqType,
                                UrlToPathFuncOrSeqType)

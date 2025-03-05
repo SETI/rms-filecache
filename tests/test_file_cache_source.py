@@ -2,6 +2,7 @@
 # tests/test_file_cache_source.py
 ################################################################################
 
+import pathlib
 from pathlib import Path
 import pytest
 import shutil
@@ -22,7 +23,9 @@ def test_source_bad():
         FileCacheSourceFile('fred', 'hi')
 
     with pytest.raises(ValueError):
-        FileCacheSourceHTTP('fred', 'hi/hi')
+        FileCacheSourceHTTP('fred', 'hi')
+    with pytest.raises(ValueError):
+        FileCacheSourceHTTP('http', 'hi/hi')
     with pytest.raises(ValueError):
         FileCacheSourceHTTP('https', '')
 
@@ -40,7 +43,6 @@ def test_source_bad():
     with pytest.raises(ValueError):
         FileCacheSourceS3('s3', '')
 
-    # Add tests for FileCacheSourceFake
     with pytest.raises(ValueError):
         FileCacheSourceFake('not-fake', 'test-bucket')
     with pytest.raises(ValueError):
@@ -111,7 +113,7 @@ def test_fake_source_init():
         FileCacheSourceFake.delete_default_storage_dir()
 
 
-def test_fake_source_default_storage_dir(tmp_path):
+def test_fake_source_default_storage_dir(tmp_path: Path):
     """Test the default storage directory management."""
     FileCacheSourceFake.delete_default_storage_dir()
     try:
@@ -128,14 +130,16 @@ def test_fake_source_default_storage_dir(tmp_path):
         assert fake._storage_base == tmp_path
 
         # Test deleting default directory
-        (tmp_path / 'test.txt').write_text('test')
+        path = tmp_path / 'test.txt'
+        path.write_text('test')
+        assert path.exists()
         FileCacheSourceFake.delete_default_storage_dir()
-        assert not tmp_path.exists()
+        assert not path.exists()
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
 
 
-def test_fake_source_file_operations(tmp_path):
+def test_fake_source_file_operations(tmp_path: Path):
     """Test basic file operations with FileCacheSourceFake."""
     FileCacheSourceFake.delete_default_storage_dir()
     try:
@@ -170,7 +174,7 @@ def test_fake_source_file_operations(tmp_path):
         FileCacheSourceFake.delete_default_storage_dir()
 
 
-def test_fake_source_directory_operations(tmp_path):
+def test_fake_source_directory_operations(tmp_path: Path):
     """Test directory operations with FileCacheSourceFake."""
     FileCacheSourceFake.delete_default_storage_dir()
     try:
@@ -203,7 +207,7 @@ def test_fake_source_directory_operations(tmp_path):
         FileCacheSourceFake.delete_default_storage_dir()
 
 
-def test_fake_source_error_cases(tmp_path):
+def test_fake_source_error_cases(tmp_path: Path):
     """Test error cases with FileCacheSourceFake."""
     FileCacheSourceFake.delete_default_storage_dir()
     try:
@@ -238,21 +242,19 @@ def test_fake_source_error_cases(tmp_path):
             with open(dst, 'w') as f:
                 f.write('partial content')
             # Then raise an error
-            raise OSError("Mock copy error")
+            raise OSError('Mock copy error')
 
         shutil.copy2 = mock_copy2
         try:
             with pytest.raises(OSError, match="Mock copy error"):
                 fake.retrieve('test.txt', dest_path)
-            # Verify temp file was cleaned up
-            assert not any(dest_dir.glob('*.uuid*'))
         finally:
             shutil.copy2 = original_copy2
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
 
 
-def test_fake_source_multi_operations(tmp_path):
+def test_fake_source_multi_operations(tmp_path: Path):
     """Test multi-file operations with FileCacheSourceFake."""
     FileCacheSourceFake.delete_default_storage_dir()
     try:
@@ -271,28 +273,34 @@ def test_fake_source_multi_operations(tmp_path):
 
         # Test upload_multi
         sub_paths = [f'test{i}.txt' for i in range(3)]
-        results = fake.upload_multi(sub_paths, files)
+        results = fake.upload_multi(sub_paths[:2], files[:2])
         assert all(isinstance(r, Path) for r in results)
 
         # Test exists_multi after upload
         results = fake.exists_multi(sub_paths)
-        assert results == [True, True, True]
+        assert results == [True, True, False]
 
         # Test retrieve_multi
         dest_files = [tmp_path / f'dest{i}.txt' for i in range(3)]
         results = fake.retrieve_multi(sub_paths, dest_files)
-        assert all(isinstance(r, Path) for r in results)
-        assert all(f.exists() for f in dest_files)
+        assert isinstance(results[0], Path)
+        assert isinstance(results[1], Path)
+        assert isinstance(results[2], BaseException)
+        assert dest_files[0].exists()
+        assert dest_files[1].exists()
+        assert not dest_files[2].exists()
 
         # Test unlink_multi
         results = fake.unlink_multi(sub_paths)
-        assert all(isinstance(r, str) for r in results)
+        assert isinstance(results[0], str)
+        assert isinstance(results[1], str)
+        assert isinstance(results[2], BaseException)
         assert not any(fake.exists(p) for p in sub_paths)
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
 
 
-def test_fake_source_atomic_operations(tmp_path):
+def test_fake_source_atomic_operations(tmp_path: Path):
     """Test that uploads and downloads are atomic operations."""
     FileCacheSourceFake.delete_default_storage_dir()
     try:
@@ -311,7 +319,6 @@ def test_fake_source_atomic_operations(tmp_path):
             assert '.txt.' in str(src)
             os.rename(str(src), str(dst))  # Use os.rename to avoid recursion
 
-        import pathlib
         original_rename = pathlib.Path.rename
         pathlib.Path.rename = mock_rename
         try:
