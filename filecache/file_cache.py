@@ -33,7 +33,7 @@ from .file_cache_source import (FileCacheSource,
                                 FileCacheSourceHTTP,
                                 FileCacheSourceGS,
                                 FileCacheSourceS3,
-                                )
+                                FileCacheSourceFake)
 from .file_cache_path import FCPath
 from .file_cache_types import (StrOrPathOrSeqType,
                                UrlToPathFuncOrSeqType)
@@ -59,6 +59,7 @@ register_filecachesource(FileCacheSourceFile)
 register_filecachesource(FileCacheSourceHTTP)
 register_filecachesource(FileCacheSourceGS)
 register_filecachesource(FileCacheSourceS3)
+register_filecachesource(FileCacheSourceFake)
 
 
 # Default logger for all FileCache instances that didn't specify one explicitly
