@@ -316,7 +316,7 @@ def test_fake_source_atomic_operations(tmp_path: Path):
             assert src.exists()
             assert not dst.exists()
             # Just verify it's a temp file with a UUID-like pattern
-            assert '.txt.' in str(src)
+            assert '.txt_' in str(src)
             os.rename(str(src), str(dst))  # Use os.rename to avoid recursion
 
         original_rename = pathlib.Path.rename
@@ -335,7 +335,7 @@ def test_fake_source_atomic_operations(tmp_path: Path):
             assert src.exists()
             assert not dst.exists()
             # Just verify it's a temp file with a UUID-like pattern
-            assert '.txt.' in str(src)
+            assert '.txt_' in str(src)
             os.rename(str(src), str(dst))  # Use os.rename to avoid recursion
 
         pathlib.Path.rename = mock_rename2
