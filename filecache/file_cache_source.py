@@ -608,7 +608,7 @@ class FileCacheSourceHTTP(FileCacheSource):
         except requests.exceptions.RequestException as e:
             raise FileNotFoundError(f'Failed to download file: {url}') from e
 
-        temp_local_path = local_path.with_suffix(f'{local_path.suffix}.{uuid.uuid4()}')
+        temp_local_path = local_path.with_suffix(f'.{local_path.suffix}_{uuid.uuid4()}')
         try:
             with open(temp_local_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024*1024):
@@ -760,7 +760,7 @@ class FileCacheSourceGS(FileCacheSource):
 
         blob = self._bucket.blob(sub_path)
 
-        temp_local_path = local_path.with_suffix(f'{local_path.suffix}.{uuid.uuid4()}')
+        temp_local_path = local_path.with_suffix(f'.{local_path.suffix}_{uuid.uuid4()}')
         try:
             blob.download_to_filename(str(temp_local_path))
             temp_local_path.rename(local_path)
@@ -965,7 +965,7 @@ class FileCacheSourceS3(FileCacheSource):
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
-        temp_local_path = local_path.with_suffix(f'{local_path.suffix}.{uuid.uuid4()}')
+        temp_local_path = local_path.with_suffix(f'.{local_path.suffix}_{uuid.uuid4()}')
         try:
             self._client.download_file(self._bucket_name, sub_path,
                                        str(temp_local_path))
@@ -1193,7 +1193,7 @@ class FileCacheSourceFake(FileCacheSource):
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
-        temp_local_path = local_path.with_suffix(f'{local_path.suffix}.{uuid.uuid4()}')
+        temp_local_path = local_path.with_suffix(f'.{local_path.suffix}_{uuid.uuid4()}')
         try:
             shutil.copy2(source_path, temp_local_path)
             temp_local_path.rename(local_path)
@@ -1226,7 +1226,7 @@ class FileCacheSourceFake(FileCacheSource):
         dest_path = self._storage_dir / sub_path
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        temp_dest_path = dest_path.with_suffix(f'{dest_path.suffix}.{uuid.uuid4()}')
+        temp_dest_path = dest_path.with_suffix(f'.{dest_path.suffix}_{uuid.uuid4()}')
         try:
             shutil.copy2(local_path, temp_dest_path)
             temp_dest_path.rename(dest_path)
