@@ -18,7 +18,10 @@ from tests.test_file_cache import (GS_TEST_BUCKET_ROOT,
                                    INDEXABLE_PREFIXES,
                                    EXPECTED_DIR,
                                    EXPECTED_FILENAMES,
-                                   GS_WRITABLE_TEST_BUCKET_ROOT
+                                   GS_WRITABLE_TEST_BUCKET_ROOT,
+                                   HTTP_GLOB_TEST_ROOT,
+                                   HTTP_INDEXABLE_TEST_ROOT,
+                                   NON_HTTP_INDEXABLE_PREFIXES,
                                    )
 
 
@@ -845,40 +848,50 @@ def test_walk(prefix):
             dirs.sort()
             files.sort()
             results.append((str(path), dirs, files))
-        assert len(results) == 4
-        assert results[0] == (wprefix, ['subdir1'], ['lorem1.txt'])
-        assert results[1] == (f'{wprefix}/subdir1',
-                              ['subdir2a', 'subdir2b'], ['lorem1.txt'])
-        if results[2][0].endswith('2a'):
-            assert results[2] == (f'{wprefix}/subdir1/subdir2a',
-                                  [], ['binary1.bin'])
-            assert results[3] == (f'{wprefix}/subdir1/subdir2b',
-                                  [], ['binary1.bin'])
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            assert len(results) == 2
+            assert results[0] == (wprefix,
+                                  ['report'],
+                                  ['archsis.lbl', 'archsis.pdf', 'archsis.txt',
+                                   'docinfo.txt', 'edrsis.lbl', 'edrsis.pdf',
+                                   'edrsis.txt'])
+            assert results[1] == (f'{wprefix}/report',
+                                  [], ['rptinfo.txt'])
         else:
-            assert results[3] == (f'{wprefix}/subdir1/subdir2a',
-                                  [], ['binary1.bin'])
-            assert results[2] == (f'{wprefix}/subdir1/subdir2b',
-                                  [], ['binary1.bin'])
+            assert len(results) == 4
+            assert results[0] == (wprefix, ['subdir1'], ['lorem1.txt'])
+            assert results[1] == (f'{wprefix}/subdir1',
+                                  ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+            if results[2][0].endswith('2a'):
+                assert results[2] == (f'{wprefix}/subdir1/subdir2a',
+                                      [], ['binary1.bin'])
+                assert results[3] == (f'{wprefix}/subdir1/subdir2b',
+                                      [], ['binary1.bin'])
+            else:
+                assert results[3] == (f'{wprefix}/subdir1/subdir2a',
+                                      [], ['binary1.bin'])
+                assert results[2] == (f'{wprefix}/subdir1/subdir2b',
+                                      [], ['binary1.bin'])
 
-        prefix2 = f'{prefix}/subdir1'
-        wprefix2 = prefix2.replace('\\', '/')
-        pfx2 = fc.new_path(prefix2, nthreads=32)
-        results = []
-        for path, dirs, files in pfx2.walk():
-            assert path._nthreads == 32
-            dirs.sort()
-            files.sort()
-            results.append((str(path), dirs, files))
-        results.sort()
-        print(results)
-        assert len(results) == 3
-        assert results[0] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
-        if results[1][0].endswith('2a'):
-            assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[2] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
-        else:
-            assert results[2] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            prefix2 = f'{prefix}/subdir1'
+            wprefix2 = prefix2.replace('\\', '/')
+            pfx2 = fc.new_path(prefix2, nthreads=32)
+            results = []
+            for path, dirs, files in pfx2.walk():
+                assert path._nthreads == 32
+                dirs.sort()
+                files.sort()
+                results.append((str(path), dirs, files))
+            results.sort()
+            assert len(results) == 3
+            assert results[0] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+            if results[1][0].endswith('2a'):
+                assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+                assert results[2] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
+            else:
+                assert results[2] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+                assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
@@ -893,41 +906,52 @@ def test_walk_topdown(prefix):
             dirs.sort()
             files.sort()
             results.append((str(path), dirs, files))
-        assert len(results) == 4
-        assert results[3] == (wprefix, ['subdir1'], ['lorem1.txt'])
-        assert results[2] == (f'{wprefix}/subdir1',
-                              ['subdir2a', 'subdir2b'], ['lorem1.txt'])
-        if results[1][0].endswith('2a'):
-            assert results[1] == (f'{wprefix}/subdir1/subdir2a',
-                                  [], ['binary1.bin'])
-            assert results[0] == (f'{wprefix}/subdir1/subdir2b',
-                                  [], ['binary1.bin'])
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            assert len(results) == 2
+            assert results[1] == (wprefix,
+                                  ['report'],
+                                  ['archsis.lbl', 'archsis.pdf', 'archsis.txt',
+                                   'docinfo.txt', 'edrsis.lbl', 'edrsis.pdf',
+                                   'edrsis.txt'])
+            assert results[0] == (f'{wprefix}/report',
+                                  [], ['rptinfo.txt'])
         else:
-            assert results[0] == (f'{wprefix}/subdir1/subdir2a',
-                                  [], ['binary1.bin'])
-            assert results[1] == (f'{wprefix}/subdir1/subdir2b',
-                                  [], ['binary1.bin'])
+            assert len(results) == 4
+            assert results[3] == (wprefix, ['subdir1'], ['lorem1.txt'])
+            assert results[2] == (f'{wprefix}/subdir1',
+                                ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+            if results[1][0].endswith('2a'):
+                assert results[1] == (f'{wprefix}/subdir1/subdir2a',
+                                    [], ['binary1.bin'])
+                assert results[0] == (f'{wprefix}/subdir1/subdir2b',
+                                    [], ['binary1.bin'])
+            else:
+                assert results[0] == (f'{wprefix}/subdir1/subdir2a',
+                                    [], ['binary1.bin'])
+                assert results[1] == (f'{wprefix}/subdir1/subdir2b',
+                                    [], ['binary1.bin'])
 
-        prefix2 = f'{prefix}/subdir1'
-        wprefix2 = prefix2.replace('\\', '/')
-        pfx2 = fc.new_path(prefix2, nthreads=32)
-        results = []
-        for path, dirs, files in pfx2.walk(top_down=False):
-            assert path._nthreads == 32
-            dirs.sort()
-            files.sort()
-            results.append((str(path), dirs, files))
-        assert len(results) == 3
-        assert results[2] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
-        if results[1][0].endswith('2a'):
-            assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[0] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
-        else:
-            assert results[0] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            prefix2 = f'{prefix}/subdir1'
+            wprefix2 = prefix2.replace('\\', '/')
+            pfx2 = fc.new_path(prefix2, nthreads=32)
+            results = []
+            for path, dirs, files in pfx2.walk(top_down=False):
+                assert path._nthreads == 32
+                dirs.sort()
+                files.sort()
+                results.append((str(path), dirs, files))
+            assert len(results) == 3
+            assert results[2] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+            if results[1][0].endswith('2a'):
+                assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+                assert results[0] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
+            else:
+                assert results[0] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+                assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', NON_HTTP_INDEXABLE_PREFIXES)
 @pytest.mark.parametrize('pattern', (
     (
         ('',
@@ -974,13 +998,45 @@ def test_glob(prefix, pattern):
         assert results == pattern[2]
 
 
+@pytest.mark.parametrize('pattern', (
+    (
+        ('',
+         '*',
+         ['aareadme.txt', 'catalog', 'data', 'document', 'errata.txt',
+          'extras', 'index', 'label', 'voldesc.cat']),
+        ('',
+         '*tal*',
+         ['catalog']),
+        ('/catalog',
+         'p*',
+         ['person.cat', 'projref.cat']),
+        ('/document',
+         '**/*',  # Behavior of "**" changed in 3.13
+         ['archsis.lbl', 'archsis.pdf', 'archsis.txt', 'docinfo.txt',
+          'edrsis.lbl', 'edrsis.pdf', 'edrsis.txt', 'report',
+          'report/rptinfo.txt']),
+    )
+))
+def test_glob_http(pattern):
+    prefix = str(f'{HTTP_GLOB_TEST_ROOT}{pattern[0]}')
+    wprefix = prefix.replace('\\', '/')
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix)
+        if prefix.startswith('gs://'):
+            results = list(pfx1.glob(pattern[1]))
+        else:
+            results = list(pfx1.glob(FCPath(pattern[1])))
+        results = sorted([x.path.replace(wprefix, '').lstrip('/') for x in results])
+        assert results == pattern[2]
+
+
 def test_glob_fail():
     list(FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b').glob('a/b'))
     with pytest.raises(NotImplementedError):
         list(FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b').glob('/a/b'))
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', NON_HTTP_INDEXABLE_PREFIXES)
 def test_rglob(prefix):
     prefix = str(prefix)
     wprefix = prefix.replace('\\', '/')
@@ -993,6 +1049,16 @@ def test_rglob(prefix):
         results = sorted([x.path.replace(str(wprefix), '').lstrip('/') for x in results])
         assert results == ['subdir1/subdir2a/binary1.bin',
                            'subdir1/subdir2b/binary1.bin']
+
+
+def test_rglob_http():
+    prefix = str(HTTP_GLOB_TEST_ROOT)
+    wprefix = prefix.replace('\\', '/')
+    with FileCache(anonymous=True) as fc:
+        pfx = fc.new_path(prefix+'/catalog')
+        results = list(pfx.rglob(FCPath('*.txt')))
+        results = sorted([x.path.replace(str(wprefix), '').lstrip('/') for x in results])
+        assert results == ['catalog/catinfo.txt']
 
 
 def test_relative_to():

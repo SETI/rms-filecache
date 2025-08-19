@@ -69,9 +69,14 @@ def test_source_notimp():
     with pytest.raises(NotImplementedError):
         FileCacheSourceHTTP('http', 'fred').upload('', '')
     with pytest.raises(NotImplementedError):
-        FileCacheSourceHTTP('http', 'fred').iterdir_type('')
-    with pytest.raises(NotImplementedError):
         FileCacheSourceHTTP('http', 'fred').unlink('')
+
+
+def test_source_http():
+    with pytest.raises(FileNotFoundError):
+        list(FileCacheSourceHTTP('https', 'pds-rings.seti.org').iterdir_metadata('bad-dir'))
+    with pytest.raises(ConnectionError):
+        list(FileCacheSourceHTTP('https', 'pds-bad-domain-XXX.seti.org').iterdir_metadata(''))
 
 
 def test_source_nthreads_bad():
@@ -188,21 +193,33 @@ def test_fake_source_directory_operations(tmp_path: Path):
         (tmp_path / 'test-bucket/file3.txt').write_text('content3')
 
         # Test iterdir_type
-        entries = list(fake.iterdir_type(''))
+        entries = list(fake.iterdir_metadata(''))
         assert len(entries) == 3
 
         # Sort entries for consistent testing
         entries.sort()
 
         # Test full paths and types
-        assert entries[0] == ('fake://test-bucket/dir1', True)
-        assert entries[1] == ('fake://test-bucket/dir2', True)
-        assert entries[2] == ('fake://test-bucket/file3.txt', False)
+        assert entries[0][0] == 'fake://test-bucket/dir1'
+        assert entries[0][1]['is_dir'] is True
+        assert entries[0][1]['date'] is not None
+        assert entries[0][1]['size'] is not None
+        assert entries[1][0] == 'fake://test-bucket/dir2'
+        assert entries[1][1]['is_dir'] is True
+        assert entries[1][1]['date'] is not None
+        assert entries[1][1]['size'] is not None
+        assert entries[2][0] == 'fake://test-bucket/file3.txt'
+        assert entries[2][1]['is_dir'] is False
+        assert entries[2][1]['date'] is not None
+        assert entries[2][1]['size'] is not None
 
         # Test subdirectory listing
-        entries = list(fake.iterdir_type('dir1'))
+        entries = list(fake.iterdir_metadata('dir1'))
         assert len(entries) == 1
-        assert entries[0] == ('fake://test-bucket/dir1/file1.txt', False)
+        assert entries[0][0] == 'fake://test-bucket/dir1/file1.txt'
+        assert entries[0][1]['is_dir'] is False
+        assert entries[0][1]['date'] is not None
+        assert entries[0][1]['size'] is not None
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
 
@@ -221,8 +238,8 @@ def test_fake_source_error_cases(tmp_path: Path):
         with pytest.raises(FileNotFoundError):
             fake.upload('dest.txt', tmp_path / 'missing.txt')
 
-        # Test iterdir_type on non-existent directory
-        assert list(fake.iterdir_type('missing-dir')) == []
+        # Test iterdir_metadata on non-existent directory
+        assert list(fake.iterdir_metadata('missing-dir')) == []
 
         # Create a test file
         source_path = tmp_path / 'test-bucket/test.txt'

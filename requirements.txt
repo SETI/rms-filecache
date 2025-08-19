@@ -8,6 +8,7 @@ google-cloud-storage
 mypy
 myst-parser
 pytest
+pytest-cov
 pytest-order
 requests
 sphinx

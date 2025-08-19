@@ -62,7 +62,7 @@ def translator_subdir2b_abs(scheme, remote, path, cache_dir, cache_subdir):
     return cache_dir / cache_subdir / path.replace('subdir2b/', '')  # Absolute
 
 
-def test_translator_local_rel():
+def test_path_translator_local_rel():
     with FileCache() as fc:
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
@@ -95,8 +95,8 @@ def test_translator_local_rel():
             # assert fc.retrieve(path) == new_path
             # assert fc.upload(path) == new_path
 
-    with FileCache(url_to_path=[translator_subdir2a_rel,
-                                translator_subdir2b_rel]) as fc:
+    with FileCache(url_to_path=(translator_subdir2a_rel,
+                                translator_subdir2b_rel)) as fc:
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             new_path = EXPECTED_DIR / (filename
@@ -120,14 +120,14 @@ def test_translator_local_rel():
                                        .replace('subdir2b/', ''))
             assert fc.get_local_path(path, url_to_path=translators) == new_path
             if path == new_path:
-                assert fc.exists(path, url_to_path=translators)
+                assert fc.exists(path, url_to_path=tuple(translators))
             else:
-                assert not fc.exists(path, url_to_path=translators)
+                assert not fc.exists(path, url_to_path=tuple(translators))
             # assert fc.retrieve(path) == new_path
             # assert fc.upload(path) == new_path
 
 
-def test_translator_local_abs():
+def test_path_translator_local_abs():
     with FileCache() as fc:
         translators = [translator_subdir2a_abs, translator_subdir2b_abs]
         for filename in EXPECTED_FILENAMES:
@@ -158,7 +158,7 @@ def test_translator_local_abs():
             # assert fc.upload(path) == new_path
 
 
-def test_translator_local_pfx():
+def test_path_translator_local_pfx():
     with FileCache() as fc:
         pfx = fc.new_path(EXPECTED_DIR)
         for filename in EXPECTED_FILENAMES:
@@ -168,8 +168,8 @@ def test_translator_local_pfx():
             assert pfx.retrieve(filename) == path
             assert pfx.upload(filename) == path
 
-    with FileCache(url_to_path=translator_subdir2a_rel) as fc:
-        pfx = fc.new_path(EXPECTED_DIR)
+    with FileCache() as fc:
+        pfx = fc.new_path(EXPECTED_DIR, url_to_path=translator_subdir2a_rel)
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             new_path = EXPECTED_DIR / (filename.replace('subdir2a/', ''))
@@ -199,7 +199,7 @@ def test_translator_local_pfx():
             # assert fc.upload(path) == new_path
 
 
-def test_translator_http():
+def test_path_translator_http():
     with FileCache(None, url_to_path=translator_subdir2a_rel) as fc:
         url = HTTP_TEST_ROOT + '/' + EXPECTED_FILENAMES[1]
         path = EXPECTED_FILENAMES[1].replace('subdir2a/', '')
@@ -251,9 +251,9 @@ def test_translator_http():
             assert fc2.retrieve(url2) == new_local_path
 
 
-def test_translator_http_pfx():
-    with FileCache(None, url_to_path=translator_subdir2a_rel) as fc:
-        pfx = fc.new_path(HTTP_TEST_ROOT)
+def test_path_translator_http_pfx():
+    with FileCache(None) as fc:
+        pfx = fc.new_path(HTTP_TEST_ROOT, url_to_path=translator_subdir2a_rel)
         url = EXPECTED_FILENAMES[1]
         path = EXPECTED_FILENAMES[1].replace('subdir2a/', '')
         exp_local_path = fc.cache_dir / (HTTP_TEST_ROOT.replace('https://', 'http_') +

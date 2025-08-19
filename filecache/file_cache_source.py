@@ -8,11 +8,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
+import datetime
 from pathlib import Path
+import re
 import requests
 import shutil
+import stat
 import tempfile
-from typing import Iterator
+from typing import Any, Iterator
 import uuid
 
 import boto3
@@ -263,17 +266,24 @@ class FileCacheSource(ABC):
                     yield sub_path, exception
 
     @abstractmethod
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """Iterate over the contents of a directory.
 
         Parameters:
             sub_path: The path of the directory relative to the source prefix.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored. The bool is True if the
-            returned name is a directory, False if it is a file.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``date``: The last modification date of the file as a datetime object.
+                - ``size``: The approximate size of the file in bytes.
         """
         ...  # pragma: no cover
 
@@ -467,23 +477,45 @@ class FileCacheSourceFile(FileCacheSource):
         # correct location.
         return local_path_p
 
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """Iterate over the contents of a directory.
 
         Parameters:
             sub_path: The absolute path of the directory.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored. The bool is True if the
-            returned name is a directory, False if it is a file.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``date``: The last modification date of the file as a datetime object.
+                - ``size``: The approximate size of the file in bytes.
         """
 
         sub_path_p = Path(sub_path)
         for obj_name in sub_path_p.iterdir():
-            is_dir = obj_name.is_dir()
-            yield str(obj_name).replace('\\', '/'), is_dir
+            try:
+                obj_stat = obj_name.stat()
+            except (OSError, IOError):  # pragma: no cover
+                # Fallback if stat fails
+                metadata: dict[str, Any] = {
+                    'is_dir': False,
+                    'date': None,
+                    'size': None
+                }
+            else:
+                metadata = {
+                    'is_dir': stat.S_ISDIR(obj_stat.st_mode),
+                    'date': datetime.datetime.fromtimestamp(obj_stat.st_mtime),
+                    'size': obj_stat.st_size
+                }
+
+            yield str(obj_name).replace('\\', '/'), metadata
 
     def unlink(self,
                sub_path: str,
@@ -506,6 +538,11 @@ class FileCacheSourceFile(FileCacheSource):
         Path(sub_path).unlink(missing_ok=missing_ok)
 
         return sub_path
+
+
+_HTML_TAG = re.compile(r'<.*?>')
+_END_OF_TABLE = re.compile('.*(</pre>|<hr>|</table|<th colspan).*')
+_SIZE_FACTORS = {'K': 1024, 'M': 1024**2, 'G': 1024**3, 'T': 1024**4}
 
 
 class FileCacheSourceHTTP(FileCacheSource):
@@ -627,8 +664,8 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         raise NotImplementedError
 
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """Iterate over the contents of a directory.
 
         Parameters:
@@ -636,11 +673,93 @@ class FileCacheSourceHTTP(FileCacheSource):
                 prefix.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``date``: The last modification date of the file as a datetime object.
+                - ``size``: The approximate size of the file in bytes.
+
+        Raises:
+            FileNotFoundError: If the URL does not point to a valid file or directory
+                page.
+            ConnectionError: If the URL could not be accessed.
         """
 
-        raise NotImplementedError
+        def _int_size(size: str) -> int | None:
+            """Internal method to convert a size string to a size in bytes."""
+            if size == '-':
+                return None
+            if size[-1] in _SIZE_FACTORS:
+                return int(float(size[:-1]) * _SIZE_FACTORS[size[-1]] + 0.5)
+            return int(size)
+
+        url = self._src_prefix_ + sub_path
+
+        try:
+            request = requests.get(url, allow_redirects=True)
+        except requests.exceptions.ConnectionError:
+            raise ConnectionError(f'Failed to connect to {url}')
+
+        if request.status_code != 200:
+            if request.status_code == 404:
+                raise FileNotFoundError(f'File not found: {url}')
+            message = f'response {request.status_code} received from {url}'
+            raise ConnectionError(message)
+
+        text = request.content.decode('latin1')
+
+        # The first line of the fancy index always contains "Parent Directory".
+        parts = text.partition('Parent Directory')
+        if not parts[-1]:
+            return
+
+        # Rows are always split by "\n".
+        # Sometimes it's a table, sometimes just pre-formatted text
+        recs = parts[-1].split('\n')
+
+        # The record after the last table row always contains one of these:
+        # "</pre>", "<hr>", "<table", or "<th colspan"
+        last = [k for k, rec in enumerate(recs) if _END_OF_TABLE.fullmatch(rec)]
+
+        # Select the table rows
+        recs = recs[1:last[0]]
+
+        # Interpret each row
+        for rec in recs:
+            rec = rec.replace('&nbsp;', '').strip()
+
+            # Remove anything inside quotes
+            parts = rec.split('"')
+            rec = ''.join(parts[::2])
+
+            # Insert a space before "<td"
+            rec = rec.replace('<td', ' <td')
+
+            # Remove anything inside HTML tags
+            parts = _HTML_TAG.split(rec)
+            rec = ''.join(parts)
+
+            # Interpret the fields
+            parts = rec.split()
+            basename = parts[0]
+            date_str = parts[1] + 'T' + parts[2]
+
+            date = datetime.datetime.fromisoformat(date_str)  # + tz_delta
+            size = _int_size(parts[3])
+
+            is_dir = basename.endswith('/')
+            basename = basename.rstrip('/')
+            metadata = {
+                'is_dir': is_dir,
+                'date': date,
+                'size': size
+            }
+            yield (f'{url}/{basename}', metadata)
 
     def unlink(self,
                sub_path: str,
@@ -804,8 +923,8 @@ class FileCacheSourceGS(FileCacheSource):
 
         return local_path
 
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """Iterate over the contents of a directory.
 
         Parameters:
@@ -813,8 +932,16 @@ class FileCacheSourceGS(FileCacheSource):
                 by the source prefix.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``date``: The last modification date of the file as a datetime object.
+                - ``size``: The approximate size of the file in bytes.
         """
 
         if sub_path:
@@ -824,16 +951,26 @@ class FileCacheSourceGS(FileCacheSource):
         blobs = self._client.list_blobs(self._bucket_name,
                                         prefix=sub_prefix, delimiter='/')
 
-        # Yield filenames
+        # Yield filenames with metadata
         for blob in blobs:
             if blob.name.rstrip('/') != sub_path:
-                yield f'{self._src_prefix_}{blob.name}', False
+                metadata = {
+                    'is_dir': False,
+                    'date': blob.updated,  # Last modification date
+                    'size': blob.size      # File size in bytes
+                }
+                yield f'{self._src_prefix_}{blob.name}', metadata
 
-        # Yield sub-directories
+        # Yield sub-directories with metadata
         for prefix in blobs.prefixes:
             prefix = prefix.rstrip('/')
             if prefix != sub_path:
-                yield f'{self._src_prefix_}{prefix}', True
+                metadata = {
+                    'is_dir': True,
+                    'date': None,  # Directories don't have mod dates in GS
+                    'size': 0      # Directories don't have sizes in GS
+                }
+                yield f'{self._src_prefix_}{prefix}', metadata
 
     def unlink(self,
                sub_path: str,
@@ -1003,8 +1140,8 @@ class FileCacheSourceS3(FileCacheSource):
 
         return local_path
 
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """Iterate over the contents of a directory.
 
         Parameters:
@@ -1012,8 +1149,16 @@ class FileCacheSourceS3(FileCacheSource):
                 prefix.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``date``: The last modification date of the file as a datetime object.
+                - ``size``: The approximate size of the file in bytes.
         """
 
         if sub_path:
@@ -1024,23 +1169,33 @@ class FileCacheSourceS3(FileCacheSource):
                                                 Prefix=sub_prefix, Delimiter='/')
 
         if response is not None:
-            # Yield filenames
+            # Yield filenames with metadata
             contents = response.get('Contents')
             if contents is not None:
                 for content in contents:
                     name = content.get('Key')
                     if name is not None:
                         if name.rstrip('/') != sub_path:
-                            yield f'{self._src_prefix_}{name}', False
+                            metadata = {
+                                'is_dir': False,
+                                'date': content.get('LastModified'),
+                                'size': content.get('Size', None)
+                            }
+                            yield f'{self._src_prefix_}{name}', metadata
 
-            # Yield sub-directories
+            # Yield sub-directories with metadata
             contents2 = response.get('CommonPrefixes', [])
             if contents2 is not None:
                 for content2 in contents2:
                     prefix = content2.get('Prefix')
                     if prefix is not None:
                         prefix = str(prefix).rstrip('/')
-                        yield f'{self._src_prefix_}{prefix}', True
+                        metadata = {
+                            'is_dir': True,
+                            'date': None,  # Directories don't have mod dates in S3
+                            'size': None   # Directories don't have sizes in S3
+                        }
+                        yield f'{self._src_prefix_}{prefix}', metadata
 
     def unlink(self,
                sub_path: str,
@@ -1236,14 +1391,23 @@ class FileCacheSourceFake(FileCacheSource):
 
         return local_path
 
-    def iterdir_type(self, sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self, sub_path: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """Iterate over the contents of a directory in the fake remote storage.
 
         Parameters:
             sub_path: The path of the directory relative to the storage directory.
 
         Yields:
-            Tuples of (path, is_dir) for each item in the directory.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``date``: The last modification date of the file as a datetime object.
+                - ``size``: The approximate size of the file in bytes.
         """
 
         dir_path = self._storage_dir / sub_path if sub_path else self._storage_dir
@@ -1253,7 +1417,23 @@ class FileCacheSourceFake(FileCacheSource):
 
         for item in dir_path.iterdir():
             relative_path = str(item.relative_to(self._storage_dir)).replace('\\', '/')
-            yield f'{self._src_prefix_}{relative_path}', item.is_dir()
+            try:
+                obj_stat = item.stat()
+            except (OSError, IOError):  # pragma: no cover
+                # Fallback if stat fails
+                metadata: dict[str, Any] = {
+                    'is_dir': False,
+                    'date': None,
+                    'size': None
+                }
+            else:
+                metadata = {
+                    'is_dir': stat.S_ISDIR(obj_stat.st_mode),
+                    'date': datetime.datetime.fromtimestamp(obj_stat.st_mtime),
+                    'size': obj_stat.st_size
+                }
+
+            yield f'{self._src_prefix_}{relative_path}', metadata
 
     def unlink(self,
                sub_path: str,

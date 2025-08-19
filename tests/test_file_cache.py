@@ -5,6 +5,7 @@
 ################################################################################
 
 import atexit
+import datetime
 import os
 from pathlib import Path
 import platform
@@ -32,6 +33,8 @@ LIMITED_FILENAMES = EXPECTED_FILENAMES[0:2]
 GS_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests'
 S3_TEST_BUCKET_ROOT = 's3://rms-filecache-tests'
 HTTP_TEST_ROOT = 'https://storage.googleapis.com/rms-filecache-tests'
+HTTP_INDEXABLE_TEST_ROOT = 'https://pds-rings.seti.org/holdings/volumes/COISS_1xxx/COISS_1001/document'
+HTTP_GLOB_TEST_ROOT = 'https://pds-rings.seti.org/holdings/volumes/COISS_1xxx/COISS_1001'
 CLOUD_PREFIXES = (GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT, HTTP_TEST_ROOT)
 
 BAD_GS_TEST_BUCKET_ROOT = 'gs://bad-bucket-name-XXX'
@@ -43,10 +46,12 @@ BAD_WRITABLE_CLOUD_PREFIXES = (BAD_GS_TEST_BUCKET_ROOT,
                                BAD_S3_TEST_BUCKET_ROOT)
 
 GS_WRITABLE_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests-writable'
+GS_WRITABLE_TEST_BUCKET = 'rms-filecache-tests-writable'
 S3_WRITABLE_TEST_BUCKET_ROOT = 's3://rms-filecache-tests-writable'
 WRITABLE_CLOUD_PREFIXES = (GS_WRITABLE_TEST_BUCKET_ROOT, S3_WRITABLE_TEST_BUCKET_ROOT)
 
-INDEXABLE_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
+INDEXABLE_PREFIXES = (EXPECTED_DIR, HTTP_INDEXABLE_TEST_ROOT, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
+NON_HTTP_INDEXABLE_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
 
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
@@ -1903,52 +1908,133 @@ def test_url_bad():
 def test_iterdir(prefix):
     wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
-        objs = sorted(list(fc.iterdir(prefix)))
-        assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
-        objs = sorted(list(fc.iterdir(f'{prefix}/subdir1')))
-        assert objs == [f'{wprefix}/subdir1/lorem1.txt',
-                        f'{wprefix}/subdir1/subdir2a',
-                        f'{wprefix}/subdir1/subdir2b']
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            objs = sorted(list(fc.iterdir(f'{prefix}')))
+            print(objs)
+            assert objs == [f'{wprefix}/archsis.lbl',
+                            f'{wprefix}/archsis.pdf',
+                            f'{wprefix}/archsis.txt',
+                            f'{wprefix}/docinfo.txt',
+                            f'{wprefix}/edrsis.lbl',
+                            f'{wprefix}/edrsis.pdf',
+                            f'{wprefix}/edrsis.txt',
+                            f'{wprefix}/report']
+            objs = sorted(list(fc.iterdir(f'{prefix}/report')))
+            assert objs == [f'{wprefix}/report/rptinfo.txt']
+        else:
+            objs = sorted(list(fc.iterdir(prefix)))
+            assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
+            objs = sorted(list(fc.iterdir(f'{prefix}/subdir1')))
+            assert objs == [f'{wprefix}/subdir1/lorem1.txt',
+                            f'{wprefix}/subdir1/subdir2a',
+                            f'{wprefix}/subdir1/subdir2b']
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
-def test_iterdir_type(prefix):
+def test_iterdir_metadata(prefix):
     wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
-        objs = sorted(list(fc.iterdir_type(prefix)))
-        assert objs == [(f'{wprefix}/lorem1.txt', False), (f'{wprefix}/subdir1', True)]
-        objs = sorted(list(fc.iterdir_type(f'{prefix}/subdir1')))
-        assert objs == [(f'{wprefix}/subdir1/lorem1.txt', False),
-                        (f'{wprefix}/subdir1/subdir2a', True),
-                        (f'{wprefix}/subdir1/subdir2b', True)]
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            objs = sorted(list(fc.iterdir_metadata(f'{prefix}')))
+            assert len(objs) == 8
+            assert objs[0][0] == f'{wprefix}/archsis.lbl'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['date'] == datetime.datetime(2010, 10, 4, 10, 51, 0)
+            assert objs[0][1]['size'] == 688
+            assert objs[-1][1]['is_dir'] is True
+            assert objs[-1][1]['date'] == datetime.datetime(2010, 10, 4, 10, 51, 0)
+            assert objs[-1][1]['size'] is None
+        else:
+            objs = sorted(list(fc.iterdir_metadata(prefix)))
+            assert len(objs) == 2
+            assert objs[0][0] == f'{wprefix}/lorem1.txt'
+            assert objs[0][1]['is_dir'] is False
+            if prefix == GS_TEST_BUCKET_ROOT:
+                assert objs[0][1]['date'] == datetime.datetime(2024, 10, 1, 1, 47, 58, 721000,
+                                                               tzinfo=datetime.timezone.utc)
+                assert objs[0][1]['size'] == 24651
+            elif prefix == S3_TEST_BUCKET_ROOT:
+                assert objs[0][1]['date'] == datetime.datetime(2024, 10, 1, 1, 53,
+                                                               tzinfo=datetime.timezone.utc)
+                assert objs[0][1]['size'] == 24651
+            else:
+                assert objs[0][1]['date'] is not None
+                assert objs[0][1]['size'] is not None
+            assert objs[1][0] == f'{wprefix}/subdir1'
+            assert objs[1][1]['is_dir'] is True
+            objs = sorted(list(fc.iterdir_metadata(f'{prefix}/subdir1')))
+            assert objs[0][0] == f'{wprefix}/subdir1/lorem1.txt'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['date'] is not None
+            assert objs[0][1]['size'] is not None
+            assert objs[1][0] == f'{wprefix}/subdir1/subdir2a'
+            assert objs[1][1]['is_dir'] is True
+            assert objs[2][0] == f'{wprefix}/subdir1/subdir2b'
+            assert objs[2][1]['is_dir'] is True
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_iterdir_pfx(prefix):
     wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
-        pfx1 = fc.new_path(prefix)
-        objs = sorted([str(x) for x in pfx1.iterdir()])
-        assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
-        pfx2 = fc.new_path(f'{prefix}/subdir1')
-        objs = sorted([str(x) for x in pfx2.iterdir()])
-        assert objs == [f'{wprefix}/subdir1/lorem1.txt',
-                        f'{wprefix}/subdir1/subdir2a',
-                        f'{wprefix}/subdir1/subdir2b']
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            pfx1 = fc.new_path(f'{prefix}')
+            objs = sorted([str(x) for x in pfx1.iterdir()])
+            assert objs == [f'{wprefix}/archsis.lbl',
+                            f'{wprefix}/archsis.pdf',
+                            f'{wprefix}/archsis.txt',
+                            f'{wprefix}/docinfo.txt',
+                            f'{wprefix}/edrsis.lbl',
+                            f'{wprefix}/edrsis.pdf',
+                            f'{wprefix}/edrsis.txt',
+                            f'{wprefix}/report']
+        else:
+            pfx1 = fc.new_path(prefix)
+            objs = sorted([str(x) for x in pfx1.iterdir()])
+            assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
+            pfx2 = fc.new_path(f'{prefix}/subdir1')
+            objs = sorted([str(x) for x in pfx2.iterdir()])
+            assert objs == [f'{wprefix}/subdir1/lorem1.txt',
+                            f'{wprefix}/subdir1/subdir2a',
+                            f'{wprefix}/subdir1/subdir2b']
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
-def test_iterdir_type_pfx(prefix):
+def test_iterdir_metadata_pfx(prefix):
     wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
-        pfx1 = fc.new_path(prefix)
-        objs = sorted([(str(x), y) for x, y in pfx1.iterdir_type()])
-        assert objs == [(f'{wprefix}/lorem1.txt', False), (f'{wprefix}/subdir1', True)]
-        pfx2 = fc.new_path(f'{prefix}/subdir1')
-        objs = sorted([(str(x), y) for x, y in pfx2.iterdir_type()])
-        assert objs == [(f'{wprefix}/subdir1/lorem1.txt', False),
-                        (f'{wprefix}/subdir1/subdir2a', True),
-                        (f'{wprefix}/subdir1/subdir2b', True)]
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            pfx1 = fc.new_path(f'{prefix}')
+            objs = sorted([(str(x), y) for x, y in pfx1.iterdir_metadata()])
+            assert len(objs) == 8
+            assert objs[0][0] == f'{wprefix}/archsis.lbl'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['date'] == datetime.datetime(2010, 10, 4, 10, 51, 0)
+            assert objs[0][1]['size'] == 688
+            assert objs[-1][1]['is_dir'] is True
+            assert objs[-1][1]['date'] == datetime.datetime(2010, 10, 4, 10, 51, 0)
+            assert objs[-1][1]['size'] is None
+        else:
+            pfx1 = fc.new_path(prefix)
+            objs = sorted([(str(x), y) for x, y in pfx1.iterdir_metadata()])
+            assert len(objs) == 2
+            assert objs[0][0] == f'{wprefix}/lorem1.txt'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['date'] is not None
+            assert objs[0][1]['size'] is not None
+            assert objs[1][0] == f'{wprefix}/subdir1'
+            assert objs[1][1]['is_dir'] is True
+            pfx2 = fc.new_path(f'{prefix}/subdir1')
+            objs = sorted([(str(x), y) for x, y in pfx2.iterdir_metadata()])
+            assert len(objs) == 3
+            assert objs[0][0] == f'{wprefix}/subdir1/lorem1.txt'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['date'] is not None
+            assert objs[0][1]['size'] is not None
+            assert objs[1][0] == f'{wprefix}/subdir1/subdir2a'
+            assert objs[1][1]['is_dir'] is True
+            assert objs[2][0] == f'{wprefix}/subdir1/subdir2b'
+            assert objs[2][1]['is_dir'] is True
 
 
 def test_local_unlink_good():

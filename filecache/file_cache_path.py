@@ -23,7 +23,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from .file_cache import FileCache  # Circular import
 
 from .file_cache_types import (StrOrPathOrSeqType,
-                               UrlToPathFuncOrSeqType)
+                               UrlToPathFuncOrSeqType,
+                               UrlToUrlFuncOrSeqType)
 
 
 # This FileCache is used when an FCPath is created without specifying a particular
@@ -45,6 +46,7 @@ class FCPath:
     _anonymous: Optional[bool]
     _lock_timeout: Optional[int]
     _nthreads: Optional[int]
+    _url_to_url: Optional[UrlToUrlFuncOrSeqType]
     _url_to_path: Optional[UrlToPathFuncOrSeqType]
 
     def __init__(self,
@@ -53,6 +55,7 @@ class FCPath:
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
+                 url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                  url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
                  copy_from: Optional[FCPath] = None
                  ):
@@ -76,6 +79,21 @@ class FCPath:
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value for the associated
                 :class:`FileCache` instance.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -102,9 +120,10 @@ class FCPath:
                 If None, use the default translators for the associated :class:`FileCache`
                 instance.
             copy_from: An FCPath instance to copy internal parameters (`file_cache`,
-                `anonymous`, `lock_timeout`, `nthreads`, and `url_to_path`) from. If
-                specified, any values for these parameters in this constructor are
-                ignored. Used internally and should not be used by external programmers.
+                `anonymous`, `lock_timeout`, `nthreads`, `url_to_url`, and `url_to_path`)
+                from. If specified, any values for these parameters in this constructor
+                are ignored. Used internally and should not be used by external
+                programmers.
         """
 
         self._path = self._join(*paths)
@@ -117,6 +136,7 @@ class FCPath:
             self._anonymous = copy_from._anonymous
             self._lock_timeout = copy_from._lock_timeout
             self._nthreads = copy_from._nthreads
+            self._url_to_url = copy_from._url_to_url
             self._url_to_path = copy_from._url_to_path
         else:
             self._filecache = filecache
@@ -125,6 +145,7 @@ class FCPath:
             if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):
                 raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
             self._nthreads = nthreads
+            self._url_to_url = url_to_url
             self._url_to_path = url_to_path
 
         self._pathlib: Optional[Path] = None
@@ -643,6 +664,7 @@ class FCPath:
                        sub_path: Optional[StrOrPathOrSeqType] = None,
                        *,
                        create_parents: bool = True,
+                       url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                        url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
                        ) -> Path | list[Path]:
         """Return the local path for the given sub_path relative to this path.
@@ -655,6 +677,21 @@ class FCPath:
                 usernames and resolving links.
             create_parents: If True, create all parent directories. This is useful when
                 getting the local path of a file that will be uploaded.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -681,19 +718,23 @@ class FCPath:
                 If None, use the default value given when this :class:`FCPath` was
                 created.
         Returns:
-            The Path (or list of Paths) of the filename in the temporary directory, or as
-            specified by the `url_to_path` translators. The files do not have to exist
-            because a Path could be used for writing a file to upload. To facilitate this,
-            a side effect of this call (if `create_parents` is True) is that the complete
-            parent directory structure will be created for each returned Path.
+            The Path (or list of Paths) of the URL (possibly as mapped by the
+            `url_to_url` translators) in the cache directory, or as specified by the
+            `url_to_path` translators. The files do not have to exist because a Path could
+            be used for writing a file to upload. To facilitate this, a side effect of
+            this call (if `create_parents` is True) is that the complete parent directory
+            structure will be created for each returned Path.
         """
 
         new_sub_path = self._make_paths_absolute(sub_path)
 
+        url_to_url = url_to_url or self._url_to_url
+        url_to_path = url_to_path or self._url_to_path
         return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
                                                           new_sub_path),
                                                      anonymous=self._anonymous,
                                                      create_parents=create_parents,
+                                                     url_to_url=url_to_url,
                                                      url_to_path=url_to_path)
 
     def exists(self,
@@ -701,6 +742,7 @@ class FCPath:
                *,
                bypass_cache: bool = False,
                nthreads: Optional[int] = None,
+               url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> bool | list[bool]:
         """Check if a file exists without downloading it.
@@ -716,6 +758,21 @@ class FCPath:
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value given when this
                 :class:`FCPath` was created.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -757,7 +814,10 @@ class FCPath:
                                              bypass_cache=bypass_cache,
                                              nthreads=nthreads,
                                              anonymous=self._anonymous,
-                                             url_to_path=url_to_path)
+                                             url_to_url=(url_to_url or
+                                                         self._url_to_url),
+                                             url_to_path=(url_to_path or
+                                                          self._url_to_path))
 
     def retrieve(self,
                  sub_path: Optional[StrOrPathOrSeqType] = None,
@@ -765,6 +825,7 @@ class FCPath:
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
                  exception_on_fail: bool = True,
+                 url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                  url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                  ) -> Path | Exception | list[Path | Exception]:
         """Retrieve a file(s) from the given sub_path and store it in the file cache.
@@ -790,6 +851,21 @@ class FCPath:
                 raised. If False, the function returns normally and any failed download is
                 marked with the Exception that caused the failure in place of the returned
                 Path.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -847,6 +923,9 @@ class FCPath:
 
         new_sub_path = self._make_paths_absolute(sub_path)
 
+        url_to_url = url_to_url or self._url_to_url
+        url_to_path = url_to_path or self._url_to_path
+
         try:
             ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
                                                        new_sub_path),
@@ -854,6 +933,7 @@ class FCPath:
                                                   lock_timeout=lock_timeout,
                                                   nthreads=nthreads,
                                                   exception_on_fail=exception_on_fail,
+                                                  url_to_url=url_to_url,
                                                   url_to_path=url_to_path)
         finally:
             self._download_counter += (self._filecache_to_use.download_counter -
@@ -866,6 +946,7 @@ class FCPath:
                *,
                nthreads: Optional[int] = None,
                exception_on_fail: bool = True,
+               url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> Path | Exception | list[Path | Exception]:
         """Upload file(s) from the file cache to the storage location(s).
@@ -884,6 +965,21 @@ class FCPath:
                 exception is raised. If False, the function returns normally and any
                 failed upload is marked with the Exception that caused the failure in
                 place of the returned path.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -927,12 +1023,16 @@ class FCPath:
 
         new_sub_path = self._make_paths_absolute(sub_path)
 
+        url_to_url = url_to_url or self._url_to_url
+        url_to_path = url_to_path or self._url_to_path
+
         try:
             ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
                                                      new_sub_path),
                                                 anonymous=self._anonymous,
                                                 nthreads=nthreads,
                                                 exception_on_fail=exception_on_fail,
+                                                url_to_url=url_to_url,
                                                 url_to_path=url_to_path)
         finally:
             self._upload_counter += (self._filecache_to_use.upload_counter -
@@ -945,6 +1045,7 @@ class FCPath:
              sub_path: Optional[str] = None,
              mode: str = 'r',
              *args: Any,
+             url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
              url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
              **kwargs: Any) -> Iterator[IO[Any]]:
         """Retrieve+open or open+upload a file as a context manager.
@@ -959,6 +1060,21 @@ class FCPath:
                 path is used.
             mode: The mode string as you would specify to Python's `open()` function.
             **args: Any additional arguments are passed to the Python ``open()`` function.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -992,16 +1108,24 @@ class FCPath:
             function.
         """
 
+        url_to_url = url_to_url or self._url_to_url
+        url_to_path = url_to_path or self._url_to_path
+
         if mode[0] == 'r':
-            local_path = cast(Path, self.retrieve(sub_path, url_to_path=url_to_path))
+            local_path = cast(Path, self.retrieve(sub_path,
+                                                  url_to_url=url_to_url,
+                                                  url_to_path=url_to_path))
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
         else:  # 'w', 'x', 'a'
             local_path = cast(Path, self.get_local_path(sub_path,
+                                                        url_to_url=url_to_url,
                                                         url_to_path=url_to_path))
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
-            self.upload(sub_path, url_to_path=url_to_path)
+            self.upload(sub_path,
+                        url_to_url=url_to_url,
+                        url_to_path=url_to_path)
 
     def unlink(self,
                sub_path: Optional[StrOrPathOrSeqType] = None,
@@ -1009,6 +1133,7 @@ class FCPath:
                missing_ok: bool = False,
                nthreads: Optional[int] = None,
                exception_on_fail: bool = True,
+               url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> str | Exception | list[str | Exception]:
         """Remove this file or link.
@@ -1029,6 +1154,21 @@ class FCPath:
                 exception is raised. If False, the function returns normally and any
                 failed upload is marked with the Exception that caused the failure in
                 place of the returned path.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -1062,12 +1202,16 @@ class FCPath:
 
         new_sub_path = self._make_paths_absolute(sub_path)
 
+        url_to_url = url_to_url or self._url_to_url
+        url_to_path = url_to_path or self._url_to_path
+
         return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
                                                   new_sub_path),
                                              missing_ok=missing_ok,
                                              anonymous=self._anonymous,
                                              nthreads=nthreads,
                                              exception_on_fail=exception_on_fail,
+                                             url_to_url=url_to_url,
                                              url_to_path=url_to_path)
 
     @property
@@ -1143,15 +1287,24 @@ class FCPath:
         for obj in self._filecache_to_use.iterdir(self._path):
             yield FCPath(obj, copy_from=self)
 
-    def iterdir_type(self) -> Iterator[tuple[FCPath, bool]]:
-        """Yield FCPath objects of the current directory's contents, with an is_dir flag.
+    def iterdir_metadata(self) -> Iterator[tuple[FCPath, dict[str, Any]]]:
+        """Yield FCPath objects of the current directory's contents, with metadata.
 
-        The children are yielded in arbitrary order, and the special entries '.' and '..'
-        are not included.
+        Yields:
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``date``: The last modification date of the file as a datetime object.
+                - ``size``: The approximate size of the file in bytes.
         """
 
-        for obj, is_dir in self._filecache_to_use.iterdir_type(self._path):
-            yield FCPath(obj, copy_from=self), is_dir
+        for obj, metadata in self._filecache_to_use.iterdir_metadata(self._path):
+            yield FCPath(obj, copy_from=self), metadata
 
     def glob(self,
              pattern: str | Path | FCPath) -> Generator[FCPath]:
@@ -1221,8 +1374,8 @@ class FCPath:
             filenames: list[str] = []
             if not top_down:
                 paths.append((path, dirnames, filenames))
-            for child, is_dir in path.iterdir_type():
-                if is_dir:
+            for child, metadata in path.iterdir_metadata():
+                if metadata['is_dir']:
                     if not top_down:
                         paths.append(child)
                     dirnames.append(child.name)
@@ -1922,10 +2075,10 @@ class _StringGlobber:
 
         def select_wildcard(path: str,
                             exists: bool = False) -> Generator[FCPath]:
-            entries = list(FCPath(path, copy_from=self.copy_from).iterdir_type())
-            for entry, dir in entries:
+            entries = list(FCPath(path, copy_from=self.copy_from).iterdir_metadata())
+            for entry, metadata in entries:
                 if match is None or match(entry.name):
-                    if dir_only and not dir:
+                    if dir_only and not metadata['is_dir']:
                         continue
                     if dir_only:
                         yield from select_next(entry, exists=True)
@@ -1968,9 +2121,9 @@ class _StringGlobber:
         def select_recursive_step(stack: list[str],
                                   match_pos: int) -> Generator[Any]:
             path = stack.pop()
-            entries = list(FCPath(path, copy_from=self.copy_from).iterdir_type())
-            for entry, is_dir in entries:
-                if is_dir or not dir_only:
+            entries = list(FCPath(path, copy_from=self.copy_from).iterdir_metadata())
+            for entry, metadata in entries:
+                if metadata['is_dir'] or not dir_only:
                     if match is None or match(str(entry), match_pos):
                         if dir_only:
                             yield from select_next(entry, exists=True)
@@ -1978,7 +2131,7 @@ class _StringGlobber:
                             # Optimization: directly yield the path if this is
                             # last pattern part.
                             yield entry
-                    if is_dir:
+                    if metadata['is_dir']:
                         stack.append(entry.path)
 
         return select_recursive

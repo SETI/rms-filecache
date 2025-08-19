@@ -36,7 +36,8 @@ from .file_cache_source import (FileCacheSource,
                                 FileCacheSourceFake)
 from .file_cache_path import FCPath
 from .file_cache_types import (StrOrPathOrSeqType,
-                               UrlToPathFuncOrSeqType)
+                               UrlToPathFuncOrSeqType,
+                               UrlToUrlFuncOrSeqType)
 
 
 # Global cache of all instantiated FileCacheSource since they may involve opening
@@ -112,6 +113,7 @@ class FileCache:
                  anonymous: bool = False,
                  lock_timeout: int = 60,
                  nthreads: int = 8,
+                 url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                  url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
                  logger: Optional[Logger | bool] = None):
         r"""Initialization for the FileCache class.
@@ -156,6 +158,23 @@ class FileCache:
                 to never time out.
             nthreads: The default value for the maximum number of threads to use when
                 doing multiple-file retrieval or upload.
+            url_to_url: The default function (or list of functions) that is used to
+                translate URLs into URLs. A user-specified translator function takes three
+                arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
             url_to_path: The default function (or list of functions) that is used to
                 translate URLs into local paths. By default, :class:`FileCache` uses a
                 directory hierarchy consisting of
@@ -234,12 +253,25 @@ class FileCache:
         if not isinstance(nthreads, int) or nthreads <= 0:
             raise ValueError(f'nthreads {nthreads} must be a positive integer')
         self._nthreads = nthreads
+
+        if url_to_url is None:
+            self._url_to_url = []
+        elif isinstance(url_to_url, tuple):
+            self._url_to_url = list(url_to_url)
+        elif not isinstance(url_to_url, list):
+            self._url_to_url = [url_to_url]
+        else:
+            self._url_to_url = url_to_url
+
         if url_to_path is None:
             self._url_to_path = []
-        elif isinstance(url_to_path, (list, tuple)):
+        elif isinstance(url_to_path, tuple):
             self._url_to_path = list(url_to_path)
-        else:
+        elif not isinstance(url_to_path, list):
             self._url_to_path = [url_to_path]
+        else:
+            self._url_to_path = url_to_path
+
         self._logger = logger
         self._upload_counter = 0
         self._download_counter = 0
@@ -384,21 +416,39 @@ class FileCache:
     def _get_source_and_paths(self,
                               url: str | Path,
                               anonymous: bool | None,
+                              url_to_url: UrlToUrlFuncOrSeqType | None,
                               url_to_path: UrlToPathFuncOrSeqType | None
                               ) -> tuple[FileCacheSource, str, Path]:
         url = str(url)
         if anonymous is None:
             anonymous = self.anonymous
+
+        if url_to_url is None:
+            url_to_url = self._url_to_url
+        elif isinstance(url_to_url, tuple):
+            url_to_url = list(url_to_url)
+        elif not isinstance(url_to_url, list):
+            url_to_url = [url_to_url]
+
         if url_to_path is None:
             url_to_path = self._url_to_path
-        elif isinstance(url_to_path, (list, tuple)):
+        elif isinstance(url_to_path, tuple):
             url_to_path = list(url_to_path)
-        else:
+        elif not isinstance(url_to_path, list):
             url_to_path = [url_to_path]
 
         url_to_path = url_to_path + [FileCache._default_url_to_path]
 
         scheme, remote, sub_path = self._split_url(url)
+
+        for url_to_url_func in url_to_url:
+            new_url = url_to_url_func(scheme, remote, sub_path)
+            if new_url is not None:
+                url = str(new_url)
+                scheme, remote, sub_path = self._split_url(url)
+                break
+        # The default is we don't map the URL
+
         if not _SCHEME_CLASSES[scheme].uses_anonymous():
             # No such thing as needing credentials for a local file or HTTP
             # so don't overconstrain the source cache
@@ -434,6 +484,7 @@ class FileCache:
                        *,
                        anonymous: Optional[bool] = None,
                        create_parents: bool = True,
+                       url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                        url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                        ) -> Path | list[Path]:
         """Return the local path for the given url.
@@ -446,6 +497,22 @@ class FileCache:
                 None, use the default setting for this :class:`FileCache` instance.
             create_parents: If True, create all parent directories. This
                 is useful when getting the local path of a file that will be uploaded.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -474,11 +541,11 @@ class FileCache:
                 default translators are used.
 
         Returns:
-            The Path (or list of Paths) of the filename in the temporary directory, or
-            as specified by the `url_to_path` translators. The files do not have to exist
-            because a Path could be used for writing a file to upload. To facilitate
-            this, a side effect of this call (if `create_parents` is True) is that the
-            complete parent directory structure will be created for each returned Path.
+            The Path (or list of Paths) of the filename in the temporary directory, or as
+            specified by the `url_to_path` translators. The files do not have to exist
+            because a Path could be used for writing a file to upload. To facilitate this,
+            a side effect of this call (if `create_parents` is True) is that the complete
+            parent directory structure will be created for each returned Path.
         """
 
         if isinstance(url, (list, tuple)):
@@ -490,6 +557,7 @@ class FileCache:
 
         for one_url in new_url:
             source, sub_path, local_path = self._get_source_and_paths(one_url, anonymous,
+                                                                      url_to_url,
                                                                       url_to_path)
             ret.append(local_path)
             if create_parents:
@@ -506,6 +574,7 @@ class FileCache:
                bypass_cache: bool = False,
                anonymous: Optional[bool] = None,
                nthreads: Optional[int] = None,
+               url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> bool | list[bool]:
         """Check if a file exists without downloading it.
@@ -524,6 +593,22 @@ class FileCache:
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value for this
                 :class:`FileCache` instance.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -568,6 +653,7 @@ class FileCache:
             for one_url in url:
                 source, sub_path, local_path = self._get_source_and_paths(one_url,
                                                                           anonymous,
+                                                                          url_to_url,
                                                                           url_to_path)
                 sources.append(source)
                 sub_paths.append(sub_path)
@@ -580,6 +666,7 @@ class FileCache:
 
         source, sub_path, local_path = self._get_source_and_paths(str(url),
                                                                   anonymous,
+                                                                  url_to_url,
                                                                   url_to_path)
 
         if not bypass_cache and local_path.exists():
@@ -661,6 +748,7 @@ class FileCache:
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
                  exception_on_fail: bool = True,
+                 url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                  url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                  ) -> Path | Exception | list[Path | Exception]:
         """Retrieve file(s) from the given location(s) and store in the file cache.
@@ -686,6 +774,22 @@ class FileCache:
                 raised. If False, the function returns normally and any failed download is
                 marked with the Exception that caused the failure in place of the returned
                 Path.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -748,6 +852,7 @@ class FileCache:
             for one_url in url:
                 source, sub_path, local_path = self._get_source_and_paths(one_url,
                                                                           anonymous,
+                                                                          url_to_url,
                                                                           url_to_path)
                 sources.append(source)
                 sub_paths.append(sub_path)
@@ -761,6 +866,7 @@ class FileCache:
 
         url = str(url)
         source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
+                                                                  url_to_url,
                                                                   url_to_path)
 
         if source.primary_scheme() == 'file':
@@ -1085,6 +1191,7 @@ class FileCache:
                anonymous: Optional[bool] = None,
                nthreads: Optional[int] = None,
                exception_on_fail: bool = True,
+               url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> Path | Exception | list[Path | Exception]:
         """Upload file(s) from the file cache to the storage location(s).
@@ -1103,6 +1210,22 @@ class FileCache:
                 exception is raised. If False, the function returns normally and any
                 failed upload is marked with the Exception that caused the failure in
                 place of the returned path.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -1151,6 +1274,7 @@ class FileCache:
             for one_url in url:
                 source, sub_path, local_path = self._get_source_and_paths(one_url,
                                                                           anonymous,
+                                                                          url_to_url,
                                                                           url_to_path)
                 sources.append(source)
                 sub_paths.append(sub_path)
@@ -1160,6 +1284,7 @@ class FileCache:
 
         url = str(url)
         source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
+                                                                  url_to_url,
                                                                   url_to_path)
 
         if source.primary_scheme() == 'file':
@@ -1264,6 +1389,7 @@ class FileCache:
              *args: Any,
              anonymous: Optional[bool] = None,
              lock_timeout: Optional[int] = None,
+             url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
              url_to_path: Optional[UrlToPathFuncOrSeqType] = None,
              **kwargs: Any) -> Iterator[IO[Any]]:
         """Retrieve+open or open+upload a file as a context manager.
@@ -1284,6 +1410,22 @@ class FileCache:
                 retrieving the file before raising an exception. 0 means to not wait at
                 all. A negative value means to never time out. If None, use the default
                 value for this :class:`FileCache` instance.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -1320,15 +1462,18 @@ class FileCache:
         if mode[0] == 'r':
             local_path = cast(Path, self.retrieve(url, anonymous=anonymous,
                                                   lock_timeout=lock_timeout,
+                                                  url_to_url=url_to_url,
                                                   url_to_path=url_to_path))
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
         else:  # 'w', 'x', 'a'
             local_path = cast(Path, self.get_local_path(url, anonymous=anonymous,
+                                                        url_to_url=url_to_url,
                                                         url_to_path=url_to_path))
             with open(local_path, mode, *args, **kwargs) as fp:
                 yield fp
-            self.upload(url, anonymous=anonymous, url_to_path=url_to_path)
+            self.upload(url, anonymous=anonymous, url_to_url=url_to_url,
+                        url_to_path=url_to_path)
 
     def iterdir(self,
                 url: str | Path,
@@ -1354,16 +1499,16 @@ class FileCache:
 
         self._log_debug(f'Iterating directory contents: {url}')
 
-        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None)
+        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None, None)
 
-        for obj_name, _ in source.iterdir_type(sub_path):
+        for obj_name, _ in source.iterdir_metadata(sub_path):
             yield obj_name
 
-    def iterdir_type(self,
-                     url: str | Path,
-                     *,
-                     anonymous: Optional[bool] = None,
-                     ) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         url: str | Path,
+                         *,
+                         anonymous: Optional[bool] = None,
+                         ) -> Iterator[tuple[str, dict[str, Any]]]:
         """Enumerate the files and sub-dirs in a directory indicating which is a dir.
 
         This function always accesses a remote location (ignoring the local cache),
@@ -1377,17 +1522,24 @@ class FileCache:
                 credentials must be initialized in the program's environment.
 
         Yields:
-            All files and sub-directories in the directory given by the url, in no
-            particular order. Special directories ``.`` and ``..`` are ignored. The bool
-            is True if the returned name is a directory, False if it is a file.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``date``: The last modification date of the file as a datetime object.
+                - ``size``: The approximate size of the file in bytes.
         """
 
         self._log_debug(f'Iterating directory contents: {url}')
 
-        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None)
+        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None, None)
 
-        for obj_name, is_dir in source.iterdir_type(sub_path):
-            yield obj_name, is_dir
+        for obj_name, metadata in source.iterdir_metadata(sub_path):
+            yield obj_name, metadata
 
     def unlink(self,
                url: StrOrPathOrSeqType,
@@ -1396,6 +1548,7 @@ class FileCache:
                anonymous: Optional[bool] = None,
                nthreads: Optional[int] = None,
                exception_on_fail: bool = True,
+               url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                ) -> str | Exception | list[str | Exception]:
         """Remove a file, including any locally cached copy.
@@ -1415,6 +1568,22 @@ class FileCache:
                 exception is raised. If False, the function returns normally and any
                 failed upload is marked with the Exception that caused the failure in
                 place of the returned path.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -1468,6 +1637,7 @@ class FileCache:
             for one_url in url2:
                 source, sub_path, local_path = self._get_source_and_paths(one_url,
                                                                           anonymous,
+                                                                          url_to_url,
                                                                           url_to_path)
                 sources.append(source)
                 sub_paths.append(sub_path)
@@ -1477,6 +1647,7 @@ class FileCache:
 
         url3 = str(url)
         source, sub_path, local_path = self._get_source_and_paths(url3, anonymous,
+                                                                  url_to_url,
                                                                   url_to_path)
 
         self._log_debug(f'Unlinking {url3}')
@@ -1573,6 +1744,7 @@ class FileCache:
                  anonymous: Optional[bool] = None,
                  lock_timeout: Optional[int] = None,
                  nthreads: Optional[int] = None,
+                 url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                  url_to_path: Optional[UrlToPathFuncOrSeqType] = None
                  ) -> FCPath:
         """Create a new FCPath with the given prefix.
@@ -1589,6 +1761,20 @@ class FileCache:
             nthreads: The maximum number of threads to use when doing multiple-file
                 retrieval or upload. If None, use the default value for this
                 :class:`FileCache` instance.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for this :class:`FileCache` instance.
             url_to_path: The function (or list of functions) that is used to translate
                 URLs into local paths. By default, :class:`FileCache` uses a directory
                 hierarchy consisting of ``<cache_dir>/<cache_name>/<source>/<path>``,
@@ -1630,6 +1816,7 @@ class FileCache:
                       anonymous=anonymous,
                       lock_timeout=lock_timeout,
                       nthreads=nthreads,
+                      url_to_url=url_to_url,
                       url_to_path=url_to_path)
 
     def _maybe_delete_cache(self) -> None:
