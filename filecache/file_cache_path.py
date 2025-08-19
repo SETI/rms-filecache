@@ -819,6 +819,135 @@ class FCPath:
                                              url_to_path=(url_to_path or
                                                           self._url_to_path))
 
+
+    def modification_time(self,
+                         sub_path: Optional[StrOrPathOrSeqType] = None,
+                         *,
+                         nthreads: Optional[int] = None,
+                         exception_on_fail: bool = True,
+                         url_to_url: Optional[UrlToUrlFuncOrSeqType] = None
+                         ) -> float | None | Exception | list[float | None | Exception]:
+        """Get the modification time of a remote file as a Unix timestamp.
+
+        Parameters:
+            sub_path: The path of the file relative to this path. If not specified, this
+                path is used. If `sub_path` is a list or tuple, all URLs are checked.
+                This may be more efficient because files can be checked in parallel. If
+                the resulting derived path is not absolute, it is assumed to be a relative
+                local path and is converted to an absolute path by expanding usernames and
+                resolving links.
+            nthreads: The maximum number of threads to use. If None, use the default value
+                given when this :class:`FCPath` was created.
+            exception_on_fail: If True, if any file does not exist a FileNotFound
+                exception is raised. If False, the function returns normally and any
+                failed check is marked with the Exception that caused the failure in place
+                of the returned modification time.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
+
+        Returns:
+            The modification time as a Unix timestamp if the file exists and the time can
+            be retrieved, None otherwise. If `sub_path` was a list or tuple, then instead
+            return a list of modification times in order. This always returns the
+            modification time of the file on the remote source, even if there is a local
+            copy. If you want the modification time of the local copy, you can call the
+            normal ``stat`` function. If `exception_on_fail` is False, any modification
+            time may be an Exception if that file does not exist or the modification time
+            cannot be retrieved.
+
+        Raises:
+            FileNotFoundError: If a file does not exist.
+        """
+
+        nthreads = self._validate_nthreads(nthreads)
+
+        new_sub_path = self._make_paths_absolute(sub_path)
+
+        url_to_url = url_to_url or self._url_to_url
+
+        return self._filecache_to_use.modification_time(cast(StrOrPathOrSeqType,
+                                                             new_sub_path),
+                                                        anonymous=self._anonymous,
+                                                        nthreads=nthreads,
+                                                        exception_on_fail=exception_on_fail,
+                                                        url_to_url=url_to_url)
+
+    def is_dir(self,
+               sub_path: Optional[StrOrPathOrSeqType] = None,
+               *,
+               nthreads: Optional[int] = None,
+               exception_on_fail: bool = True,
+               url_to_url: Optional[UrlToUrlFuncOrSeqType] = None
+               ) -> bool | Exception | list[bool | Exception]:
+        """Check if a path represents a directory.
+
+        Parameters:
+            sub_path: The path of the directory relative to this path. If not specified,
+                this path is used. If `sub_path` is a list or tuple, all paths are
+                checked. If the resulting derived path is not absolute, it is assumed to
+                be a relative local path and is converted to an absolute path by expanding
+                usernames and resolving links.
+            nthreads: The maximum number of threads to use for multiple paths.
+            exception_on_fail: If True, if any path cannot be checked a FileNotFound
+                exception is raised. If False, the function returns normally and any
+                failed check is marked with the Exception that caused the failure.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If None, use the default translators for the associated :class:`FileCache`
+                instance.
+
+        Returns:
+            True if the path represents a directory, False otherwise. If `sub_path` was a
+            list or tuple, then instead return a list of booleans or exceptions in order.
+            If `exception_on_fail` is False, any result may be an Exception if that path
+            cannot be checked.
+
+        Raises:
+            FileNotFoundError: If a path cannot be checked.
+
+        Notes:
+            For local files, this method delegates to the underlying pathlib.Path.is_dir()
+            method. For remote files, this method checks the remote source to determine
+            if the path represents a directory.
+        """
+
+        nthreads = self._validate_nthreads(nthreads)
+
+        new_sub_path = self._make_paths_absolute(sub_path)
+
+        url_to_url = url_to_url or self._url_to_url
+
+        return self._filecache_to_use.is_dir(cast(StrOrPathOrSeqType, new_sub_path),
+                                             anonymous=self._anonymous,
+                                             nthreads=nthreads,
+                                             exception_on_fail=exception_on_fail,
+                                             url_to_url=url_to_url)
+
+
     def retrieve(self,
                  sub_path: Optional[StrOrPathOrSeqType] = None,
                  *,
@@ -1234,7 +1363,7 @@ class FCPath:
     def is_file(self) -> bool:
         """True if this path exists and is a regular file."""
 
-        return cast(bool, self.exists())
+        return cast(bool, self.exists() and not self.is_dir())
 
     def read_bytes(self, **kwargs: Any) -> bytearray:
         """Download and open the file in bytes mode, read it, and close the file.
@@ -1300,12 +1429,13 @@ class FCPath:
 
                 - ``is_dir``: True if the returned name is a directory, False if it is a
                   file.
-                - ``date``: The last modification date of the file as a datetime object.
+                - ``mtime``: The last modification time of the file as a float.
                 - ``size``: The approximate size of the file in bytes.
         """
 
-        for obj, metadata in self._filecache_to_use.iterdir_metadata(self._path,
-                                                                     url_to_url=self._url_to_url):
+        for obj, metadata in (
+            self._filecache_to_use.iterdir_metadata(self._path,
+                                                    url_to_url=self._url_to_url)):
             yield FCPath(obj, copy_from=self), metadata
 
     def glob(self,
@@ -1556,25 +1686,6 @@ class FCPath:
             raise NotImplementedError('lstat on a remote file is not implemented')
 
         return self.as_pathlib().lstat()
-
-    if sys.version_info >= (3, 13):
-        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
-            """Whether this path is a directory."""
-
-            if not self.is_local():
-                raise NotImplementedError(
-                    'is_dir on a remote directory is not implemented')
-
-            return self.as_pathlib().is_dir(follow_symlinks=follow_symlinks)
-    else:
-        def is_dir(self) -> bool:
-            """Whether this path is a directory."""
-
-            if not self.is_local():
-                raise NotImplementedError(
-                    'is_dir on a remote directory is not implemented')
-
-            return self.as_pathlib().is_dir()
 
     def is_mount(self) -> bool:
         """Check if this path is a mount point.

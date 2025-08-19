@@ -810,8 +810,6 @@ def test_misc_os():
     with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').lstat()
     with pytest.raises(NotImplementedError):
-        FCPath('https://x.com/a/b').is_dir()
-    with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').readlink()
     assert FCPath(f'{GS_TEST_BUCKET_ROOT}/a/~b/c.txt').resolve() == \
         FCPath(f'{GS_TEST_BUCKET_ROOT}/a/~b/c.txt')
@@ -919,17 +917,17 @@ def test_walk_topdown(prefix):
             assert len(results) == 4
             assert results[3] == (wprefix, ['subdir1'], ['lorem1.txt'])
             assert results[2] == (f'{wprefix}/subdir1',
-                                ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+                                  ['subdir2a', 'subdir2b'], ['lorem1.txt'])
             if results[1][0].endswith('2a'):
                 assert results[1] == (f'{wprefix}/subdir1/subdir2a',
-                                    [], ['binary1.bin'])
+                                      [], ['binary1.bin'])
                 assert results[0] == (f'{wprefix}/subdir1/subdir2b',
-                                    [], ['binary1.bin'])
+                                      [], ['binary1.bin'])
             else:
                 assert results[0] == (f'{wprefix}/subdir1/subdir2a',
-                                    [], ['binary1.bin'])
+                                      [], ['binary1.bin'])
                 assert results[1] == (f'{wprefix}/subdir1/subdir2b',
-                                    [], ['binary1.bin'])
+                                      [], ['binary1.bin'])
 
         if prefix != HTTP_INDEXABLE_TEST_ROOT:
             prefix2 = f'{prefix}/subdir1'

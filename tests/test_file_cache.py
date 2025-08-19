@@ -56,6 +56,15 @@ NON_HTTP_INDEXABLE_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
+HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0).timestamp()
+HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0).timestamp()
+HTTP_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 47, 58, 0).timestamp()
+HTTP_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 48, 2).timestamp()
+GS_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 47, 58, 721000).timestamp()
+GS_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 48, 2, 719000).timestamp()
+S3_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 53, 0).timestamp()
+S3_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 53, 1).timestamp()
+
 if platform.system() == 'Windows':
     WINDOWS_PREFIX = 'c:'
     WINDOWS_SLASH = '/'
@@ -245,9 +254,9 @@ def test_cache_name_none():
     assert fc1.cache_dir.name.startswith('_filecache_')
     assert fc2.cache_dir.name.startswith('_filecache_')
     assert fc3.cache_dir.name.startswith('_filecache_')
-    assert fc1.delete_on_exit
-    assert fc2.delete_on_exit
-    assert fc3.delete_on_exit
+    assert fc1.is_delete_on_exit
+    assert fc2.is_delete_on_exit
+    assert fc3.is_delete_on_exit
     fc1.delete_cache()
     fc2.delete_cache()
     fc3.delete_cache()
@@ -265,9 +274,9 @@ def test_cache_name_global():
     assert fc1.cache_dir.name.startswith('_filecache_')
     assert fc2.cache_dir.name == '_filecache_global'
     assert fc3.cache_dir.name == '_filecache_global'
-    assert fc1.delete_on_exit
-    assert not fc2.delete_on_exit
-    assert not fc3.delete_on_exit
+    assert fc1.is_delete_on_exit
+    assert not fc2.is_delete_on_exit
+    assert not fc3.is_delete_on_exit
     fc1.delete_cache()
     assert not fc1.cache_dir.exists()
     assert fc2.cache_dir.exists()
@@ -290,9 +299,9 @@ def test_cache_name_global_ctx():
                 assert fc1.cache_dir.name.startswith('_filecache_')
                 assert fc2.cache_dir.name == '_filecache_global'
                 assert fc3.cache_dir.name == '_filecache_global'
-                assert fc1.delete_on_exit
-                assert not fc2.delete_on_exit
-                assert not fc3.delete_on_exit
+                assert fc1.is_delete_on_exit
+                assert not fc2.is_delete_on_exit
+                assert not fc3.is_delete_on_exit
             assert fc3.cache_dir.exists()
         assert fc2.cache_dir.exists()
     assert not fc1.cache_dir.exists()
@@ -314,9 +323,9 @@ def test_cache_name_named():
     assert fc2.cache_dir.name == '_filecache_global'
     assert fc3.cache_dir.name == '_filecache_test'
     assert fc4.cache_dir.name == '_filecache_test'
-    assert fc1.delete_on_exit
-    assert not fc2.delete_on_exit
-    assert not fc3.delete_on_exit
+    assert fc1.is_delete_on_exit
+    assert not fc2.is_delete_on_exit
+    assert not fc3.is_delete_on_exit
     fc1.delete_cache()
     assert not fc1.cache_dir.exists()
     assert fc2.cache_dir.exists()
@@ -351,8 +360,8 @@ def test_cache_root_good():
     assert str(fc5.cache_dir.parent) == cwd
     assert fc4.cache_dir.name.startswith('_filecache_')
     assert fc5.cache_dir.name.startswith('_filecache_')
-    assert fc5.delete_on_exit
-    assert fc5.delete_on_exit
+    assert fc5.is_delete_on_exit
+    assert fc5.is_delete_on_exit
     fc4.delete_cache()
     fc5.delete_cache()
     assert not fc4.cache_dir.exists()
@@ -1939,10 +1948,10 @@ def test_iterdir_metadata(prefix):
             assert len(objs) == 8
             assert objs[0][0] == f'{wprefix}/archsis.lbl'
             assert objs[0][1]['is_dir'] is False
-            assert objs[0][1]['date'] == datetime.datetime(2010, 10, 4, 10, 51, 0)
+            assert objs[0][1]['mtime'] == HTTP_ARCHSIS_LBL_MTIME
             assert objs[0][1]['size'] == 688
             assert objs[-1][1]['is_dir'] is True
-            assert objs[-1][1]['date'] == datetime.datetime(2010, 10, 4, 10, 51, 0)
+            assert objs[-1][1]['mtime'] == HTTP_REPORT_DIR_MTIME
             assert objs[-1][1]['size'] is None
         else:
             objs = sorted(list(fc.iterdir_metadata(prefix)))
@@ -1950,22 +1959,20 @@ def test_iterdir_metadata(prefix):
             assert objs[0][0] == f'{wprefix}/lorem1.txt'
             assert objs[0][1]['is_dir'] is False
             if prefix == GS_TEST_BUCKET_ROOT:
-                assert objs[0][1]['date'] == datetime.datetime(2024, 10, 1, 1, 47, 58, 721000,
-                                                               tzinfo=datetime.timezone.utc)
+                assert objs[0][1]['mtime'] == GS_LORUM1_MTIME
                 assert objs[0][1]['size'] == 24651
             elif prefix == S3_TEST_BUCKET_ROOT:
-                assert objs[0][1]['date'] == datetime.datetime(2024, 10, 1, 1, 53,
-                                                               tzinfo=datetime.timezone.utc)
+                assert objs[0][1]['mtime'] == S3_LORUM1_MTIME
                 assert objs[0][1]['size'] == 24651
             else:
-                assert objs[0][1]['date'] is not None
+                assert objs[0][1]['mtime'] is not None
                 assert objs[0][1]['size'] is not None
             assert objs[1][0] == f'{wprefix}/subdir1'
             assert objs[1][1]['is_dir'] is True
             objs = sorted(list(fc.iterdir_metadata(f'{prefix}/subdir1')))
             assert objs[0][0] == f'{wprefix}/subdir1/lorem1.txt'
             assert objs[0][1]['is_dir'] is False
-            assert objs[0][1]['date'] is not None
+            assert objs[0][1]['mtime'] is not None
             assert objs[0][1]['size'] is not None
             assert objs[1][0] == f'{wprefix}/subdir1/subdir2a'
             assert objs[1][1]['is_dir'] is True
@@ -2009,10 +2016,10 @@ def test_iterdir_metadata_pfx(prefix):
             assert len(objs) == 8
             assert objs[0][0] == f'{wprefix}/archsis.lbl'
             assert objs[0][1]['is_dir'] is False
-            assert objs[0][1]['date'] == datetime.datetime(2010, 10, 4, 10, 51, 0)
+            assert objs[0][1]['mtime'] == HTTP_ARCHSIS_LBL_MTIME
             assert objs[0][1]['size'] == 688
             assert objs[-1][1]['is_dir'] is True
-            assert objs[-1][1]['date'] == datetime.datetime(2010, 10, 4, 10, 51, 0)
+            assert objs[-1][1]['mtime'] == HTTP_REPORT_DIR_MTIME
             assert objs[-1][1]['size'] is None
         else:
             pfx1 = fc.new_path(prefix)
@@ -2020,7 +2027,7 @@ def test_iterdir_metadata_pfx(prefix):
             assert len(objs) == 2
             assert objs[0][0] == f'{wprefix}/lorem1.txt'
             assert objs[0][1]['is_dir'] is False
-            assert objs[0][1]['date'] is not None
+            assert objs[0][1]['mtime'] is not None
             assert objs[0][1]['size'] is not None
             assert objs[1][0] == f'{wprefix}/subdir1'
             assert objs[1][1]['is_dir'] is True
@@ -2029,7 +2036,7 @@ def test_iterdir_metadata_pfx(prefix):
             assert len(objs) == 3
             assert objs[0][0] == f'{wprefix}/subdir1/lorem1.txt'
             assert objs[0][1]['is_dir'] is False
-            assert objs[0][1]['date'] is not None
+            assert objs[0][1]['mtime'] is not None
             assert objs[0][1]['size'] is not None
             assert objs[1][0] == f'{wprefix}/subdir1/subdir2a'
             assert objs[1][1]['is_dir'] is True
@@ -2461,3 +2468,378 @@ def test_atexit():
     assert os.path.exists(fc.cache_dir)
     atexit._run_exitfuncs()
     assert not os.path.exists(fc.cache_dir)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_all_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        mtime = fc.modification_time(f'{prefix}/lorem1.txt')
+        if prefix == EXPECTED_DIR:
+            # Local files should have modification times
+            assert mtime is not None
+            assert isinstance(mtime, float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtime == HTTP_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtime == GS_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtime == S3_LORUM1_MTIME
+        else:
+            assert False
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_all_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test non-existent files
+        with pytest.raises(FileNotFoundError):
+            fc.modification_time(f'{prefix}/nonexistent.txt')
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_pfx_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        mtime = pfx.modification_time('lorem1.txt')
+        if prefix == EXPECTED_DIR:
+            # Local files should have modification times
+            assert mtime is not None
+            assert isinstance(mtime, float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtime == HTTP_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtime == GS_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtime == S3_LORUM1_MTIME
+        else:
+            assert False
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_pfx_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test non-existent files
+        with pytest.raises(FileNotFoundError):
+            pfx.modification_time('nonexistent.txt')
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test multiple existing files
+        filenames = [f'{prefix}/lorem1.txt', f'{prefix}/subdir1/lorem1.txt']
+        mtimes = fc.modification_time(filenames)
+        assert len(mtimes) == 2
+
+        for idx, mtime in enumerate(mtimes):
+            print(idx, prefix, datetime.datetime.fromtimestamp(mtime))
+            if prefix == EXPECTED_DIR:
+                assert mtime is not None
+                assert isinstance(mtime, float)
+            elif prefix == HTTP_TEST_ROOT:
+                assert mtime == (HTTP_LORUM1_MTIME if idx == 0 else HTTP_SUBDIR1_LORUM1_MTIME)
+            elif prefix == GS_TEST_BUCKET_ROOT:
+                assert mtime == (GS_LORUM1_MTIME if idx == 0 else GS_SUBDIR1_LORUM1_MTIME)
+            elif prefix == S3_TEST_BUCKET_ROOT:
+                assert mtime == (S3_LORUM1_MTIME if idx == 0 else S3_SUBDIR1_LORUM1_MTIME)
+            else:
+                assert False
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test multiple non-existent files
+        filenames = [f'{prefix}/nonexistent1.txt', f'{prefix}/nonexistent2.txt']
+        with pytest.raises(FileNotFoundError):
+            fc.modification_time(filenames)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_mixed(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test mix of existing and non-existing files
+        filenames = [f'{prefix}/lorem1.txt', f'{prefix}/nonexistent.txt',
+                     f'{prefix}/subdir1/lorem1.txt']
+
+        # Should raise exception by default
+        with pytest.raises(FileNotFoundError):
+            fc.modification_time(filenames)
+
+        # Should return exceptions when exception_on_fail=False
+        mtimes = fc.modification_time(filenames, exception_on_fail=False)
+        assert len(mtimes) == 3
+
+        # First file should have valid modification time
+        if prefix == EXPECTED_DIR:
+            assert mtimes[0] is not None
+            assert isinstance(mtimes[0], float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtimes[0] == HTTP_LORUM1_MTIME
+            assert mtimes[2] == HTTP_SUBDIR1_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtimes[0] == GS_LORUM1_MTIME
+            assert mtimes[2] == GS_SUBDIR1_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtimes[0] == S3_LORUM1_MTIME
+            assert mtimes[2] == S3_SUBDIR1_LORUM1_MTIME
+
+        # Second file should be FileNotFoundError
+        assert isinstance(mtimes[1], FileNotFoundError)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_pfx_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test multiple existing files
+        filenames = ['lorem1.txt', 'subdir1/lorem1.txt']
+        mtimes = pfx.modification_time(filenames)
+        assert len(mtimes) == 2
+
+        for idx, mtime in enumerate(mtimes):
+            if prefix == EXPECTED_DIR:
+                assert mtime is not None
+                assert isinstance(mtime, float)
+            elif prefix == HTTP_TEST_ROOT:
+                assert mtime == (HTTP_LORUM1_MTIME if idx == 0 else HTTP_SUBDIR1_LORUM1_MTIME)
+            elif prefix == GS_TEST_BUCKET_ROOT:
+                assert mtime == (GS_LORUM1_MTIME if idx == 0 else GS_SUBDIR1_LORUM1_MTIME)
+            elif prefix == S3_TEST_BUCKET_ROOT:
+                assert mtime == (S3_LORUM1_MTIME if idx == 0 else S3_SUBDIR1_LORUM1_MTIME)
+            else:
+                assert False
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_pfx_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test multiple non-existent files
+        filenames = ['nonexistent1.txt', 'nonexistent2.txt']
+        with pytest.raises(FileNotFoundError):
+            pfx.modification_time(filenames)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_pfx_mixed(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test mix of existing and non-existing files
+        filenames = ['lorem1.txt', 'nonexistent.txt', 'subdir1/lorem1.txt']
+
+        # Should raise exception by default
+        with pytest.raises(FileNotFoundError):
+            pfx.modification_time(filenames)
+
+        # Should return exceptions when exception_on_fail=False
+        mtimes = pfx.modification_time(filenames, exception_on_fail=False)
+        assert len(mtimes) == 3
+
+        # First file should have valid modification time
+        if prefix == EXPECTED_DIR:
+            assert mtimes[0] is not None
+            assert isinstance(mtimes[0], float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtimes[0] == HTTP_LORUM1_MTIME
+            assert mtimes[2] == HTTP_SUBDIR1_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtimes[0] == GS_LORUM1_MTIME
+            assert mtimes[2] == GS_SUBDIR1_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtimes[0] == S3_LORUM1_MTIME
+            assert mtimes[2] == S3_SUBDIR1_LORUM1_MTIME
+
+        # Second file should be FileNotFoundError
+        assert isinstance(mtimes[1], FileNotFoundError)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_pfx_mixed_2(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test mix of existing and non-existing files with different pattern
+        filenames = ['nonexistent1.txt', 'lorem1.txt', 'nonexistent2.txt',
+                     'subdir1/lorem1.txt']
+
+        # Should raise exception by default
+        with pytest.raises(FileNotFoundError):
+            pfx.modification_time(filenames)
+
+        # Should return exceptions when exception_on_fail=False
+        mtimes = pfx.modification_time(filenames, exception_on_fail=False)
+        assert len(mtimes) == 4
+
+        # First file should be FileNotFoundError
+        assert isinstance(mtimes[0], FileNotFoundError)
+
+        # Second file should have valid modification time
+        if prefix == EXPECTED_DIR:
+            assert mtimes[1] is not None
+            assert isinstance(mtimes[1], float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtimes[1] == HTTP_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtimes[1] == GS_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtimes[1] == S3_LORUM1_MTIME
+
+        # Third file should be FileNotFoundError
+        assert isinstance(mtimes[2], FileNotFoundError)
+
+        # Fourth file should have valid modification time
+        if prefix == EXPECTED_DIR:
+            assert mtimes[3] is not None
+            assert isinstance(mtimes[3], float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtimes[3] == HTTP_SUBDIR1_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtimes[3] == GS_SUBDIR1_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtimes[3] == S3_SUBDIR1_LORUM1_MTIME
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_is_dir_all_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test root directory
+        isdir = fc.is_dir(str(prefix))
+        assert isdir is True
+
+        # Test subdirectory
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            isdir = fc.is_dir(f'{prefix}/subdir1')
+            assert isdir is True
+
+        # Test file
+        isdir = fc.is_dir(f'{prefix}/lorem1.txt')
+        assert isdir is False
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_is_dir_all_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test non-existent path
+        isdir = fc.is_dir(f'{prefix}/nonexistent')
+        assert isdir is False
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_is_dir_pfx_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test root directory
+        isdir = pfx.is_dir('')
+        assert isdir is True
+
+        # Test subdirectory
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            isdir = pfx.is_dir('subdir1')
+            assert isdir is True
+
+        # Test file
+        isdir = pfx.is_dir('lorem1.txt')
+        assert isdir is False
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_is_dir_pfx_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test non-existent path
+        isdir = pfx.is_dir('nonexistent')
+        assert isdir is False
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_is_dir_pfx_subdir(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            pfx = fc.new_path(f'{prefix}/subdir1')
+            # Test subdirectory contents
+            isdir = pfx.is_dir('')
+            assert isdir is True
+
+            isdir = pfx.is_dir('lorem1.txt')
+            assert isdir is False
+
+            isdir = pfx.is_dir('subdir2a')
+            assert isdir is True
+
+            isdir = pfx.is_dir('subdir2b')
+            assert isdir is True
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_is_dir_multi_pfx_mixed(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test mix of existing and non-existing paths
+        paths = ['', 'nonexistent', 'subdir1']
+
+        # Should work normally by default (return False for non-existent paths)
+        results = pfx.is_dir(paths)
+        assert len(results) == 3
+
+        # First path should be True (root directory)
+        assert results[0] is True
+
+        # Second path should be False (non-existent path is not a directory)
+        assert results[1] is False
+
+        # Third path should be True (subdirectory) for non-HTTP prefixes
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            assert results[2] is True
+        else:
+            # HTTP indexable prefix doesn't support subdirectories
+            assert results[2] is False
+
+        # Should work the same when exception_on_fail=False
+        results = pfx.is_dir(paths, exception_on_fail=False)
+        assert len(results) == 3
+        assert results[0] is True
+        assert results[1] is False
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            assert results[2] is True
+        else:
+            assert results[2] is False
+
+
+@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+def test_is_dir_multi_pfx_mixed_2(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test mix of existing and non-existing paths with different pattern
+        paths = ['nonexistent1', '', 'nonexistent2', 'subdir1']
+
+        # Should work normally by default (return False for non-existent paths)
+        results = pfx.is_dir(paths)
+        assert len(results) == 4
+
+        # First path should be False (non-existent path is not a directory)
+        assert results[0] is False
+
+        # Second path should be True (root directory)
+        assert results[1] is True
+
+        # Third path should be False (non-existent path is not a directory)
+        assert results[2] is False
+
+        # Fourth path should be True (subdirectory) for non-HTTP prefixes
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            assert results[3] is True
+        else:
+            # HTTP indexable prefix doesn't support subdirectories
+            assert results[3] is False
+
+        # Should work the same when exception_on_fail=False
+        results = pfx.is_dir(paths, exception_on_fail=False)
+        assert len(results) == 4
+        assert results[0] is False
+        assert results[1] is True
+        assert results[2] is False
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            assert results[3] is True
+        else:
+            assert results[3] is False

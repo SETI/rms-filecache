@@ -13,7 +13,7 @@ from .test_file_cache import (EXPECTED_DIR,
                               HTTP_TEST_ROOT,
                               GS_WRITABLE_TEST_BUCKET,
                               GS_WRITABLE_TEST_BUCKET_ROOT,
-                              EXPECTED_FILENAMES
+                              LIMITED_FILENAMES
                               )
 
 _TEST_UUID = str(uuid.uuid4())
@@ -46,7 +46,7 @@ def translator_url_3(scheme, remote, path):
 def test_url_translator_url():
     with FileCache() as fc:
         # No translation
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = EXPECTED_DIR / filename
             assert fc.get_local_path(path) == path
             assert fc.exists(path)
@@ -55,7 +55,7 @@ def test_url_translator_url():
 
     with FileCache(url_to_url=translator_url_1) as fc:
         # Translation but not for file scheme
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = EXPECTED_DIR / filename
             assert fc.get_local_path(path) == path
             assert fc.exists(path)
@@ -64,7 +64,7 @@ def test_url_translator_url():
 
     with FileCache(url_to_url=translator_url_1) as fc:
         # Translation for this scheme but not for this URL
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = f'{HTTP_TEST_ROOT}/{filename}'
             local_path = fc.get_local_path(path)
             assert 'gs_' not in str(local_path)
@@ -75,7 +75,7 @@ def test_url_translator_url():
 
     with FileCache(url_to_url=translator_url_1) as fc:
         # Translation for this URL
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = f'https://nonexistent-website.org/{filename}'
             local_path = fc.get_local_path(path)
             assert 'gs_' in str(local_path)
@@ -99,7 +99,7 @@ def test_url_translator_pfx():
     with FileCache() as fc:
         # No translation
         pfx = fc.new_path(EXPECTED_DIR)
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = EXPECTED_DIR / filename
             assert pfx.get_local_path(filename) == path
             assert pfx.exists(filename)
@@ -109,7 +109,7 @@ def test_url_translator_pfx():
     with FileCache(url_to_url=[translator_url_1, translator_url_2]) as fc:
         # Translation but not for file scheme
         pfx = fc.new_path(EXPECTED_DIR)
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = EXPECTED_DIR / filename
             assert pfx.get_local_path(filename) == path
             assert pfx.exists(filename)
@@ -119,7 +119,7 @@ def test_url_translator_pfx():
     with FileCache(url_to_url=(translator_url_1, translator_url_2)) as fc:
         # Translation for this scheme but not for this URL
         pfx = fc.new_path(HTTP_TEST_ROOT)
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = f'{HTTP_TEST_ROOT}/{filename}'
             local_path = pfx.get_local_path(filename)
             assert 'gs_' not in str(local_path)
@@ -131,7 +131,7 @@ def test_url_translator_pfx():
     with FileCache(url_to_url=(translator_url_1, translator_url_2)) as fc:
         # Translation for this URL
         pfx = fc.new_path(f'https://nonexistent-website.org/{_TEST_UUID}')
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = f'https://nonexistent-website.org/{filename}'
             local_path = pfx.get_local_path(filename)
             assert 'gs_' in str(local_path)
@@ -153,7 +153,7 @@ def test_url_translator_pfx():
     with FileCache(url_to_url=[translator_url_1, translator_url_2]) as fc:
         # Translation for this scheme but not for this URL
         pfx = fc.new_path(f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{_TEST_UUID}')
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             local_path = pfx.get_local_path(filename)
             assert 'gs_' in str(local_path)
             try:
@@ -169,7 +169,7 @@ def test_url_translator_pfx():
     with FileCache(url_to_url=[translator_url_1, translator_url_2]) as fc:
         # Translation for this URL
         pfx = fc.new_path(f'{GS_WRITABLE_TEST_BUCKET_ROOT}-test')
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             path = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{filename}'
             local_path = pfx.get_local_path(filename)
             assert 'gs_' not in str(local_path)
@@ -192,7 +192,7 @@ def test_url_translator_func():
         pfx3 = fc.new_path(GS_WRITABLE_TEST_BUCKET_ROOT+'-test',
                            url_to_url=translator_url_1)
         # translator_url_2 gs-test to nonexistent-website.org
-        for filename in EXPECTED_FILENAMES[:1]:
+        for filename in LIMITED_FILENAMES:
             local_path_1 = pfx1.get_local_path(filename)  # FileCache default
             assert 'gs_' not in str(local_path_1)
             assert 'nonexistent-website' not in str(local_path_1)

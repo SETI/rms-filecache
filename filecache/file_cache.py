@@ -109,6 +109,8 @@ class FileCache:
                  *,
                  cache_root: Optional[Path | str] = None,
                  delete_on_exit: Optional[bool] = None,
+                 time_sensitive: bool = False,
+                 cache_metadata: bool = False,
                  mp_safe: Optional[bool] = None,
                  anonymous: bool = False,
                  lock_timeout: int = 60,
@@ -143,6 +145,21 @@ class FileCache:
                 context manager. If False, the cache is never deleted. By default, an
                 unnamed cache (`cache_name` is ``None``) will be deleted on exit and a
                 named cache will not be deleted on program exit.
+            time_sensitive: If True, the modification time of files in the cache is
+                considered to be important. When a file is retrieved, the modification
+                time from the source location is set on the local copy. If a local copy
+                already exists, the times on both copies are compared and the local copy
+                is updated if the source is newer. When a file is uploaded, the
+                modification time on the local copy is set to the time retrieved from the
+                source after the upload is complete.
+            cache_metadata: If True, :meth:`iterdir`, :meth:`iterdir_metadata`, and other
+                internal methods will cache the metadata (such as modification time, size,
+                and `is_dir`) of remote files. If `time_sensitive` is True and
+                :meth:`retrieve` needs the modification time of a file to compare to the
+                local file, it will be retrieved from the cache if possible to save a
+                server query. This option should only be used if the remote source is
+                guaranteed not to change during the lifetime of this :class:`FileCache`
+                instance.
             mp_safe: If False, never use multiprocessor-safe locking. If True, always use
                 multiprocessor-safe locking. By default, locking is used if `cache_name`
                 is specified, as it is assumed that multiple processes will be using the
@@ -157,7 +174,7 @@ class FileCache:
                 raising an exception. 0 means to not wait at all. A negative value means
                 to never time out.
             nthreads: The default value for the maximum number of threads to use when
-                doing multiple-file retrieval or upload.
+                doing multiple-file retrieval, upload, or other file operations.
             url_to_url: The default function (or list of functions) that is used to
                 translate URLs into URLs. A user-specified translator function takes three
                 arguments::
@@ -247,6 +264,15 @@ class FileCache:
 
         self._delete_on_exit = (delete_on_exit if delete_on_exit is not None
                                 else not is_shared)
+
+        self._time_sensitive = time_sensitive
+        self._metadata_cache_isdir = None
+        self._metadata_cache_mtime = None
+        if cache_metadata:
+            self._metadata_cache_isdir: dict[str, bool] = {}
+            self._metadata_cache_mtime: dict[str, float | None] = {}
+            # We don't care about size right now
+
         self._is_mp_safe = mp_safe if mp_safe is not None else is_shared
         self._anonymous = anonymous
         self._lock_timeout = lock_timeout
@@ -317,7 +343,31 @@ class FileCache:
         return self._upload_counter
 
     @property
-    def anonymous(self) -> bool:
+    def is_delete_on_exit(self) -> bool:
+        """A bool indicating whether this FileCache will be deleted on exit."""
+
+        return self._delete_on_exit
+
+    @property
+    def is_time_sensitive(self) -> bool:
+        """A bool indicating whether this FileCache cares about modification times."""
+
+        return self._time_sensitive
+
+    @property
+    def is_cache_metadata(self) -> bool:
+        """A bool indicating whether this FileCache caches metadata."""
+
+        return self._metadata_cache_mtime is not None
+
+    @property
+    def is_mp_safe(self) -> bool:
+        """A bool indicating whether this FileCache is multi-processor safe."""
+
+        return self._is_mp_safe
+
+    @property
+    def is_anonymous(self) -> bool:
         """The default bool indicating whether to make all cloud accesses anonymous."""
 
         return self._anonymous
@@ -335,26 +385,36 @@ class FileCache:
         return self._nthreads
 
     @property
-    def delete_on_exit(self) -> bool:
-        """A bool indicating whether this FileCache will be deleted on exit."""
+    def url_to_url(self) -> UrlToUrlFuncOrSeqType:
+        """The default function(s) that is used to translate URLs into URLs."""
 
-        return self._delete_on_exit
+        return self._url_to_url
 
     @property
-    def is_mp_safe(self) -> bool:
-        """A bool indicating whether this FileCache is multi-processor safe."""
+    def url_to_path(self) -> UrlToPathFuncOrSeqType:
+        """The default function(s) that is used to translate URLs into paths."""
 
-        return self._is_mp_safe
+        return self._url_to_path
+
+    @property
+    def logger(self) -> Logger | None:
+        """The logger to use for this FileCache."""
+
+        if self._logger is False:
+            return None
+        if self._logger is None:
+            return _GLOBAL_LOGGER
+        return cast(Logger, self._logger)
 
     def _log_debug(self, msg: str) -> None:
-        logger = _GLOBAL_LOGGER if self._logger is None else self._logger
+        logger = self.logger
         if logger:
-            logger.debug(msg)  # type: ignore
+            logger.debug(msg)
 
     def _log_info(self, msg: str) -> None:
-        logger = _GLOBAL_LOGGER if self._logger is None else self._logger
+        logger = self.logger
         if logger:
-            logger.info(msg)  # type: ignore
+            logger.info(msg)
 
     # def _log_warn(self, msg: str) -> None:
     #     logger = _GLOBAL_LOGGER if self._logger is None else self._logger
@@ -421,7 +481,7 @@ class FileCache:
                               ) -> tuple[FileCacheSource, str, Path]:
         url = str(url)
         if anonymous is None:
-            anonymous = self.anonymous
+            anonymous = self.is_anonymous
 
         if url_to_url is None:
             url_to_url = self._url_to_url
@@ -582,8 +642,8 @@ class FileCache:
 
         Parameters:
             url: The URL of the file, including any source prefix. If `url` is a list or
-                tuple, all URLs are retrieved. This may be more efficient because files
-                can be downloaded in parallel. It is OK to retrieve files from multiple
+                tuple, all URLs are checked. This may be more efficient because files
+                can be checked in parallel. It is OK to check files from multiple
                 sources using one call.
             bypass_cache: If False, check for the file first in the local cache, and if
                 not found there then on the remote server. If True, only check on the
@@ -591,9 +651,8 @@ class FileCache:
             anonymous: If specified, override the default setting for anonymous access.
                 If True, access cloud resources without specifying credentials. If False,
                 credentials must be initialized in the program's environment.
-            nthreads: The maximum number of threads to use when doing multiple-file
-                retrieval or upload. If None, use the default value for this
-                :class:`FileCache` instance.
+            nthreads: The maximum number of threads to use. If None, use the default value
+                for this :class:`FileCache` instance.
             url_to_url: The function (or list of functions) that is used to translate URLs
                 into URLs. A user-specified translator function takes three arguments::
 
@@ -742,6 +801,332 @@ class FileCache:
 
         return cast(list[bool], func_ret)
 
+    def modification_time(self,
+                          url: StrOrPathOrSeqType,
+                          *,
+                          anonymous: Optional[bool] = None,
+                          nthreads: Optional[int] = None,
+                          exception_on_fail: bool = True,
+                          url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
+                          ) -> float | None | Exception | list[float | None | Exception]:
+        """Get the modification time of a remote file as a Unix timestamp.
+
+        Parameters:
+            url: The URL of the file, including any source prefix. If `url` is a list or
+                tuple, all URLs are checked. This may be more efficient because files can
+                be checked in parallel. It is OK to check files from multiple sources
+                using one call.
+            anonymous: If specified, override the default setting for anonymous access.
+                If True, access cloud resources without specifying credentials. If False,
+                credentials must be initialized in the program's environment.
+            nthreads: The maximum number of threads to use. If None, use the default value
+                for this :class:`FileCache` instance.
+            exception_on_fail: If True, if any file does not exist a FileNotFound
+                exception is raised. If False, the function returns normally and any
+                failed check is marked with the Exception that caused the failure in place
+                of the returned modification time.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
+
+        Returns:
+            The modification time as a Unix timestamp if the file exists and the time can
+            be retrieved, None otherwise. If `url` was a list or tuple, then instead
+            return a list of modification times in order. This always returns the
+            modification time of the file on the remote source, even if there is a local
+            copy. If you want the modification time of the local copy, you can call the
+            normal ``stat`` function. If `cache_metadata` is True, the modification time
+            is retrieved from the cache if possible to save a server query. If
+            `exception_on_fail` is False, any modification time may be an Exception if
+            that file does not exist or the modification time cannot be retrieved.
+
+        Raises:
+            FileNotFoundError: If a file does not exist.
+        """
+
+        nthreads = self._validate_nthreads(nthreads)
+
+        if isinstance(url, (list, tuple)):
+            sources = []
+            sub_paths = []
+            for one_url in url:
+                source, sub_path, _ = self._get_source_and_paths(one_url,
+                                                                 anonymous,
+                                                                 url_to_url,
+                                                                 None)
+                sources.append(source)
+                sub_paths.append(sub_path)
+
+            return self._modification_time_multi(sources, sub_paths, nthreads,
+                                                 exception_on_fail)
+
+        self._log_debug(f'Checking file for modification time: {url}')
+
+        url = str(url)
+        if self._metadata_cache_mtime is not None and url in self._metadata_cache_mtime:
+            ret = self._metadata_cache_mtime[url]
+            self._log_debug(f'  Modification time (cached): {ret}')
+        else:
+            source, sub_path, _ = self._get_source_and_paths(url,
+                                                             anonymous,
+                                                             url_to_url,
+                                                             None)
+            try:
+                ret = source.modification_time(sub_path)
+            except Exception as e:
+                if exception_on_fail:
+                    raise
+                return e
+
+            self._log_debug(f'  Modification time: {ret}')
+
+        if self._metadata_cache_mtime is not None:
+            self._metadata_cache_mtime[url] = ret
+
+        return ret
+
+    def _modification_time_multi(self,
+                                 sources: list[FileCacheSource],
+                                 sub_paths: list[str],
+                                 nthreads: int,
+                                 exception_on_fail: bool
+                                 ) -> list[float | None | Exception]:
+        """Get the modification time of multiple files as a Unix timestamp."""
+
+        # Return modification times in the same order as sub_paths
+        func_ret: list[float | None | Exception] = [None] * len(sources)
+
+        source_dict: dict[str, list[tuple[int, FileCacheSource, str]]] = {}
+
+        # First find all the files that we have already cached.
+        # For other files, create a list of just the files we need to check and
+        # organize them by source; we use the source prefix to distinguish among them.
+        self._log_debug('Performing multi-file modification time check of:')
+        for idx, (source, sub_path) in enumerate(zip(sources, sub_paths)):
+            pfx = source._src_prefix_
+            if self._metadata_cache_mtime is not None:
+                url = f'{pfx}{sub_path}'
+                if url in self._metadata_cache_mtime:
+                    func_ret[idx] = self._metadata_cache_mtime[url]
+                    self._log_debug(f'  {pfx}{sub_path} (cached: {func_ret[idx]})')
+                    continue
+            if pfx not in source_dict:
+                source_dict[pfx] = []
+            source_dict[pfx].append((idx, source, sub_path))
+            self._log_debug(f'    {pfx}{sub_path}')
+
+        # Now go through the sources, package up the paths to check, and check
+        # them all at once
+        for source_pfx in source_dict:
+            source = source_dict[source_pfx][0][1]  # All the same
+            source_idxes, _, source_sub_paths = list(
+                zip(*source_dict[source_pfx]))
+            self._log_debug(
+                f'  Performing multi-file modification time for prefix {source_pfx}:')
+            for sub_path in source_sub_paths:
+                self._log_debug(f'    {sub_path}')
+            rets = source.modification_time_multi(source_sub_paths, nthreads=nthreads)
+            assert len(source_idxes) == len(rets)
+            for source_ret, source_idx, source_sub_path in zip(rets, source_idxes,
+                                                               source_sub_paths):
+                func_ret[source_idx] = source_ret
+                if self._metadata_cache_mtime is not None:
+                    if isinstance(source_ret, Exception):
+                        try:
+                            del self._metadata_cache_mtime[source_pfx + source_sub_path]
+                        except KeyError:
+                            pass
+                    else:
+                        self._metadata_cache_mtime[source_pfx + source_sub_path] = source_ret
+
+        self._log_debug('Multi-file modification time check complete')
+
+        # Check if we should raise exceptions
+        if exception_on_fail:
+            for result in func_ret:
+                if isinstance(result, Exception):
+                    raise result
+
+        return func_ret
+
+    def _modification_time(self, source: FileCacheSource, sub_path: str) -> float | None:
+        """Get the modification time of a file as a Unix timestamp."""
+
+        url = str(source._src_prefix_ + sub_path)
+        if self._metadata_cache_mtime is not None and url in self._metadata_cache_mtime:
+            return self._metadata_cache_mtime[url]
+
+        mtime = source.modification_time(sub_path)
+        if self._metadata_cache_mtime is not None:
+            self._metadata_cache_mtime[url] = mtime
+
+        return mtime
+
+    def is_dir(self,
+               url: StrOrPathOrSeqType,
+               *,
+               anonymous: Optional[bool] = None,
+               nthreads: Optional[int] = None,
+               exception_on_fail: bool = True,
+               url_to_url: Optional[UrlToUrlFuncOrSeqType] = None
+               ) -> bool | Exception | list[bool | Exception]:
+        """Check if a URL represents a directory.
+
+        Parameters:
+            url: The URL of the directory, including any source prefix. If `url` is a list
+                or tuple, all URLs are checked. This may be more efficient because URLs
+                can be checked in parallel. It is OK to check URLs from multiple sources
+                using one call.
+            anonymous: If specified, override the default setting for anonymous access.
+                If True, access cloud resources without specifying credentials. If False,
+                credentials must be initialized in the program's environment.
+            nthreads: The maximum number of threads to use. If None, use the default value
+                for this :class:`FileCache` instance.
+            exception_on_fail: If True, if any URL cannot be checked a FileNotFound
+                exception is raised. If False, the function returns normally and any
+                failed check is marked with the Exception that caused the failure in place
+                of the returned boolean.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
+
+        Returns:
+            True if the URL represents a directory, False otherwise. If `url` was a list
+            or tuple, then instead return a list of booleans or exceptions in order. If
+            `exception_on_fail` is False, any result may be an Exception if that URL
+            cannot be checked.
+
+        Raises:
+            FileNotFoundError: If a URL cannot be checked.
+        """
+
+        nthreads = self._validate_nthreads(nthreads)
+
+        if isinstance(url, (list, tuple)):
+            sources = []
+            sub_paths = []
+            for one_url in url:
+                source, sub_path, _ = self._get_source_and_paths(one_url,
+                                                                 anonymous,
+                                                                 url_to_url,
+                                                                 None)
+                sources.append(source)
+                sub_paths.append(sub_path)
+
+            return self._is_dir_multi(sources, sub_paths, nthreads, exception_on_fail)
+
+        self._log_debug(f'Checking if URL is a directory: {url}')
+
+        url = str(url)
+        if self._metadata_cache_isdir is not None and url in self._metadata_cache_isdir:
+            ret = self._metadata_cache_isdir[url]
+            self._log_debug(f'  Is directory (cached): {ret}')
+        else:
+            source, sub_path, _ = self._get_source_and_paths(url,
+                                                             anonymous,
+                                                             url_to_url,
+                                                             None)
+            try:
+                ret = source.is_dir(sub_path)
+            except Exception as e:
+                if exception_on_fail:
+                    raise
+                return e
+
+            self._log_debug(f'  Is directory: {ret}')
+
+        if self._metadata_cache_isdir is not None:
+            self._metadata_cache_isdir[url] = ret
+
+        return ret
+
+    def _is_dir_multi(self,
+                      sources: list[FileCacheSource],
+                      sub_paths: list[str],
+                      nthreads: int,
+                      exception_on_fail: bool = True) -> list[bool | Exception]:
+        """Check if multiple URLs represent directories."""
+
+        # Return directory status in the same order as sub_paths
+        func_ret: list[bool | Exception] = [False] * len(sources)
+
+        source_dict: dict[str, list[tuple[int, FileCacheSource, str]]] = {}
+
+        # Organize by source; we use the source prefix to distinguish among them.
+        self._log_debug('Performing multi-file is_dir check of:')
+        for idx, (source, sub_path) in enumerate(zip(sources, sub_paths)):
+            pfx = source._src_prefix_
+            if self._metadata_cache_isdir is not None:
+                url = f'{pfx}{sub_path}'
+                if url in self._metadata_cache_isdir:
+                    func_ret[idx] = self._metadata_cache_isdir[url]
+                    self._log_debug(f'  {pfx}{sub_path} (cached: {func_ret[idx]})')
+                    continue
+            if pfx not in source_dict:
+                source_dict[pfx] = []
+            source_dict[pfx].append((idx, source, sub_path))
+            self._log_debug(f'    {pfx}{sub_path}')
+
+        # Now go through the sources, package up the paths to check, and check
+        # them all at once
+        for source_pfx in source_dict:
+            source = source_dict[source_pfx][0][1]  # All the same
+            source_idxes, _, source_sub_paths = list(
+                zip(*source_dict[source_pfx]))
+            self._log_debug(
+                f'  Performing multi-file is_dir check for prefix {source_pfx}:')
+            for sub_path in source_sub_paths:
+                self._log_debug(f'    {sub_path}')
+            rets = source.is_dir_multi(source_sub_paths, nthreads=nthreads)
+            assert len(source_idxes) == len(rets)
+            for source_ret, source_idx, source_sub_path in zip(rets, source_idxes,
+                                                               source_sub_paths):
+                func_ret[source_idx] = source_ret
+                if self._metadata_cache_isdir is not None:
+                    if isinstance(source_ret, Exception):
+                        try:
+                            del self._metadata_cache_isdir[source_pfx + source_sub_path]
+                        except KeyError:
+                            pass
+                    else:
+                        self._metadata_cache_isdir[source_pfx + source_sub_path] = source_ret
+
+        self._log_debug('Multi-file directory check complete')
+
+        # Check if we should raise exceptions
+        if exception_on_fail:
+            for result in func_ret:
+                if isinstance(result, Exception):
+                    raise result
+
+        return func_ret
+
     def retrieve(self,
                  url: StrOrPathOrSeqType,
                  *,
@@ -865,6 +1250,7 @@ class FileCache:
             return self._retrieve_multi_unlocked(sources, sub_paths, local_paths,
                                                  nthreads, exception_on_fail)
 
+        # Retrieve a single file
         url = str(url)
         source, sub_path, local_path = self._get_source_and_paths(url,
                                                                   anonymous,
@@ -880,53 +1266,59 @@ class FileCache:
                     raise
                 return e
 
-        # If the file actually exists, it's always safe to return it
-        if local_path.is_file():
-            self._log_debug(f'Accessing cached file for {url} at {local_path}')
-            return local_path
+        return self._retrieve_single(url, source, sub_path, local_path, lock_timeout,
+                                     self.is_mp_safe, exception_on_fail)
 
-        if self.is_mp_safe:
-            return self._retrieve_locked(source, sub_path, local_path, lock_timeout,
-                                         exception_on_fail)
-        return self._retrieve_unlocked(source, sub_path, local_path, exception_on_fail)
-
-    def _retrieve_unlocked(self,
-                           source: FileCacheSource,
-                           sub_path: str,
-                           local_path: Path,
-                           exception_on_fail: bool) -> Path | Exception:
-        """Retrieve a single file from the storage location without lock protection."""
-
-        self._log_debug(f'Downloading {source._src_prefix_}{sub_path} into {local_path}')
-        try:
-            ret = source.retrieve(sub_path, local_path)
-        except Exception as e:
-            if exception_on_fail:
-                raise
-            return e
-
-        self._download_counter += 1
-
-        return ret
-
-    def _retrieve_locked(self,
+    def _retrieve_single(self,
+                         url: str,
                          source: FileCacheSource,
                          sub_path: str,
                          local_path: Path,
                          lock_timeout: int,
+                         locking: bool,
                          exception_on_fail: bool) -> Path | Exception:
-        """Retrieve a single file from the storage location with lock protection."""
+        """Retrieve a single file from the storage location w/without lock protection."""
 
-        lock_path = self._lock_path(local_path)
-        lock = filelock.FileLock(lock_path, timeout=lock_timeout)
-        try:
-            lock.acquire()
-        except filelock._error.Timeout as e:
-            if exception_on_fail:
-                raise
-            return e
-        self._log_debug(
-            f'Downloading {source._src_prefix_}{sub_path} into {local_path} with locking')
+        if locking:
+            lock_path = self._lock_path(local_path)
+            lock = filelock.FileLock(lock_path, timeout=lock_timeout)
+            try:
+                lock.acquire()
+            except filelock._error.Timeout as e:
+                if exception_on_fail:
+                    raise
+                return e
+
+        # We are guaranteed not to be referencing a local file source at this point
+        # so it's always worth checking the modification time
+        source_time = None
+        if self._time_sensitive:
+            source_time = self._modification_time(source, sub_path)
+            if source_time is None:
+                self._log_debug(f'No modification time available for {url}')
+
+        # If the file actually exists, possibly check the modification time
+        if local_path.is_file():
+            if not self._time_sensitive or source_time is None:
+                self._log_debug(f'Accessing cached file for {url} at {local_path}')
+                return local_path
+            local_time = local_path.stat().st_mtime
+            if source_time <= local_time:
+                self._log_debug(f'Accessing current cached file for {url} at '
+                                f'{local_path}')
+                return local_path
+            self._log_debug(f'Updating out of date cached file for {url} '
+                            f'at {local_path}')
+            # We don't delete the file here because source.retrieve will do it
+            # atomically
+
+        if locking:
+            self._log_debug(
+                f'Downloading {source._src_prefix_}{sub_path} into '
+                f'{local_path} with locking')
+        else:
+            self._log_debug(f'Downloading {source._src_prefix_}{sub_path} into '
+                            f'{local_path}')
         try:
             ret = source.retrieve(sub_path, local_path)
         except Exception as e:
@@ -943,8 +1335,12 @@ class FileCache:
             # Windows, where locks are not just advisory. However, the worst
             # that could happen is we end up attempting to download the file
             # twice.
-            lock.release()
-            lock_path.unlink(missing_ok=True)
+            if locking:
+                lock.release()
+                lock_path.unlink(missing_ok=True)
+
+        if source_time is not None:
+            os.utime(local_path, (source_time, source_time))
 
         self._download_counter += 1
 
@@ -1521,7 +1917,10 @@ class FileCache:
 
         source, sub_path, _ = self._get_source_and_paths(url, anonymous, url_to_url, None)
 
-        for obj_name, _ in source.iterdir_metadata(sub_path):
+        for obj_name, metadata in source.iterdir_metadata(sub_path):
+            if self._metadata_cache_isdir is not None:
+                self._metadata_cache_isdir[obj_name] = metadata['is_dir']
+                self._metadata_cache_mtime[obj_name] = metadata['mtime']
             yield obj_name
 
     def iterdir_metadata(self,
@@ -1576,6 +1975,9 @@ class FileCache:
         source, sub_path, _ = self._get_source_and_paths(url, anonymous, url_to_url, None)
 
         for obj_name, metadata in source.iterdir_metadata(sub_path):
+            if self._metadata_cache_isdir is not None:
+                self._metadata_cache_isdir[obj_name] = metadata['is_dir']
+                self._metadata_cache_mtime[obj_name] = metadata['mtime']
             yield obj_name, metadata
 
     def unlink(self,
@@ -1844,7 +2246,7 @@ class FileCache:
             raise TypeError('path is not a str or Path or FCPath')
         path = path.replace('\\', '/').rstrip('/')
         if anonymous is None:
-            anonymous = self.anonymous
+            anonymous = self.is_anonymous
         if lock_timeout is None:
             lock_timeout = self.lock_timeout
         nthreads = self._validate_nthreads(nthreads)

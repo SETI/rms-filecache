@@ -74,9 +74,11 @@ def test_source_notimp():
 
 def test_source_http():
     with pytest.raises(FileNotFoundError):
-        list(FileCacheSourceHTTP('https', 'pds-rings.seti.org').iterdir_metadata('bad-dir'))
+        list(FileCacheSourceHTTP('https', 'pds-rings.seti.org')
+             .iterdir_metadata('bad-dir'))
     with pytest.raises(ConnectionError):
-        list(FileCacheSourceHTTP('https', 'pds-bad-domain-XXX.seti.org').iterdir_metadata(''))
+        list(FileCacheSourceHTTP('https', 'pds-bad-domain-XXX.seti.org')
+             .iterdir_metadata(''))
 
 
 def test_source_nthreads_bad():
@@ -202,15 +204,15 @@ def test_fake_source_directory_operations(tmp_path: Path):
         # Test full paths and types
         assert entries[0][0] == 'fake://test-bucket/dir1'
         assert entries[0][1]['is_dir'] is True
-        assert entries[0][1]['date'] is not None
+        assert entries[0][1]['mtime'] is not None
         assert entries[0][1]['size'] is not None
         assert entries[1][0] == 'fake://test-bucket/dir2'
         assert entries[1][1]['is_dir'] is True
-        assert entries[1][1]['date'] is not None
+        assert entries[1][1]['mtime'] is not None
         assert entries[1][1]['size'] is not None
         assert entries[2][0] == 'fake://test-bucket/file3.txt'
         assert entries[2][1]['is_dir'] is False
-        assert entries[2][1]['date'] is not None
+        assert entries[2][1]['mtime'] is not None
         assert entries[2][1]['size'] is not None
 
         # Test subdirectory listing
@@ -218,7 +220,7 @@ def test_fake_source_directory_operations(tmp_path: Path):
         assert len(entries) == 1
         assert entries[0][0] == 'fake://test-bucket/dir1/file1.txt'
         assert entries[0][1]['is_dir'] is False
-        assert entries[0][1]['date'] is not None
+        assert entries[0][1]['mtime'] is not None
         assert entries[0][1]['size'] is not None
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
