@@ -1284,7 +1284,8 @@ class FCPath:
         are not included.
         """
 
-        for obj in self._filecache_to_use.iterdir(self._path):
+        for obj in self._filecache_to_use.iterdir(self._path,
+                                                  url_to_url=self._url_to_url):
             yield FCPath(obj, copy_from=self)
 
     def iterdir_metadata(self) -> Iterator[tuple[FCPath, dict[str, Any]]]:
@@ -1303,7 +1304,8 @@ class FCPath:
                 - ``size``: The approximate size of the file in bytes.
         """
 
-        for obj, metadata in self._filecache_to_use.iterdir_metadata(self._path):
+        for obj, metadata in self._filecache_to_use.iterdir_metadata(self._path,
+                                                                     url_to_url=self._url_to_url):
             yield FCPath(obj, copy_from=self), metadata
 
     def glob(self,

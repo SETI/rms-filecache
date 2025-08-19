@@ -556,7 +556,8 @@ class FileCache:
         ret: list[Path] = []
 
         for one_url in new_url:
-            source, sub_path, local_path = self._get_source_and_paths(one_url, anonymous,
+            source, sub_path, local_path = self._get_source_and_paths(one_url,
+                                                                      anonymous,
                                                                       url_to_url,
                                                                       url_to_path)
             ret.append(local_path)
@@ -865,7 +866,8 @@ class FileCache:
                                                  nthreads, exception_on_fail)
 
         url = str(url)
-        source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
+        source, sub_path, local_path = self._get_source_and_paths(url,
+                                                                  anonymous,
                                                                   url_to_url,
                                                                   url_to_path)
 
@@ -1283,7 +1285,8 @@ class FileCache:
                                       exception_on_fail)
 
         url = str(url)
-        source, sub_path, local_path = self._get_source_and_paths(url, anonymous,
+        source, sub_path, local_path = self._get_source_and_paths(url,
+                                                                  anonymous,
                                                                   url_to_url,
                                                                   url_to_path)
 
@@ -1479,6 +1482,7 @@ class FileCache:
                 url: str | Path,
                 *,
                 anonymous: Optional[bool] = None,
+                url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                 ) -> Iterator[str]:
         """Enumerate the files and sub-directories in a directory.
 
@@ -1491,6 +1495,22 @@ class FileCache:
             anonymous: If specified, override the default setting for anonymous access.
                 If True, access cloud resources without specifying credentials. If False,
                 credentials must be initialized in the program's environment.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
 
         Yields:
             All files and sub-directories in the directory given by the url, in no
@@ -1499,7 +1519,7 @@ class FileCache:
 
         self._log_debug(f'Iterating directory contents: {url}')
 
-        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None, None)
+        source, sub_path, _ = self._get_source_and_paths(url, anonymous, url_to_url, None)
 
         for obj_name, _ in source.iterdir_metadata(sub_path):
             yield obj_name
@@ -1508,6 +1528,7 @@ class FileCache:
                          url: str | Path,
                          *,
                          anonymous: Optional[bool] = None,
+                         url_to_url: Optional[UrlToUrlFuncOrSeqType] = None,
                          ) -> Iterator[tuple[str, dict[str, Any]]]:
         """Enumerate the files and sub-dirs in a directory indicating which is a dir.
 
@@ -1520,6 +1541,22 @@ class FileCache:
             anonymous: If specified, override the default setting for anonymous access.
                 If True, access cloud resources without specifying credentials. If False,
                 credentials must be initialized in the program's environment.
+            url_to_url: The function (or list of functions) that is used to translate URLs
+                into URLs. A user-specified translator function takes three arguments::
+
+                    func(scheme: str, remote: str, path: str) -> str
+
+                where `scheme` is the URL scheme (like ``"gs"`` or ``"file"``), `remote`
+                is the name of the bucket or webserver or the empty string for a local
+                file, and `path` is the rest of the URL. If the translator wants to
+                override the default translation, it can return a new complete URL as a
+                string. Otherwise, it returns None. If more than one translator is
+                specified, they are called in order until one returns a URL, or it falls
+                through to the default.
+
+                If this parameter is specified, it replaces the default translators for
+                this :class:`FileCache` instance. If this parameter is omitted, the
+                default translators are used.
 
         Yields:
             All files and sub-directories in the given directory (except ``.`` and
@@ -1536,7 +1573,7 @@ class FileCache:
 
         self._log_debug(f'Iterating directory contents: {url}')
 
-        source, sub_path, _ = self._get_source_and_paths(url, anonymous, None, None)
+        source, sub_path, _ = self._get_source_and_paths(url, anonymous, url_to_url, None)
 
         for obj_name, metadata in source.iterdir_metadata(sub_path):
             yield obj_name, metadata
