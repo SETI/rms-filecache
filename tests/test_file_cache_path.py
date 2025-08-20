@@ -18,7 +18,10 @@ from tests.test_file_cache import (GS_TEST_BUCKET_ROOT,
                                    INDEXABLE_PREFIXES,
                                    EXPECTED_DIR,
                                    EXPECTED_FILENAMES,
-                                   GS_WRITABLE_TEST_BUCKET_ROOT
+                                   GS_WRITABLE_TEST_BUCKET_ROOT,
+                                   HTTP_GLOB_TEST_ROOT,
+                                   HTTP_INDEXABLE_TEST_ROOT,
+                                   NON_HTTP_INDEXABLE_PREFIXES,
                                    )
 
 
@@ -807,8 +810,6 @@ def test_misc_os():
     with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').lstat()
     with pytest.raises(NotImplementedError):
-        FCPath('https://x.com/a/b').is_dir()
-    with pytest.raises(NotImplementedError):
         FCPath('https://x.com/a/b').readlink()
     assert FCPath(f'{GS_TEST_BUCKET_ROOT}/a/~b/c.txt').resolve() == \
         FCPath(f'{GS_TEST_BUCKET_ROOT}/a/~b/c.txt')
@@ -845,40 +846,50 @@ def test_walk(prefix):
             dirs.sort()
             files.sort()
             results.append((str(path), dirs, files))
-        assert len(results) == 4
-        assert results[0] == (wprefix, ['subdir1'], ['lorem1.txt'])
-        assert results[1] == (f'{wprefix}/subdir1',
-                              ['subdir2a', 'subdir2b'], ['lorem1.txt'])
-        if results[2][0].endswith('2a'):
-            assert results[2] == (f'{wprefix}/subdir1/subdir2a',
-                                  [], ['binary1.bin'])
-            assert results[3] == (f'{wprefix}/subdir1/subdir2b',
-                                  [], ['binary1.bin'])
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            assert len(results) == 2
+            assert results[0] == (wprefix,
+                                  ['report'],
+                                  ['archsis.lbl', 'archsis.pdf', 'archsis.txt',
+                                   'docinfo.txt', 'edrsis.lbl', 'edrsis.pdf',
+                                   'edrsis.txt'])
+            assert results[1] == (f'{wprefix}/report',
+                                  [], ['rptinfo.txt'])
         else:
-            assert results[3] == (f'{wprefix}/subdir1/subdir2a',
-                                  [], ['binary1.bin'])
-            assert results[2] == (f'{wprefix}/subdir1/subdir2b',
-                                  [], ['binary1.bin'])
+            assert len(results) == 4
+            assert results[0] == (wprefix, ['subdir1'], ['lorem1.txt'])
+            assert results[1] == (f'{wprefix}/subdir1',
+                                  ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+            if results[2][0].endswith('2a'):
+                assert results[2] == (f'{wprefix}/subdir1/subdir2a',
+                                      [], ['binary1.bin'])
+                assert results[3] == (f'{wprefix}/subdir1/subdir2b',
+                                      [], ['binary1.bin'])
+            else:
+                assert results[3] == (f'{wprefix}/subdir1/subdir2a',
+                                      [], ['binary1.bin'])
+                assert results[2] == (f'{wprefix}/subdir1/subdir2b',
+                                      [], ['binary1.bin'])
 
-        prefix2 = f'{prefix}/subdir1'
-        wprefix2 = prefix2.replace('\\', '/')
-        pfx2 = fc.new_path(prefix2, nthreads=32)
-        results = []
-        for path, dirs, files in pfx2.walk():
-            assert path._nthreads == 32
-            dirs.sort()
-            files.sort()
-            results.append((str(path), dirs, files))
-        results.sort()
-        print(results)
-        assert len(results) == 3
-        assert results[0] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
-        if results[1][0].endswith('2a'):
-            assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[2] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
-        else:
-            assert results[2] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            prefix2 = f'{prefix}/subdir1'
+            wprefix2 = prefix2.replace('\\', '/')
+            pfx2 = fc.new_path(prefix2, nthreads=32)
+            results = []
+            for path, dirs, files in pfx2.walk():
+                assert path._nthreads == 32
+                dirs.sort()
+                files.sort()
+                results.append((str(path), dirs, files))
+            results.sort()
+            assert len(results) == 3
+            assert results[0] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+            if results[1][0].endswith('2a'):
+                assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+                assert results[2] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
+            else:
+                assert results[2] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+                assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
@@ -893,41 +904,52 @@ def test_walk_topdown(prefix):
             dirs.sort()
             files.sort()
             results.append((str(path), dirs, files))
-        assert len(results) == 4
-        assert results[3] == (wprefix, ['subdir1'], ['lorem1.txt'])
-        assert results[2] == (f'{wprefix}/subdir1',
-                              ['subdir2a', 'subdir2b'], ['lorem1.txt'])
-        if results[1][0].endswith('2a'):
-            assert results[1] == (f'{wprefix}/subdir1/subdir2a',
-                                  [], ['binary1.bin'])
-            assert results[0] == (f'{wprefix}/subdir1/subdir2b',
-                                  [], ['binary1.bin'])
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            assert len(results) == 2
+            assert results[1] == (wprefix,
+                                  ['report'],
+                                  ['archsis.lbl', 'archsis.pdf', 'archsis.txt',
+                                   'docinfo.txt', 'edrsis.lbl', 'edrsis.pdf',
+                                   'edrsis.txt'])
+            assert results[0] == (f'{wprefix}/report',
+                                  [], ['rptinfo.txt'])
         else:
-            assert results[0] == (f'{wprefix}/subdir1/subdir2a',
-                                  [], ['binary1.bin'])
-            assert results[1] == (f'{wprefix}/subdir1/subdir2b',
-                                  [], ['binary1.bin'])
+            assert len(results) == 4
+            assert results[3] == (wprefix, ['subdir1'], ['lorem1.txt'])
+            assert results[2] == (f'{wprefix}/subdir1',
+                                  ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+            if results[1][0].endswith('2a'):
+                assert results[1] == (f'{wprefix}/subdir1/subdir2a',
+                                      [], ['binary1.bin'])
+                assert results[0] == (f'{wprefix}/subdir1/subdir2b',
+                                      [], ['binary1.bin'])
+            else:
+                assert results[0] == (f'{wprefix}/subdir1/subdir2a',
+                                      [], ['binary1.bin'])
+                assert results[1] == (f'{wprefix}/subdir1/subdir2b',
+                                      [], ['binary1.bin'])
 
-        prefix2 = f'{prefix}/subdir1'
-        wprefix2 = prefix2.replace('\\', '/')
-        pfx2 = fc.new_path(prefix2, nthreads=32)
-        results = []
-        for path, dirs, files in pfx2.walk(top_down=False):
-            assert path._nthreads == 32
-            dirs.sort()
-            files.sort()
-            results.append((str(path), dirs, files))
-        assert len(results) == 3
-        assert results[2] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
-        if results[1][0].endswith('2a'):
-            assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[0] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
-        else:
-            assert results[0] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
-            assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
+        if prefix != HTTP_INDEXABLE_TEST_ROOT:
+            prefix2 = f'{prefix}/subdir1'
+            wprefix2 = prefix2.replace('\\', '/')
+            pfx2 = fc.new_path(prefix2, nthreads=32)
+            results = []
+            for path, dirs, files in pfx2.walk(top_down=False):
+                assert path._nthreads == 32
+                dirs.sort()
+                files.sort()
+                results.append((str(path), dirs, files))
+            assert len(results) == 3
+            assert results[2] == (wprefix2, ['subdir2a', 'subdir2b'], ['lorem1.txt'])
+            if results[1][0].endswith('2a'):
+                assert results[1] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+                assert results[0] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
+            else:
+                assert results[0] == (f'{wprefix2}/subdir2a', [], ['binary1.bin'])
+                assert results[1] == (f'{wprefix2}/subdir2b', [], ['binary1.bin'])
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', NON_HTTP_INDEXABLE_PREFIXES)
 @pytest.mark.parametrize('pattern', (
     (
         ('',
@@ -974,13 +996,45 @@ def test_glob(prefix, pattern):
         assert results == pattern[2]
 
 
+@pytest.mark.parametrize('pattern', (
+    (
+        ('',
+         '*',
+         ['aareadme.txt', 'catalog', 'data', 'document', 'errata.txt',
+          'extras', 'index', 'label', 'voldesc.cat']),
+        ('',
+         '*tal*',
+         ['catalog']),
+        ('/catalog',
+         'p*',
+         ['person.cat', 'projref.cat']),
+        ('/document',
+         '**/*',  # Behavior of "**" changed in 3.13
+         ['archsis.lbl', 'archsis.pdf', 'archsis.txt', 'docinfo.txt',
+          'edrsis.lbl', 'edrsis.pdf', 'edrsis.txt', 'report',
+          'report/rptinfo.txt']),
+    )
+))
+def test_glob_http(pattern):
+    prefix = str(f'{HTTP_GLOB_TEST_ROOT}{pattern[0]}')
+    wprefix = prefix.replace('\\', '/')
+    with FileCache(anonymous=True) as fc:
+        pfx1 = fc.new_path(prefix)
+        if prefix.startswith('gs://'):
+            results = list(pfx1.glob(pattern[1]))
+        else:
+            results = list(pfx1.glob(FCPath(pattern[1])))
+        results = sorted([x.path.replace(wprefix, '').lstrip('/') for x in results])
+        assert results == pattern[2]
+
+
 def test_glob_fail():
     list(FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b').glob('a/b'))
     with pytest.raises(NotImplementedError):
         list(FCPath(f'{GS_TEST_BUCKET_ROOT}/a/b').glob('/a/b'))
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', NON_HTTP_INDEXABLE_PREFIXES)
 def test_rglob(prefix):
     prefix = str(prefix)
     wprefix = prefix.replace('\\', '/')
@@ -993,6 +1047,16 @@ def test_rglob(prefix):
         results = sorted([x.path.replace(str(wprefix), '').lstrip('/') for x in results])
         assert results == ['subdir1/subdir2a/binary1.bin',
                            'subdir1/subdir2b/binary1.bin']
+
+
+def test_rglob_http():
+    prefix = str(HTTP_GLOB_TEST_ROOT)
+    wprefix = prefix.replace('\\', '/')
+    with FileCache(anonymous=True) as fc:
+        pfx = fc.new_path(prefix+'/catalog')
+        results = list(pfx.rglob(FCPath('*.txt')))
+        results = sorted([x.path.replace(str(wprefix), '').lstrip('/') for x in results])
+        assert results == ['catalog/catinfo.txt']
 
 
 def test_relative_to():
@@ -1098,3 +1162,134 @@ def test_relative_paths():
 
         finally:
             os.chdir(f_cur_dir.as_posix())
+
+
+def test_expandvars():
+    """Test the expandvars method for FCPath."""
+    # Test with no environment variables
+    assert FCPath('a/b/c.txt').expandvars() == FCPath('a/b/c.txt')
+    assert FCPath('/absolute/path/file.txt').expandvars() == \
+        FCPath('/absolute/path/file.txt')
+    assert FCPath('gs://bucket/file.txt').expandvars() == FCPath('gs://bucket/file.txt')
+
+    # Test with environment variables
+    with pytest.MonkeyPatch().context() as m:
+        m.setenv('TEST_VAR', 'test_value')
+        m.setenv('PATH_VAR', '/usr/local/bin')
+        m.setenv('EMPTY_VAR', '')
+
+        # Basic environment variable expansion
+        assert FCPath('$TEST_VAR/file.txt').expandvars() == FCPath('test_value/file.txt')
+        # Note: os.path.expandvars can create double slashes when expanding
+        # variables that start with /
+        assert FCPath('/$PATH_VAR/script.sh').expandvars() == \
+            FCPath('//usr/local/bin/script.sh')
+        assert FCPath('${TEST_VAR}/data.csv').expandvars() == \
+            FCPath('test_value/data.csv')
+
+        # Multiple environment variables
+        # Note: os.path.expandvars can create double slashes when expanding
+        # variables that start with /
+        assert FCPath('$TEST_VAR/$PATH_VAR/file.txt').expandvars() == \
+            FCPath('test_value//usr/local/bin/file.txt')
+
+        # Mixed with regular path components
+        assert FCPath('home/$TEST_VAR/documents').expandvars() == \
+            FCPath('home/test_value/documents')
+
+        # Empty environment variable
+        assert FCPath('$EMPTY_VAR/file.txt').expandvars() == FCPath('/file.txt')
+
+        # Undefined environment variable (should remain unchanged)
+        assert FCPath('$UNDEFINED_VAR/file.txt').expandvars() == \
+            FCPath('$UNDEFINED_VAR/file.txt')
+
+        # Windows-style paths with environment variables
+        assert FCPath('C:/$TEST_VAR/file.txt').expandvars() == \
+            FCPath('C:/test_value/file.txt')
+        assert FCPath('c:\\$TEST_VAR\\file.txt').expandvars() == \
+            FCPath('C:/test_value/file.txt')
+
+        # Cloud storage paths with environment variables
+        assert FCPath('gs://$TEST_VAR/file.txt').expandvars() == \
+            FCPath('gs://test_value/file.txt')
+        if platform.system() != 'Windows':
+            assert FCPath('s3://$TEST_VAR-bucket/file.txt').expandvars() == \
+                FCPath('s3://test_value-bucket/file.txt')
+        else:
+            assert FCPath('s3://$TEST_VAR-bucket/file.txt').expandvars() == \
+                FCPath('s3://$TEST_VAR-bucket/file.txt')
+
+        # HTTP URLs with environment variables
+        assert FCPath('http://$TEST_VAR.com/file.txt').expandvars() == \
+            FCPath('http://test_value.com/file.txt')
+
+        # Complex nested paths
+        # Note: os.path.expandvars can create double slashes when expanding
+        # variables that start with /
+        assert FCPath('$TEST_VAR/$PATH_VAR/subdir/$TEST_VAR.txt').expandvars() == \
+            FCPath('test_value//usr/local/bin/subdir/test_value.txt')
+
+    # Test that environment variables are restored after the test
+    assert 'TEST_VAR' not in os.environ
+    assert 'PATH_VAR' not in os.environ
+    assert 'EMPTY_VAR' not in os.environ
+
+
+def test_expandvars_preserves_attributes():
+    """Test that expandvars preserves FCPath attributes."""
+    with FileCache('test', delete_on_exit=True) as fc:
+        p = FCPath('$TEST_VAR/file.txt', filecache=fc, anonymous=True,
+                   lock_timeout=59, nthreads=2)
+
+        with pytest.MonkeyPatch().context() as m:
+            m.setenv('TEST_VAR', 'test_value')
+
+            expanded = p.expandvars()
+            assert str(expanded) == 'test_value/file.txt'
+            assert expanded._filecache is fc
+            assert expanded._anonymous
+            assert expanded._lock_timeout == 59
+            assert expanded._nthreads == 2
+
+
+def test_expandvars_edge_cases():
+    """Test edge cases for the expandvars method."""
+    # Test with empty string
+    assert FCPath('').expandvars() == FCPath('')
+
+    # Test with just environment variable
+    with pytest.MonkeyPatch().context() as m:
+        m.setenv('SINGLE_VAR', 'single_value')
+        assert FCPath('$SINGLE_VAR').expandvars() == FCPath('single_value')
+        assert FCPath('${SINGLE_VAR}').expandvars() == FCPath('single_value')
+
+    # Test with malformed environment variable syntax
+    assert FCPath('$').expandvars() == FCPath('$')
+    assert FCPath('${').expandvars() == FCPath('${')
+    assert FCPath('$}').expandvars() == FCPath('$}')
+    assert FCPath('${}').expandvars() == FCPath('${}')
+
+    # Test with special characters in environment variable names
+    with pytest.MonkeyPatch().context() as m:
+        m.setenv('VAR_WITH_UNDERSCORE', 'underscore_value')
+        m.setenv('VAR-WITH-DASH', 'dash_value')
+        m.setenv('VAR.WITH.DOT', 'dot_value')
+
+        assert FCPath('$VAR_WITH_UNDERSCORE/file.txt').expandvars() == \
+            FCPath('underscore_value/file.txt')
+        assert FCPath('$VAR.WITH.DOT/file.txt').expandvars() == \
+            FCPath('$VAR.WITH.DOT/file.txt')
+        if platform.system() != 'Windows':
+            assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
+                FCPath('$VAR-WITH-DASH/file.txt')
+        else:
+            assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
+                FCPath('dash_value/file.txt')
+
+    # Test with very long environment variable values
+    with pytest.MonkeyPatch().context() as m:
+        long_value = 'x' * 1000
+        m.setenv('LONG_VAR', long_value)
+        assert FCPath('$LONG_VAR/file.txt').expandvars() == \
+            FCPath(f'{long_value}/file.txt')

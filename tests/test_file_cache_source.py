@@ -69,9 +69,16 @@ def test_source_notimp():
     with pytest.raises(NotImplementedError):
         FileCacheSourceHTTP('http', 'fred').upload('', '')
     with pytest.raises(NotImplementedError):
-        FileCacheSourceHTTP('http', 'fred').iterdir_type('')
-    with pytest.raises(NotImplementedError):
         FileCacheSourceHTTP('http', 'fred').unlink('')
+
+
+def test_source_http():
+    with pytest.raises(FileNotFoundError):
+        list(FileCacheSourceHTTP('https', 'pds-rings.seti.org')
+             .iterdir_metadata('bad-dir'))
+    with pytest.raises(ConnectionError):
+        list(FileCacheSourceHTTP('https', 'pds-bad-domain-XXX.seti.org')
+             .iterdir_metadata(''))
 
 
 def test_source_nthreads_bad():
@@ -91,6 +98,14 @@ def test_source_nthreads_bad():
         FileCacheSourceFile('file', '').unlink_multi(['/test'], nthreads=-1)
     with pytest.raises(ValueError):
         FileCacheSourceFile('file', '').unlink_multi(['/test'], nthreads=4.5)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').modification_time_multi(['/test'], nthreads=-1)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').modification_time_multi(['/test'], nthreads=4.5)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').is_dir_multi(['/test'], nthreads=-1)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').is_dir_multi(['/test'], nthreads=4.5)
 
 
 def test_fake_source_init():
@@ -160,6 +175,13 @@ def test_fake_source_file_operations(tmp_path: Path):
         fake.retrieve('test.txt', dest_file)
         assert dest_file.read_text() == 'test content'
 
+        # Test modification_time for existing file
+        mtime = fake.modification_time('test.txt')
+        assert mtime == (tmp_path / 'test-bucket' / 'test.txt').stat().st_mtime
+
+        # Test is_dir for file (should return False)
+        assert not fake.is_dir('test.txt')
+
         # Test unlink
         fake.unlink('test.txt')
         assert not fake.exists('test.txt')
@@ -170,6 +192,14 @@ def test_fake_source_file_operations(tmp_path: Path):
 
         # Test unlink missing file with missing_ok=True
         fake.unlink('missing.txt', missing_ok=True)
+
+        # Test modification_time for non-existent file
+        with pytest.raises(FileNotFoundError):
+            fake.modification_time('non_existent_file.txt')
+
+        # Test is_dir for non-existent path
+        with pytest.raises(FileNotFoundError):
+            fake.is_dir('non_existent_dir')
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
 
@@ -180,29 +210,58 @@ def test_fake_source_directory_operations(tmp_path: Path):
     try:
         fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
 
-        # Create some test files and directories
+        # Create some test files and directories in the fake source storage
         (tmp_path / 'test-bucket/dir1').mkdir(parents=True)
         (tmp_path / 'test-bucket/dir1/file1.txt').write_text('content1')
         (tmp_path / 'test-bucket/dir2').mkdir(parents=True)
         (tmp_path / 'test-bucket/dir2/file2.txt').write_text('content2')
         (tmp_path / 'test-bucket/file3.txt').write_text('content3')
 
-        # Test iterdir_type
-        entries = list(fake.iterdir_type(''))
+        # Test is_dir for existing directories
+        assert fake.is_dir('dir1')
+        assert fake.is_dir('dir2')
+
+        # Test is_dir for existing file (should return False)
+        assert not fake.is_dir('file3.txt')
+
+        # Test modification_time for directories
+        dir1_mtime = fake.modification_time('dir1')
+        dir2_mtime = fake.modification_time('dir2')
+        assert dir1_mtime == (tmp_path / 'test-bucket' / 'dir1').stat().st_mtime
+        assert dir2_mtime == (tmp_path / 'test-bucket' / 'dir2').stat().st_mtime
+
+        # Test modification_time for file
+        file_mtime = fake.modification_time('file3.txt')
+        assert file_mtime == (tmp_path / 'test-bucket' / 'file3.txt').stat().st_mtime
+
+        # Test iterdir_metadata
+        entries = list(fake.iterdir_metadata(''))
         assert len(entries) == 3
 
         # Sort entries for consistent testing
         entries.sort()
 
         # Test full paths and types
-        assert entries[0] == ('fake://test-bucket/dir1', True)
-        assert entries[1] == ('fake://test-bucket/dir2', True)
-        assert entries[2] == ('fake://test-bucket/file3.txt', False)
+        assert entries[0][0] == 'fake://test-bucket/dir1'
+        assert entries[0][1]['is_dir'] is True
+        assert entries[0][1]['mtime'] is not None
+        assert entries[0][1]['size'] is not None
+        assert entries[1][0] == 'fake://test-bucket/dir2'
+        assert entries[1][1]['is_dir'] is True
+        assert entries[1][1]['mtime'] is not None
+        assert entries[1][1]['size'] is not None
+        assert entries[2][0] == 'fake://test-bucket/file3.txt'
+        assert entries[2][1]['is_dir'] is False
+        assert entries[2][1]['mtime'] is not None
+        assert entries[2][1]['size'] is not None
 
         # Test subdirectory listing
-        entries = list(fake.iterdir_type('dir1'))
+        entries = list(fake.iterdir_metadata('dir1'))
         assert len(entries) == 1
-        assert entries[0] == ('fake://test-bucket/dir1/file1.txt', False)
+        assert entries[0][0] == 'fake://test-bucket/dir1/file1.txt'
+        assert entries[0][1]['is_dir'] is False
+        assert entries[0][1]['mtime'] is not None
+        assert entries[0][1]['size'] is not None
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
 
@@ -221,8 +280,8 @@ def test_fake_source_error_cases(tmp_path: Path):
         with pytest.raises(FileNotFoundError):
             fake.upload('dest.txt', tmp_path / 'missing.txt')
 
-        # Test iterdir_type on non-existent directory
-        assert list(fake.iterdir_type('missing-dir')) == []
+        # Test iterdir_metadata on non-existent directory
+        assert list(fake.iterdir_metadata('missing-dir')) == []
 
         # Create a test file
         source_path = tmp_path / 'test-bucket/test.txt'

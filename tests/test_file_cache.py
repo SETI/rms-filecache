@@ -5,10 +5,12 @@
 ################################################################################
 
 import atexit
+import datetime
 import os
 from pathlib import Path
 import platform
 import tempfile
+import time
 import uuid
 
 import pytest
@@ -32,6 +34,8 @@ LIMITED_FILENAMES = EXPECTED_FILENAMES[0:2]
 GS_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests'
 S3_TEST_BUCKET_ROOT = 's3://rms-filecache-tests'
 HTTP_TEST_ROOT = 'https://storage.googleapis.com/rms-filecache-tests'
+HTTP_INDEXABLE_TEST_ROOT = 'https://pds-rings.seti.org/holdings/volumes/COISS_1xxx/COISS_1001/document'
+HTTP_GLOB_TEST_ROOT = 'https://pds-rings.seti.org/holdings/volumes/COISS_1xxx/COISS_1001'
 CLOUD_PREFIXES = (GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT, HTTP_TEST_ROOT)
 
 BAD_GS_TEST_BUCKET_ROOT = 'gs://bad-bucket-name-XXX'
@@ -43,13 +47,33 @@ BAD_WRITABLE_CLOUD_PREFIXES = (BAD_GS_TEST_BUCKET_ROOT,
                                BAD_S3_TEST_BUCKET_ROOT)
 
 GS_WRITABLE_TEST_BUCKET_ROOT = 'gs://rms-filecache-tests-writable'
+GS_WRITABLE_TEST_BUCKET = 'rms-filecache-tests-writable'
 S3_WRITABLE_TEST_BUCKET_ROOT = 's3://rms-filecache-tests-writable'
 WRITABLE_CLOUD_PREFIXES = (GS_WRITABLE_TEST_BUCKET_ROOT, S3_WRITABLE_TEST_BUCKET_ROOT)
 
-INDEXABLE_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
+INDEXABLE_PREFIXES = (EXPECTED_DIR, HTTP_INDEXABLE_TEST_ROOT, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
+NON_HTTP_INDEXABLE_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
+GLOB_PREFIXES = (EXPECTED_DIR, HTTP_GLOB_TEST_ROOT, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
 
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
+
+HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0,
+                                           tzinfo=datetime.timezone.utc).timestamp()
+HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0,
+                                          tzinfo=datetime.timezone.utc).timestamp()
+HTTP_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 47, 58, 0,
+                                      tzinfo=datetime.timezone.utc).timestamp()
+HTTP_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 48, 2, 0,
+                                              tzinfo=datetime.timezone.utc).timestamp()
+GS_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 47, 58, 721000,
+                                    tzinfo=datetime.timezone.utc).timestamp()
+GS_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 48, 2, 719000,
+                                            tzinfo=datetime.timezone.utc).timestamp()
+S3_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 53, 0, 0,
+                                    tzinfo=datetime.timezone.utc).timestamp()
+S3_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 53, 1, 0,
+                                            tzinfo=datetime.timezone.utc).timestamp()
 
 if platform.system() == 'Windows':
     WINDOWS_PREFIX = 'c:'
@@ -140,7 +164,8 @@ def test_logger():
 #   Removing rms-filecache-tests
 #   Removing http_storage.googleapis.com
 #   Removing /tmp/.file_cache_424b280b-e62c-4582-8560-211f54cabc23
-    logger.has_prefix_list(['INFO Creating', 'Checking', 'File exists', 'Checking',
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Checking', 'File exists', 'Checking',
                             'File does not', 'Downloading', 'Deleting', 'Removing',
                             'Removing', 'Removing', 'Removing'])
 
@@ -158,7 +183,8 @@ def test_logger():
 #   Removing http_storage.googleapis.com
 #   Removing /tmp/.file_cache_global
 # Cleaning up cache /tmp/.file_cache_global
-    logger.has_prefix_list(['INFO Creating', 'Downloading', 'Deleting', 'Removing',
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Downloading', 'Deleting', 'Removing',
                             'Removing', 'Removing', 'Removing', 'Deleting'])
     logger.messages = []
 
@@ -183,7 +209,8 @@ def test_logger():
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
-    logger.has_prefix_list(['INFO Creating', 'Downloading', 'Accessing', 'Deleting',
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Downloading', 'Accessing', 'Deleting',
                             'Removing', 'Removing', 'Removing', 'Removing'])
 
     # Specified logger
@@ -195,7 +222,8 @@ def test_logger():
 # Accessing local file lorem1.txt
 # Cleaning up cache /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
 #   Removing /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
-    logger.has_prefix_list(['INFO Creating', 'Retrieving', 'Deleting', 'Removing'])
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Retrieving', 'Deleting', 'Removing'])
 
     # Uploading
     logger = MyLogger()
@@ -209,7 +237,8 @@ def test_logger():
 # Returning local path for test_file.txt as /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819/gs_rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt
 # Uploading /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819/gs_rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt to gs://rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt
 # Cleaning up cache /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819
-    logger.has_prefix_list(['INFO Creating', 'Returning', 'Uploading', 'Deleting'])
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Returning', 'Uploading', 'Deleting'])
 
 
 def test_easy_logger(capsys):
@@ -240,9 +269,9 @@ def test_cache_name_none():
     assert fc1.cache_dir.name.startswith('_filecache_')
     assert fc2.cache_dir.name.startswith('_filecache_')
     assert fc3.cache_dir.name.startswith('_filecache_')
-    assert fc1.delete_on_exit
-    assert fc2.delete_on_exit
-    assert fc3.delete_on_exit
+    assert fc1.is_delete_on_exit
+    assert fc2.is_delete_on_exit
+    assert fc3.is_delete_on_exit
     fc1.delete_cache()
     fc2.delete_cache()
     fc3.delete_cache()
@@ -260,9 +289,9 @@ def test_cache_name_global():
     assert fc1.cache_dir.name.startswith('_filecache_')
     assert fc2.cache_dir.name == '_filecache_global'
     assert fc3.cache_dir.name == '_filecache_global'
-    assert fc1.delete_on_exit
-    assert not fc2.delete_on_exit
-    assert not fc3.delete_on_exit
+    assert fc1.is_delete_on_exit
+    assert not fc2.is_delete_on_exit
+    assert not fc3.is_delete_on_exit
     fc1.delete_cache()
     assert not fc1.cache_dir.exists()
     assert fc2.cache_dir.exists()
@@ -285,9 +314,9 @@ def test_cache_name_global_ctx():
                 assert fc1.cache_dir.name.startswith('_filecache_')
                 assert fc2.cache_dir.name == '_filecache_global'
                 assert fc3.cache_dir.name == '_filecache_global'
-                assert fc1.delete_on_exit
-                assert not fc2.delete_on_exit
-                assert not fc3.delete_on_exit
+                assert fc1.is_delete_on_exit
+                assert not fc2.is_delete_on_exit
+                assert not fc3.is_delete_on_exit
             assert fc3.cache_dir.exists()
         assert fc2.cache_dir.exists()
     assert not fc1.cache_dir.exists()
@@ -309,9 +338,9 @@ def test_cache_name_named():
     assert fc2.cache_dir.name == '_filecache_global'
     assert fc3.cache_dir.name == '_filecache_test'
     assert fc4.cache_dir.name == '_filecache_test'
-    assert fc1.delete_on_exit
-    assert not fc2.delete_on_exit
-    assert not fc3.delete_on_exit
+    assert fc1.is_delete_on_exit
+    assert not fc2.is_delete_on_exit
+    assert not fc3.is_delete_on_exit
     fc1.delete_cache()
     assert not fc1.cache_dir.exists()
     assert fc2.cache_dir.exists()
@@ -346,8 +375,8 @@ def test_cache_root_good():
     assert str(fc5.cache_dir.parent) == cwd
     assert fc4.cache_dir.name.startswith('_filecache_')
     assert fc5.cache_dir.name.startswith('_filecache_')
-    assert fc5.delete_on_exit
-    assert fc5.delete_on_exit
+    assert fc5.is_delete_on_exit
+    assert fc5.is_delete_on_exit
     fc4.delete_cache()
     fc5.delete_cache()
     assert not fc4.cache_dir.exists()
@@ -1023,7 +1052,8 @@ def test_cleanup_locking_bad():
         local_path = fc.get_local_path('gs://test/test.txt')
         with open(local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}', 'w') as fp:
             fp.write('A')
-    logger.has_prefix_list(['INFO Creating', 'Returning', 'Deleting', 'ERROR Deleting',
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Returning', 'Deleting', 'ERROR Deleting',
                             'Removing', 'Removing', 'Removing'])
     with FileCache(cache_name=None) as fc:
         local_path = fc.get_local_path('gs://test/test.txt')
@@ -1109,8 +1139,8 @@ def test_double_delete():
 
 def test_open_context_read():
     with FileCache(cache_name=None) as fc:
-        pfx = fc.new_path(HTTP_TEST_ROOT)
-        with pfx.open(LIMITED_FILENAMES[0], 'r') as fp:
+        pfx = fc.new_path(HTTP_TEST_ROOT + '/' + LIMITED_FILENAMES[0])
+        with pfx.open('r') as fp:
             cache_data = fp.read()
         assert fc.upload_counter == 0
         assert fc.download_counter == 1
@@ -1188,8 +1218,8 @@ def test_local_upl_pfx_ctx():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir)
         with FileCache(cache_name=None) as fc:
-            pfx = fc.new_path(temp_dir)
-            with pfx.open('dir1/test_file.txt', 'wb') as fp2:
+            pfx = fc.new_path(temp_dir / 'dir1/test_file.txt')
+            with pfx.open('wb') as fp2:
                 with open(EXPECTED_DIR / EXPECTED_FILENAMES[0], 'rb') as fp1:
                     fp2.write(fp1.read())
             assert os.path.exists(temp_dir / 'dir1/test_file.txt')
@@ -1354,12 +1384,12 @@ def test_complex_read_write():
 def test_complex_read_write_pfx():
     pfx_name = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
     with FileCache(cache_name=None, anonymous=True) as fc:
-        pfx = fc.new_path(pfx_name)
-        with pfx.open('test_file.txt', 'wb') as fp:
+        pfx = fc.new_path(pfx_name + '/test_file.txt')
+        with pfx.open('wb') as fp:
             fp.write(b'A')
-        with pfx.open('test_file.txt', 'ab') as fp:
+        with pfx.open('ab') as fp:
             fp.write(b'B')
-        with pfx.open('test_file.txt', 'rb') as fp:
+        with pfx.open('rb') as fp:
             res = fp.read()
         assert res == b'AB'
         assert fc.download_counter == 0
@@ -1367,8 +1397,8 @@ def test_complex_read_write_pfx():
         assert pfx.download_counter == 0
         assert pfx.upload_counter == 2
     with FileCache(cache_name=None, anonymous=True) as fc:
-        pfx = fc.new_path(pfx_name)
-        with pfx.open('test_file.txt', 'rb') as fp:
+        pfx = fc.new_path(pfx_name + '/test_file.txt')
+        with pfx.open('rb') as fp:
             res = fp.read()
         assert res == b'AB'
         assert fc.download_counter == 1
@@ -1903,52 +1933,130 @@ def test_url_bad():
 def test_iterdir(prefix):
     wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
-        objs = sorted(list(fc.iterdir(prefix)))
-        assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
-        objs = sorted(list(fc.iterdir(f'{prefix}/subdir1')))
-        assert objs == [f'{wprefix}/subdir1/lorem1.txt',
-                        f'{wprefix}/subdir1/subdir2a',
-                        f'{wprefix}/subdir1/subdir2b']
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            objs = sorted(list(fc.iterdir(f'{prefix}')))
+            assert objs == [f'{wprefix}/archsis.lbl',
+                            f'{wprefix}/archsis.pdf',
+                            f'{wprefix}/archsis.txt',
+                            f'{wprefix}/docinfo.txt',
+                            f'{wprefix}/edrsis.lbl',
+                            f'{wprefix}/edrsis.pdf',
+                            f'{wprefix}/edrsis.txt',
+                            f'{wprefix}/report']
+            objs = sorted(list(fc.iterdir(f'{prefix}/report')))
+            assert objs == [f'{wprefix}/report/rptinfo.txt']
+        else:
+            objs = sorted(list(fc.iterdir(prefix)))
+            assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
+            objs = sorted(list(fc.iterdir(f'{prefix}/subdir1')))
+            assert objs == [f'{wprefix}/subdir1/lorem1.txt',
+                            f'{wprefix}/subdir1/subdir2a',
+                            f'{wprefix}/subdir1/subdir2b']
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
-def test_iterdir_type(prefix):
+def test_iterdir_metadata(prefix):
     wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
-        objs = sorted(list(fc.iterdir_type(prefix)))
-        assert objs == [(f'{wprefix}/lorem1.txt', False), (f'{wprefix}/subdir1', True)]
-        objs = sorted(list(fc.iterdir_type(f'{prefix}/subdir1')))
-        assert objs == [(f'{wprefix}/subdir1/lorem1.txt', False),
-                        (f'{wprefix}/subdir1/subdir2a', True),
-                        (f'{wprefix}/subdir1/subdir2b', True)]
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            objs = sorted(list(fc.iterdir_metadata(f'{prefix}')))
+            assert len(objs) == 8
+            assert objs[0][0] == f'{wprefix}/archsis.lbl'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['mtime'] == HTTP_ARCHSIS_LBL_MTIME
+            assert objs[0][1]['size'] == 688
+            assert objs[-1][1]['is_dir'] is True
+            assert objs[-1][1]['mtime'] == HTTP_REPORT_DIR_MTIME
+            assert objs[-1][1]['size'] is None
+        else:
+            objs = sorted(list(fc.iterdir_metadata(prefix)))
+            assert len(objs) == 2
+            assert objs[0][0] == f'{wprefix}/lorem1.txt'
+            assert objs[0][1]['is_dir'] is False
+            if prefix == GS_TEST_BUCKET_ROOT:
+                assert objs[0][1]['mtime'] == GS_LORUM1_MTIME
+                assert objs[0][1]['size'] == 24651
+            elif prefix == S3_TEST_BUCKET_ROOT:
+                assert objs[0][1]['mtime'] == S3_LORUM1_MTIME
+                assert objs[0][1]['size'] == 24651
+            else:
+                assert objs[0][1]['mtime'] is not None
+                assert objs[0][1]['size'] is not None
+            assert objs[1][0] == f'{wprefix}/subdir1'
+            assert objs[1][1]['is_dir'] is True
+            objs = sorted(list(fc.iterdir_metadata(f'{prefix}/subdir1')))
+            assert objs[0][0] == f'{wprefix}/subdir1/lorem1.txt'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['mtime'] is not None
+            assert objs[0][1]['size'] is not None
+            assert objs[1][0] == f'{wprefix}/subdir1/subdir2a'
+            assert objs[1][1]['is_dir'] is True
+            assert objs[2][0] == f'{wprefix}/subdir1/subdir2b'
+            assert objs[2][1]['is_dir'] is True
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
 def test_iterdir_pfx(prefix):
     wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
-        pfx1 = fc.new_path(prefix)
-        objs = sorted([str(x) for x in pfx1.iterdir()])
-        assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
-        pfx2 = fc.new_path(f'{prefix}/subdir1')
-        objs = sorted([str(x) for x in pfx2.iterdir()])
-        assert objs == [f'{wprefix}/subdir1/lorem1.txt',
-                        f'{wprefix}/subdir1/subdir2a',
-                        f'{wprefix}/subdir1/subdir2b']
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            pfx1 = fc.new_path(f'{prefix}')
+            objs = sorted([str(x) for x in pfx1.iterdir()])
+            assert objs == [f'{wprefix}/archsis.lbl',
+                            f'{wprefix}/archsis.pdf',
+                            f'{wprefix}/archsis.txt',
+                            f'{wprefix}/docinfo.txt',
+                            f'{wprefix}/edrsis.lbl',
+                            f'{wprefix}/edrsis.pdf',
+                            f'{wprefix}/edrsis.txt',
+                            f'{wprefix}/report']
+        else:
+            pfx1 = fc.new_path(prefix)
+            objs = sorted([str(x) for x in pfx1.iterdir()])
+            assert objs == [f'{wprefix}/lorem1.txt', f'{wprefix}/subdir1']
+            pfx2 = fc.new_path(f'{prefix}/subdir1')
+            objs = sorted([str(x) for x in pfx2.iterdir()])
+            assert objs == [f'{wprefix}/subdir1/lorem1.txt',
+                            f'{wprefix}/subdir1/subdir2a',
+                            f'{wprefix}/subdir1/subdir2b']
 
 
 @pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
-def test_iterdir_type_pfx(prefix):
+def test_iterdir_metadata_pfx(prefix):
     wprefix = str(prefix).replace('\\', '/')
     with FileCache(anonymous=True) as fc:
-        pfx1 = fc.new_path(prefix)
-        objs = sorted([(str(x), y) for x, y in pfx1.iterdir_type()])
-        assert objs == [(f'{wprefix}/lorem1.txt', False), (f'{wprefix}/subdir1', True)]
-        pfx2 = fc.new_path(f'{prefix}/subdir1')
-        objs = sorted([(str(x), y) for x, y in pfx2.iterdir_type()])
-        assert objs == [(f'{wprefix}/subdir1/lorem1.txt', False),
-                        (f'{wprefix}/subdir1/subdir2a', True),
-                        (f'{wprefix}/subdir1/subdir2b', True)]
+        if prefix == HTTP_INDEXABLE_TEST_ROOT:
+            pfx1 = fc.new_path(f'{prefix}')
+            objs = sorted([(str(x), y) for x, y in pfx1.iterdir_metadata()])
+            assert len(objs) == 8
+            assert objs[0][0] == f'{wprefix}/archsis.lbl'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['mtime'] == HTTP_ARCHSIS_LBL_MTIME
+            assert objs[0][1]['size'] == 688
+            assert objs[-1][1]['is_dir'] is True
+            assert objs[-1][1]['mtime'] == HTTP_REPORT_DIR_MTIME
+            assert objs[-1][1]['size'] is None
+        else:
+            pfx1 = fc.new_path(prefix)
+            objs = sorted([(str(x), y) for x, y in pfx1.iterdir_metadata()])
+            assert len(objs) == 2
+            assert objs[0][0] == f'{wprefix}/lorem1.txt'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['mtime'] is not None
+            assert objs[0][1]['size'] is not None
+            assert objs[1][0] == f'{wprefix}/subdir1'
+            assert objs[1][1]['is_dir'] is True
+            pfx2 = fc.new_path(f'{prefix}/subdir1')
+            objs = sorted([(str(x), y) for x, y in pfx2.iterdir_metadata()])
+            assert len(objs) == 3
+            assert objs[0][0] == f'{wprefix}/subdir1/lorem1.txt'
+            assert objs[0][1]['is_dir'] is False
+            assert objs[0][1]['mtime'] is not None
+            assert objs[0][1]['size'] is not None
+            assert objs[1][0] == f'{wprefix}/subdir1/subdir2a'
+            assert objs[1][1]['is_dir'] is True
+            assert objs[2][0] == f'{wprefix}/subdir1/subdir2b'
+            assert objs[2][1]['is_dir'] is True
 
 
 def test_local_unlink_good():
@@ -2375,3 +2483,428 @@ def test_atexit():
     assert os.path.exists(fc.cache_dir)
     atexit._run_exitfuncs()
     assert not os.path.exists(fc.cache_dir)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_all_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        mtime = fc.modification_time(f'{prefix}/lorem1.txt')
+        if prefix == EXPECTED_DIR:
+            # Local files should have modification times
+            assert mtime is not None
+            assert isinstance(mtime, float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtime == HTTP_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtime == GS_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtime == S3_LORUM1_MTIME
+        else:
+            assert False
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_all_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test non-existent files
+        with pytest.raises(FileNotFoundError):
+            fc.modification_time(f'{prefix}/nonexistent.txt')
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_pfx_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        mtime = pfx.modification_time('lorem1.txt')
+        if prefix == EXPECTED_DIR:
+            # Local files should have modification times
+            assert mtime is not None
+            assert isinstance(mtime, float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtime == HTTP_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtime == GS_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtime == S3_LORUM1_MTIME
+        else:
+            assert False
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_pfx_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test non-existent files
+        with pytest.raises(FileNotFoundError):
+            pfx.modification_time('nonexistent.txt')
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test multiple existing files
+        filenames = [f'{prefix}/lorem1.txt', f'{prefix}/subdir1/lorem1.txt']
+        mtimes = fc.modification_time(filenames)
+        assert len(mtimes) == 2
+
+        for idx, mtime in enumerate(mtimes):
+            if prefix == EXPECTED_DIR:
+                assert mtime is not None
+                assert isinstance(mtime, float)
+            elif prefix == HTTP_TEST_ROOT:
+                assert mtime == (HTTP_LORUM1_MTIME if idx == 0 else HTTP_SUBDIR1_LORUM1_MTIME)
+            elif prefix == GS_TEST_BUCKET_ROOT:
+                assert mtime == (GS_LORUM1_MTIME if idx == 0 else GS_SUBDIR1_LORUM1_MTIME)
+            elif prefix == S3_TEST_BUCKET_ROOT:
+                assert mtime == (S3_LORUM1_MTIME if idx == 0 else S3_SUBDIR1_LORUM1_MTIME)
+            else:
+                assert False
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test multiple non-existent files
+        filenames = [f'{prefix}/nonexistent1.txt', f'{prefix}/nonexistent2.txt']
+        with pytest.raises(FileNotFoundError):
+            fc.modification_time(filenames)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_mixed(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test mix of existing and non-existing files
+        filenames = [f'{prefix}/lorem1.txt', f'{prefix}/nonexistent.txt',
+                     f'{prefix}/subdir1/lorem1.txt']
+
+        # Should raise exception by default
+        with pytest.raises(FileNotFoundError):
+            fc.modification_time(filenames)
+
+        # Should return exceptions when exception_on_fail=False
+        mtimes = fc.modification_time(filenames, exception_on_fail=False)
+        assert len(mtimes) == 3
+
+        # First file should have valid modification time
+        if prefix == EXPECTED_DIR:
+            assert mtimes[0] is not None
+            assert isinstance(mtimes[0], float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtimes[0] == HTTP_LORUM1_MTIME
+            assert mtimes[2] == HTTP_SUBDIR1_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtimes[0] == GS_LORUM1_MTIME
+            assert mtimes[2] == GS_SUBDIR1_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtimes[0] == S3_LORUM1_MTIME
+            assert mtimes[2] == S3_SUBDIR1_LORUM1_MTIME
+
+        # Second file should be FileNotFoundError
+        assert isinstance(mtimes[1], FileNotFoundError)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_pfx_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test multiple existing files
+        filenames = ['lorem1.txt', 'subdir1/lorem1.txt']
+        mtimes = pfx.modification_time(filenames)
+        assert len(mtimes) == 2
+
+        for idx, mtime in enumerate(mtimes):
+            if prefix == EXPECTED_DIR:
+                assert mtime is not None
+                assert isinstance(mtime, float)
+            elif prefix == HTTP_TEST_ROOT:
+                assert mtime == (HTTP_LORUM1_MTIME if idx == 0 else HTTP_SUBDIR1_LORUM1_MTIME)
+            elif prefix == GS_TEST_BUCKET_ROOT:
+                assert mtime == (GS_LORUM1_MTIME if idx == 0 else GS_SUBDIR1_LORUM1_MTIME)
+            elif prefix == S3_TEST_BUCKET_ROOT:
+                assert mtime == (S3_LORUM1_MTIME if idx == 0 else S3_SUBDIR1_LORUM1_MTIME)
+            else:
+                assert False
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_pfx_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test multiple non-existent files
+        filenames = ['nonexistent1.txt', 'nonexistent2.txt']
+        with pytest.raises(FileNotFoundError):
+            pfx.modification_time(filenames)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_pfx_mixed(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test mix of existing and non-existing files
+        filenames = ['lorem1.txt', 'nonexistent.txt', 'subdir1/lorem1.txt']
+
+        # Should raise exception by default
+        with pytest.raises(FileNotFoundError):
+            pfx.modification_time(filenames)
+
+        # Should return exceptions when exception_on_fail=False
+        mtimes = pfx.modification_time(filenames, exception_on_fail=False)
+        assert len(mtimes) == 3
+
+        # First file should have valid modification time
+        if prefix == EXPECTED_DIR:
+            assert mtimes[0] is not None
+            assert isinstance(mtimes[0], float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtimes[0] == HTTP_LORUM1_MTIME
+            assert mtimes[2] == HTTP_SUBDIR1_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtimes[0] == GS_LORUM1_MTIME
+            assert mtimes[2] == GS_SUBDIR1_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtimes[0] == S3_LORUM1_MTIME
+            assert mtimes[2] == S3_SUBDIR1_LORUM1_MTIME
+
+        # Second file should be FileNotFoundError
+        assert isinstance(mtimes[1], FileNotFoundError)
+
+
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_modification_time_multi_pfx_mixed_2(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test mix of existing and non-existing files with different pattern
+        filenames = ['nonexistent1.txt', 'lorem1.txt', 'nonexistent2.txt',
+                     'subdir1/lorem1.txt']
+
+        # Should raise exception by default
+        with pytest.raises(FileNotFoundError):
+            pfx.modification_time(filenames)
+
+        # Should return exceptions when exception_on_fail=False
+        mtimes = pfx.modification_time(filenames, exception_on_fail=False)
+        assert len(mtimes) == 4
+
+        # First file should be FileNotFoundError
+        assert isinstance(mtimes[0], FileNotFoundError)
+
+        # Second file should have valid modification time
+        if prefix == EXPECTED_DIR:
+            assert mtimes[1] is not None
+            assert isinstance(mtimes[1], float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtimes[1] == HTTP_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtimes[1] == GS_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtimes[1] == S3_LORUM1_MTIME
+
+        # Third file should be FileNotFoundError
+        assert isinstance(mtimes[2], FileNotFoundError)
+
+        # Fourth file should have valid modification time
+        if prefix == EXPECTED_DIR:
+            assert mtimes[3] is not None
+            assert isinstance(mtimes[3], float)
+        elif prefix == HTTP_TEST_ROOT:
+            assert mtimes[3] == HTTP_SUBDIR1_LORUM1_MTIME
+        elif prefix == GS_TEST_BUCKET_ROOT:
+            assert mtimes[3] == GS_SUBDIR1_LORUM1_MTIME
+        elif prefix == S3_TEST_BUCKET_ROOT:
+            assert mtimes[3] == S3_SUBDIR1_LORUM1_MTIME
+
+
+@pytest.mark.parametrize('prefix', GLOB_PREFIXES)
+def test_is_dir_all_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        assert fc.is_dir(str(prefix))
+
+        filecache.set_easy_logger()
+        if prefix == HTTP_GLOB_TEST_ROOT:
+            assert fc.is_dir(f'{prefix}/document')
+            assert not fc.is_dir(f'{prefix}/document/archsis.lbl')
+        else:
+            assert fc.is_dir(f'{prefix}/subdir1')
+            assert not fc.is_dir(f'{prefix}/lorem1.txt')
+
+
+@pytest.mark.parametrize('prefix', GLOB_PREFIXES)
+def test_is_dir_all_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        # Test non-existent path
+        with pytest.raises(FileNotFoundError):
+            fc.is_dir(f'{prefix}/nonexistent')
+
+
+@pytest.mark.parametrize('prefix', GLOB_PREFIXES)
+def test_is_dir_pfx_good(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        assert pfx.is_dir('')
+
+        if prefix == HTTP_GLOB_TEST_ROOT:
+            assert pfx.is_dir('document')
+            assert not pfx.is_dir('document/archsis.lbl')
+        else:
+            assert pfx.is_dir('subdir1')
+            assert not pfx.is_dir('lorem1.txt')
+
+
+@pytest.mark.parametrize('prefix', GLOB_PREFIXES)
+def test_is_dir_pfx_bad(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test non-existent path
+        with pytest.raises(FileNotFoundError):
+            pfx.is_dir('nonexistent')
+
+
+@pytest.mark.parametrize('prefix', NON_HTTP_INDEXABLE_PREFIXES)
+def test_is_dir_multi_pfx_mixed(prefix):
+    with FileCache(cache_name=None, anonymous=True) as fc:
+        pfx = fc.new_path(prefix)
+        # Test mix of existing and non-existing paths
+        paths = ['', 'nonexistent', 'subdir1']
+
+        with pytest.raises(FileNotFoundError):
+            pfx.is_dir('nonexistent')
+
+        results = pfx.is_dir(paths, exception_on_fail=False)
+        assert len(results) == 3
+        assert results[0] is True
+        assert isinstance(results[1], FileNotFoundError)
+        assert results[2] is True
+
+
+@pytest.mark.parametrize('time_sensitive', [False, True])
+@pytest.mark.parametrize('cache_metadata', [False, True])
+def test_modification_time_caching(time_sensitive, cache_metadata):
+    prefix = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
+    with FileCache(cache_name=None, anonymous=True,
+                   time_sensitive=time_sensitive,
+                   cache_metadata=cache_metadata) as fc:
+        pfx = fc.new_path(prefix + '/file1.txt')
+        with pfx.open('w') as fp:
+            fp.write('hi')
+        mtime_orig = pfx.modification_time()
+        assert mtime_orig is not None
+        assert isinstance(mtime_orig, float)
+        lp = pfx.get_local_path()
+        mtime_lp_orig = lp.stat().st_mtime
+        if time_sensitive:
+            # upload should not update the local file's mtime
+            assert mtime_lp_orig == mtime_orig
+        else:
+            assert mtime_lp_orig != mtime_orig
+
+        time.sleep(1)  # Make sure mod times will be different
+
+        with FileCache(cache_name=None, anonymous=True) as fc2:
+            # fc doesn't have visibility into fc2, so we we upload a new version
+            # there's no chance it will be cached
+            pfx2 = fc2.new_path(prefix + '/file1.txt')
+            with pfx2.open('w') as fp:
+                fp.write('bye')
+
+        mtime_new = pfx.modification_time()
+        if cache_metadata:
+            assert mtime_new == mtime_orig  # Used cached version
+        else:
+            assert mtime_new != mtime_orig  # Remote changed
+
+        assert lp.stat().st_mtime == mtime_lp_orig  # Copy in this cache didn't change
+
+        pfx.retrieve()  # Should do nothing if not time_sensitive
+
+        if time_sensitive and not cache_metadata:
+            # Copy in this cache was re-retrieved
+            assert lp.read_text().strip() == 'bye'
+            assert lp.stat().st_mtime == mtime_new
+        else:
+            # Copy in this cache was not re-retrieved
+            assert lp.read_text().strip() == 'hi'
+            assert lp.stat().st_mtime == mtime_lp_orig
+
+
+@pytest.mark.parametrize('time_sensitive', [False, True])
+@pytest.mark.parametrize('cache_metadata', [False, True])
+@pytest.mark.parametrize('mp_safe', [False, True])
+def test_modification_time_caching_multi(time_sensitive, cache_metadata, mp_safe):
+    filecache.set_easy_logger()
+    prefix = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
+    filenames = ['file1.txt', 'file2.txt', 'file3.txt']
+    filenames2 = ['file1.txt', 'file2.txt', 'file4.txt']
+    filecache.set_easy_logger()
+    with FileCache(cache_name=None, anonymous=True,
+                   time_sensitive=time_sensitive,
+                   cache_metadata=cache_metadata,
+                   mp_safe=mp_safe) as fc:
+        pfx = fc.new_path(prefix)
+        for filename in filenames:
+            lp = pfx.get_local_path(filename)
+            lp.write_text('hi')
+        pfx.upload(filenames)
+
+        mtime_orig = pfx.modification_time(filenames)
+        assert mtime_orig[0] is not None
+        assert isinstance(mtime_orig[0], float)
+        assert mtime_orig[1] is not None
+        assert isinstance(mtime_orig[1], float)
+        assert mtime_orig[2] is not None
+        assert isinstance(mtime_orig[2], float)
+
+        lp = pfx.get_local_path(filenames)
+        mtime_lp_orig = [x.stat().st_mtime for x in lp]
+        if time_sensitive:
+            assert all(a == b for a, b in zip(mtime_lp_orig, mtime_orig))
+        else:
+            # upload should not update the local file's mtime
+            assert all(a != b for a, b in zip(mtime_lp_orig, mtime_orig))
+
+        time.sleep(1)  # Make sure mod times will be different
+
+        with FileCache(cache_name=None, anonymous=True,
+                       time_sensitive=time_sensitive,
+                       cache_metadata=cache_metadata,
+                       mp_safe=mp_safe) as fc2:
+            # fc doesn't have visibility into fc2, so we we upload a new version
+            # there's no chance it will be cached
+            pfx2 = fc2.new_path(prefix)
+            # Only update the first two files
+            for filename in filenames2:
+                pfx2.get_local_path(filename).write_text('bye')
+            pfx2.upload(filenames2)
+
+        mtime_new = pfx.modification_time(filenames)
+        if cache_metadata:
+            # Used cached version
+            assert all(a == b for a, b in zip(mtime_new, mtime_orig))
+        else:
+            # Remote changed for file1 and file2
+            assert mtime_orig[0] != mtime_new[0]
+            assert mtime_orig[1] != mtime_new[1]
+            assert mtime_orig[2] == mtime_new[2]
+
+        # Copy in this cache didn't change
+        assert lp[0].stat().st_mtime == mtime_lp_orig[0]
+        assert lp[1].stat().st_mtime == mtime_lp_orig[1]
+        assert lp[2].stat().st_mtime == mtime_lp_orig[2]
+
+        pfx.retrieve(filenames)  # Should do nothing if not time_sensitive
+
+        if time_sensitive and not cache_metadata:
+            # Copy in this cache was re-retrieved
+            assert lp[0].read_text().strip() == 'bye'
+            assert lp[1].read_text().strip() == 'bye'
+            assert lp[2].read_text().strip() == 'hi'
+            assert lp[0].stat().st_mtime == mtime_new[0]
+            assert lp[1].stat().st_mtime == mtime_new[1]
+            assert lp[2].stat().st_mtime == mtime_lp_orig[2]
+        else:
+            # Copy in this cache was not re-retrieved
+            assert lp[0].read_text().strip() == 'hi'
+            assert lp[1].read_text().strip() == 'hi'
+            assert lp[2].read_text().strip() == 'hi'
+            assert lp[0].stat().st_mtime == mtime_lp_orig[0]
+            assert lp[1].stat().st_mtime == mtime_lp_orig[1]
+            assert lp[2].stat().st_mtime == mtime_lp_orig[2]

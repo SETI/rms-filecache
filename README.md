@@ -121,21 +121,16 @@ from filecache import FileCache, FCPath
 with FileCache(None) as fc:  # Use as context manager
     # Use GS by specifying the bucket name and one directory level
     p1 = fc.new_path('gs://rms-filecache-tests/subdir1', anonymous=True)
-    # Use S3 by specifying the bucket name and two directory levels
-    # Alternative creation method
-    p2 = FCPath('s3://rms-filecache-tests/subdir1/subdir2a', filecache=fc,
-                anonymous=True)
     # Access GS using a directory + filename (since only one directory level
     # was specified by the FCPath)
-    # The additional directory and filename are specified as an argument to open()
+    # The additional filename is specified by using the / operator to create a new
+    # FCPath instance; anonymous=True is inherited
     # Also use open() as a context manager
-    with p1.open('subdir2a/binary1.bin', 'rb') as fp:
+    with (p1 / 'subdir2a/binary1.bin').open('rb') as fp:
         bin1 = fp.read()
     # Access S3 using a filename only (since two directory levels were already
     # specified by the FCPath)
-    # The additional filename is specified by using the / operator to create a new
-    # FCPath instance; anonymous=True is inherited
-    with (p2 / 'binary1.bin').open(mode='rb') as fp:
+    with (p2 / 'binary1.bin').open('rb') as fp:
         bin2 = fp.read()
     assert bin1 == bin2
 # Cache automatically deleted here

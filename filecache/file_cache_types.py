@@ -15,7 +15,15 @@ StrOrPathOrSeqType = Union[str, Path,
                            list[Union[str, Path]],
                            tuple[Union[str, Path], ...]]
 
+#                     func(scheme: str, remote: str, path: str, cache_dir: Path,
+#                          cache_subdir: str) -> str | Path
 UrlToPathFuncType = Callable[[str, str, str, Path, str], Union[str, Path, None]]
 UrlToPathFuncOrSeqType = (Union[UrlToPathFuncType,
                                 list[UrlToPathFuncType],
                                 tuple[UrlToPathFuncType, ...]])
+
+#                     func(scheme: str, remote: str, path: str)-> str
+UrlToUrlFuncType = Callable[[str, str, str], Union[str, None]]
+UrlToUrlFuncOrSeqType = (Union[UrlToUrlFuncType,
+                               list[UrlToUrlFuncType],
+                               tuple[UrlToUrlFuncType, ...]])

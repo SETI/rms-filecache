@@ -8,11 +8,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
+import datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+import platform
+import re
 import requests
 import shutil
+import stat
 import tempfile
-from typing import Iterator
+from typing import Any, Iterator, cast
 import uuid
 
 import boto3
@@ -133,6 +138,113 @@ class FileCacheSource(ABC):
             for future in futures.as_completed(future_to_paths):
                 sub_path = future_to_paths[future]
                 yield sub_path, future.result()
+
+    @abstractmethod
+    def modification_time(self,
+                          sub_path: str) -> float | None:
+        ...  # pragma: no cover
+
+    def modification_time_multi(self,
+                                sub_paths: Sequence[str],
+                                *,
+                                nthreads: int = 8) -> list[float | None | Exception]:
+        """Get the modification time of multiple files as a Unix timestamp.
+
+        Parameters:
+            sub_paths: The path of the files relative to the source prefix to get the
+                modification time of.
+            nthreads: The maximum number of threads to use.
+
+        Returns:
+            For each entry, the modification time as a Unix timestamp if the file exists
+            and the time can be retrieved, None otherwise. Any modification time may be an
+            Exception if that file does not exist or the modification time cannot be
+            retrieved.
+        """
+
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
+        results = {}
+        for sub_path, result in self._modification_time_object_parallel(sub_paths,
+                                                                        nthreads):
+            results[sub_path] = result
+
+        ret = []
+        for sub_path in sub_paths:
+            ret.append(results[sub_path])
+
+        return ret
+
+    def _modification_time_object(self,
+                                  sub_path: str) -> float | None | Exception:
+        return self.modification_time(sub_path)
+
+    def _modification_time_object_parallel(self,
+                                           sub_paths: Sequence[str],
+                                           nthreads: int
+                                           ) -> Iterator[tuple[str,
+                                                               float | None | Exception]]:
+        with ThreadPoolExecutor(max_workers=nthreads) as executor:
+            future_to_paths = {executor.submit(self._modification_time_object, x): x
+                               for x in sub_paths}
+            for future in futures.as_completed(future_to_paths):
+                sub_path = future_to_paths[future]
+                try:
+                    yield sub_path, future.result()
+                except Exception as e:
+                    yield sub_path, e
+
+    @abstractmethod
+    def is_dir(self,
+               sub_path: str) -> bool:
+        ...  # pragma: no cover
+
+    def is_dir_multi(self,
+                     sub_paths: Sequence[str],
+                     *,
+                     nthreads: int = 8) -> list[bool | Exception]:
+        """Check if multiple paths represent directories using threads.
+
+        Parameters:
+            sub_paths: The paths relative to the source prefix to check for directory
+                status.
+            nthreads: The maximum number of threads to use.
+
+        Returns:
+            For each entry, True if the path represents a directory, False otherwise,
+            or an Exception if the check failed.
+        """
+
+        if not isinstance(nthreads, int) or nthreads <= 0:
+            raise ValueError(f'nthreads must be a positive integer, got {nthreads}')
+
+        results = {}
+        for sub_path, result in self._is_dir_object_parallel(sub_paths, nthreads):
+            results[sub_path] = result
+
+        ret = []
+        for sub_path in sub_paths:
+            ret.append(results[sub_path])
+
+        return ret
+
+    def _is_dir_object(self,
+                       sub_path: str) -> bool:
+        return self.is_dir(sub_path)
+
+    def _is_dir_object_parallel(self,
+                                sub_paths: Sequence[str],
+                                nthreads: int) -> Iterator[tuple[str, bool | Exception]]:
+        with ThreadPoolExecutor(max_workers=nthreads) as executor:
+            future_to_paths = {executor.submit(self._is_dir_object, x): x
+                               for x in sub_paths}
+            for future in futures.as_completed(future_to_paths):
+                sub_path = future_to_paths[future]
+                try:
+                    yield sub_path, future.result()
+                except Exception as e:
+                    yield sub_path, e
 
     @abstractmethod
     def retrieve(self,
@@ -263,17 +375,26 @@ class FileCacheSource(ABC):
                     yield sub_path, exception
 
     @abstractmethod
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any] | None]]:
         """Iterate over the contents of a directory.
 
         Parameters:
             sub_path: The path of the directory relative to the source prefix.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored. The bool is True if the
-            returned name is a directory, False if it is a file.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``mtime``: The last modification time of the file as a float.
+                - ``size``: The approximate size of the file in bytes.
+
+            If the metadata can not be retrieved, None is returned for the metadata.
         """
         ...  # pragma: no cover
 
@@ -409,6 +530,22 @@ class FileCacheSourceFile(FileCacheSource):
 
         return Path(sub_path).is_file()
 
+    def modification_time(self,
+                          sub_path: str) -> float | None:
+        """Get the modification time of a file as a Unix timestamp."""
+
+        return Path(sub_path).stat().st_mtime
+
+    def is_dir(self,
+               sub_path: str) -> bool:
+        """Check if a file is a directory."""
+
+        path = Path(sub_path)
+        if not path.exists():
+            raise FileNotFoundError(f'File does not exist: {sub_path}')
+
+        return path.is_dir()
+
     def retrieve(self,
                  sub_path: str | Path,
                  local_path: str | Path) -> Path:
@@ -467,23 +604,43 @@ class FileCacheSourceFile(FileCacheSource):
         # correct location.
         return local_path_p
 
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any] | None]]:
         """Iterate over the contents of a directory.
 
         Parameters:
             sub_path: The absolute path of the directory.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored. The bool is True if the
-            returned name is a directory, False if it is a file.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``mtime``: The last modification time of the file as a float.
+                - ``size``: The approximate size of the file in bytes.
+
+            If the metadata can not be retrieved, None is returned for the metadata.
         """
 
         sub_path_p = Path(sub_path)
         for obj_name in sub_path_p.iterdir():
-            is_dir = obj_name.is_dir()
-            yield str(obj_name).replace('\\', '/'), is_dir
+            try:
+                obj_stat = obj_name.stat()
+            except (OSError, IOError):  # pragma: no cover
+                # Fallback if stat fails
+                metadata: dict[str, Any] | None = None
+            else:
+                metadata = {
+                    'is_dir': stat.S_ISDIR(obj_stat.st_mode),
+                    'mtime': obj_stat.st_mtime,
+                    'size': obj_stat.st_size
+                }
+
+            yield str(obj_name).replace('\\', '/'), metadata
 
     def unlink(self,
                sub_path: str,
@@ -506,6 +663,11 @@ class FileCacheSourceFile(FileCacheSource):
         Path(sub_path).unlink(missing_ok=missing_ok)
 
         return sub_path
+
+
+_HTML_TAG = re.compile(r'<.*?>')
+_END_OF_TABLE = re.compile('.*(</pre>|<hr>|</table|<th colspan).*')
+_SIZE_FACTORS = {'K': 1024, 'M': 1024**2, 'G': 1024**3, 'T': 1024**4}
 
 
 class FileCacheSourceHTTP(FileCacheSource):
@@ -569,6 +731,75 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         return ret
 
+    def modification_time(self,
+                          sub_path: str) -> float | None:
+        """Get the modification time of a file as a Unix timestamp.
+
+        Parameters:
+            sub_path: The path of the file on the webserver relative to the source
+                prefix.
+
+        Returns:
+            The modification time as a float (Unix timestamp) if the file exists and
+            the time can be retrieved from HTTP headers. If the file exists but no
+            modification time is available, None is returned. If the file does not exist
+            or other errors occur, an Exception is raised.
+
+        Notes:
+            This method uses HTTP HEAD request to get file metadata without downloading
+            the content. It checks for Last-Modified header and converts it to a Unix
+            timestamp.
+        """
+
+        try:
+            # Use HEAD request to get headers without downloading content
+            response = requests.head(self._src_prefix_ + sub_path)
+            response.raise_for_status()
+
+            # Check for Last-Modified header
+            last_modified = response.headers.get('Last-Modified')
+            if last_modified:
+                # Parse the HTTP date format and convert to Unix timestamp
+                # HTTP dates are typically in format: "Wed, 21 Oct 2015 07:28:00 GMT"
+                dt = parsedate_to_datetime(last_modified)
+                return dt.timestamp()
+
+            return None
+        except requests.exceptions.RequestException:
+            raise FileNotFoundError('Failed to get HEAD of: '
+                                    f'{self._src_prefix_}{sub_path}')
+
+    def is_dir(self,
+               sub_path: str) -> bool:
+        """Check if a file is a directory.
+
+        Parameters:
+            sub_path: The path of the directory on the webserver relative to the source
+                prefix.
+
+        Returns:
+            True if the path represents a directory, False otherwise.
+
+        Notes:
+            This method assumes the provided URL is either a file or a directory that
+            will show up as a "fancy index" page. If you provide a URL that is a directory
+            but does not support fancy indexing, it will incorrectly return ``False``.
+            It is also possible to fool this method by giving it a file URL that appears
+            to be a fancy index.
+        """
+
+        # Returns FileNotFount if URL can't be read
+        # Returns RuntimeError if URL doesn't support fancy indexing, which could mean
+        #   it's a file or it's a directory and not indexable
+        try:
+            for _ in self.iterdir_metadata(sub_path):
+                # If there's even one file present, it's a directory
+                return True
+        except RuntimeError:
+            pass
+
+        return False
+
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path) -> Path:
@@ -613,6 +844,10 @@ class FileCacheSourceHTTP(FileCacheSource):
             with open(temp_local_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024*1024):
                     f.write(chunk)
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                local_path.unlink(missing_ok=True)
             temp_local_path.rename(local_path)
         except Exception:
             temp_local_path.unlink(missing_ok=True)
@@ -627,8 +862,8 @@ class FileCacheSourceHTTP(FileCacheSource):
 
         raise NotImplementedError
 
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """Iterate over the contents of a directory.
 
         Parameters:
@@ -636,11 +871,122 @@ class FileCacheSourceHTTP(FileCacheSource):
                 prefix.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``mtime``: The last modification time of the file as a float.
+                - ``size``: The approximate size of the file in bytes.
+
+        Raises:
+            FileNotFoundError: If the URL does not point to a valid file or directory
+                page.
+            ConnectionError: If the URL could not be accessed.
+
+        Notes:
+            This method relies on the webserver returning a "fancy index" page in some
+            recognizable format. If server-side indexing is disabled, this method will
+            not work.
+
+            We have no way of knowing what the timezone of the webserver is, and the
+            fancy index page does not include the timezone. As a result we assume all
+            times are in UTC.
         """
 
-        raise NotImplementedError
+        def _int_size(size: str) -> int | None:
+            """Internal method to convert a size string to a size in bytes."""
+            if size == '-':
+                return None
+            if size[-1] in _SIZE_FACTORS:
+                return int(float(size[:-1]) * _SIZE_FACTORS[size[-1]] + 0.5)
+            return int(size)
+
+        url = self._src_prefix_ + sub_path
+
+        try:
+            request = requests.get(url, stream=True, timeout=30)
+        except requests.exceptions.ConnectionError as e:
+            raise ConnectionError(f'Failed to connect to {url}') from e
+
+        if request.status_code != 200:
+            if request.status_code == 404:
+                raise FileNotFoundError(f'File not found: {url}')
+            message = f'response {request.status_code} received from {url}'
+            raise ConnectionError(message)
+
+        # Since we're reading a file, this could be a REALLY BIG file and we won't
+        # know it's not a fancy index until we've downloaded the whole thing. So
+        # limit the size of the download for sanity.
+
+        max_size = 20*1024*1024  # 20 MB - 5X the size of the MRO C kernels
+        downloaded_size = 0
+        content_chunks = []
+
+        for chunk in request.iter_content(chunk_size=8192):  # Read in 8KB chunks
+            if not chunk:
+                break  # No more data
+
+            downloaded_size += len(chunk)
+            if downloaded_size > max_size:
+                request.close()  # Close the connection to stop downloading
+                break
+            content_chunks.append(chunk)
+
+        full_content = b"".join(content_chunks)
+
+        text = full_content.decode('latin1')
+
+        # The first line of the fancy index always contains "Parent Directory".
+        parts = list(text.partition('Parent Directory'))
+        if not parts[-1]:
+            raise RuntimeError(f'URL does not support fancy indexing: {url}')
+
+        # Rows are always split by "\n".
+        # Sometimes it's a table, sometimes just pre-formatted text
+        recs = parts[-1].split('\n')
+
+        # The record after the last table row always contains one of these:
+        # "</pre>", "<hr>", "<table", or "<th colspan"
+        last = [k for k, rec in enumerate(recs) if _END_OF_TABLE.fullmatch(rec)]
+
+        # Select the table rows
+        recs = recs[1:last[0]]
+
+        # Interpret each row
+        for rec in recs:
+            rec = rec.replace('&nbsp;', '').strip()
+
+            # Remove anything inside quotes
+            parts = rec.split('"')
+            rec = ''.join(parts[::2])
+
+            # Insert a space before "<td"
+            rec = rec.replace('<td', ' <td')
+
+            # Remove anything inside HTML tags
+            parts = _HTML_TAG.split(rec)
+            rec = ''.join(parts)
+
+            # Interpret the fields
+            parts = rec.split()
+            basename = parts[0]
+            date_str = parts[1] + 'T' + parts[2] + '+00:00'
+
+            mtime = datetime.datetime.fromisoformat(date_str).timestamp()
+            size = _int_size(parts[3])
+
+            is_dir = basename.endswith('/')
+            basename = basename.rstrip('/')
+            metadata = {
+                'is_dir': is_dir,
+                'mtime': mtime,
+                'size': size
+            }
+            yield (f'{url}/{basename}', metadata)
 
     def unlink(self,
                sub_path: str,
@@ -726,6 +1072,70 @@ class FileCacheSourceGS(FileCacheSource):
         except Exception:
             return False
 
+    def modification_time(self,
+                          sub_path: str) -> float | None:
+        """Get the modification time of a file as a Unix timestamp.
+
+        Parameters:
+            sub_path: The path of the file in the Google Storage bucket given by the
+                source prefix.
+
+        Returns:
+            The modification time as a float (Unix timestamp) if the file exists.
+            If the file does not exist or other errors occur, an Exception is raised.
+        """
+
+        blob = self._bucket.blob(sub_path)
+        try:
+            blob.reload()
+        except (google.api_core.exceptions.BadRequest,  # bad bucket name
+                google.api_core.exceptions.NotFound,  # bad filename
+                google.cloud.exceptions.NotFound):  # bad filename
+            raise FileNotFoundError(f'File not found: {self._src_prefix_}{sub_path}')
+        return cast(float, blob.updated.timestamp())
+
+    def is_dir(self,
+               sub_path: str) -> bool:
+        """Check if a file is a directory.
+
+        Parameters:
+            sub_path: The path of the directory in the Google Storage bucket given by the
+                source prefix.
+
+        Returns:
+            True if the path represents a directory (i.e., there are objects with this
+            prefix), False otherwise.
+
+        Notes:
+            In Google Cloud Storage, directories are conceptual - they exist as prefixes
+            in object names. This method checks if there are any objects with the given
+            prefix to determine if it represents a directory.
+        """
+
+        if self.exists(sub_path):
+            # If it exists, it's a file
+            return False
+
+        # If it doesn't exist, check to see if it's a prefix to other files
+        try:
+            if sub_path:
+                # For non-root paths, check if there are objects with the given prefix
+                if not sub_path.endswith('/'):
+                    sub_path = sub_path + '/'
+                blobs = list(self._bucket.list_blobs(prefix=sub_path, max_results=1))
+                ret = len(blobs) > 0
+            else:
+                # For bucket root, check if the bucket exists and has any objects
+                blobs = list(self._bucket.list_blobs(max_results=1))
+                ret = len(blobs) > 0
+        except (google.api_core.exceptions.BadRequest,  # bad bucket name
+                google.cloud.exceptions.NotFound):  # bad filename
+            raise FileNotFoundError(f'File not found: {self._src_prefix_}{sub_path}')
+
+        if ret:
+            return ret
+        raise FileNotFoundError(f'File not found: {self._src_prefix_}{sub_path}')
+
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path) -> Path:
@@ -763,6 +1173,10 @@ class FileCacheSourceGS(FileCacheSource):
         temp_local_path = local_path.with_suffix(f'.{local_path.suffix}_{uuid.uuid4()}')
         try:
             blob.download_to_filename(str(temp_local_path))
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                local_path.unlink(missing_ok=True)
             temp_local_path.rename(local_path)
         except (google.api_core.exceptions.BadRequest,  # bad bucket name
                 google.cloud.exceptions.NotFound):  # bad filename
@@ -804,8 +1218,8 @@ class FileCacheSourceGS(FileCacheSource):
 
         return local_path
 
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any] | None]]:
         """Iterate over the contents of a directory.
 
         Parameters:
@@ -813,8 +1227,18 @@ class FileCacheSourceGS(FileCacheSource):
                 by the source prefix.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``mtime``: The last modification time of the file as a float.
+                - ``size``: The approximate size of the file in bytes.
+
+            If the metadata can not be retrieved, None is returned for the metadata.
         """
 
         if sub_path:
@@ -824,16 +1248,26 @@ class FileCacheSourceGS(FileCacheSource):
         blobs = self._client.list_blobs(self._bucket_name,
                                         prefix=sub_prefix, delimiter='/')
 
-        # Yield filenames
+        # Yield filenames with metadata
         for blob in blobs:
             if blob.name.rstrip('/') != sub_path:
-                yield f'{self._src_prefix_}{blob.name}', False
+                metadata = {
+                    'is_dir': False,
+                    'mtime': blob.updated.timestamp(),  # Last modification time
+                    'size': blob.size  # File size in bytes
+                }
+                yield f'{self._src_prefix_}{blob.name}', metadata
 
-        # Yield sub-directories
+        # Yield sub-directories with metadata
         for prefix in blobs.prefixes:
             prefix = prefix.rstrip('/')
             if prefix != sub_path:
-                yield f'{self._src_prefix_}{prefix}', True
+                metadata = {
+                    'is_dir': True,
+                    'mtime': None,  # Directories don't have mod times in GS
+                    'size': None  # Directories don't have sizes in GS
+                }
+                yield f'{self._src_prefix_}{prefix}', metadata
 
     def unlink(self,
                sub_path: str,
@@ -933,6 +1367,80 @@ class FileCacheSourceS3(FileCacheSource):
 
         return ret
 
+    def modification_time(self,
+                          sub_path: str) -> float | None:
+        """Get the modification time of a file as a Unix timestamp.
+
+        Parameters:
+            sub_path: The path of the file in the AWS S3 bucket given by the
+                source prefix.
+
+        Returns:
+            The modification time as a float (Unix timestamp) if the file exists and
+            the time can be retrieved. If the file does not exist or other errors occur,
+            an Exception is raised.
+        """
+
+        try:
+            # Use head_object to get metadata without downloading the content
+            response = self._client.head_object(Bucket=self._bucket_name, Key=sub_path)
+            # Convert the LastModified time to a Unix timestamp
+            return response['LastModified'].timestamp()
+        except botocore.exceptions.ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                raise FileNotFoundError(f'File not found: {self._src_prefix_}{sub_path}')
+            else:
+                raise
+
+    def is_dir(self,
+               sub_path: str) -> bool:
+        """Check if a file is a directory.
+
+        Parameters:
+            sub_path: The path of the directory in the AWS S3 bucket given by the
+                source prefix.
+
+        Returns:
+            True if the path represents a directory (i.e., there are objects with this
+            prefix), False otherwise.
+
+        Notes:
+            In AWS S3, directories are conceptual - they exist as prefixes in object
+            names. This method checks if there are any objects with the given prefix
+            to determine if it represents a directory.
+        """
+
+        if len(sub_path) > 0 and self.exists(sub_path):
+            # If it exists, it's a file
+            return False
+
+        # If it doesn't exist, check to see if it's a prefix to other files
+        if sub_path:
+            # For non-root paths, check if there are objects with the given prefix
+            if not sub_path.endswith('/'):
+                sub_path = sub_path + '/'
+            response = self._client.list_objects_v2(
+                Bucket=self._bucket_name,
+                Prefix=sub_path,
+                MaxKeys=1
+            )
+        else:
+            # For bucket root, check if the bucket exists and has any objects
+            response = self._client.list_objects_v2(
+                Bucket=self._bucket_name,
+                MaxKeys=1
+            )
+
+        # Check if there are any contents with this prefix
+        contents = response.get('Contents', [])
+        ret = len(contents) > 0
+
+        # If there are no files, then the directory doesn't exist; if there are
+        # then the directory exists and it's a directory
+        if ret:
+            return ret
+        raise FileNotFoundError(f'File not found: {self._src_prefix_}{sub_path}')
+
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path) -> Path:
@@ -969,6 +1477,10 @@ class FileCacheSourceS3(FileCacheSource):
         try:
             self._client.download_file(self._bucket_name, sub_path,
                                        str(temp_local_path))
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                local_path.unlink(missing_ok=True)
             temp_local_path.rename(local_path)
         except botocore.exceptions.ClientError:
             temp_local_path.unlink(missing_ok=True)
@@ -1003,8 +1515,8 @@ class FileCacheSourceS3(FileCacheSource):
 
         return local_path
 
-    def iterdir_type(self,
-                     sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any] | None]]:
         """Iterate over the contents of a directory.
 
         Parameters:
@@ -1012,8 +1524,18 @@ class FileCacheSourceS3(FileCacheSource):
                 prefix.
 
         Yields:
-            All files and sub-directories in the given directory, in no particular order.
-            Special directories ``.`` and ``..`` are ignored.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``mtime``: The last modification time of the file as a float.
+                - ``size``: The approximate size of the file in bytes.
+
+            If the metadata can not be retrieved, None is returned for the metadata.
         """
 
         if sub_path:
@@ -1024,23 +1546,37 @@ class FileCacheSourceS3(FileCacheSource):
                                                 Prefix=sub_prefix, Delimiter='/')
 
         if response is not None:
-            # Yield filenames
+            # Yield filenames with metadata
             contents = response.get('Contents')
             if contents is not None:
                 for content in contents:
                     name = content.get('Key')
                     if name is not None:
                         if name.rstrip('/') != sub_path:
-                            yield f'{self._src_prefix_}{name}', False
+                            mtime_obj = content.get('LastModified')
+                            mtime = None
+                            if mtime_obj is not None:
+                                mtime = mtime_obj.timestamp()
+                            metadata = {
+                                'is_dir': False,
+                                'mtime': mtime,
+                                'size': content.get('Size', None)
+                            }
+                            yield f'{self._src_prefix_}{name}', metadata
 
-            # Yield sub-directories
+            # Yield sub-directories with metadata
             contents2 = response.get('CommonPrefixes', [])
             if contents2 is not None:
                 for content2 in contents2:
                     prefix = content2.get('Prefix')
                     if prefix is not None:
                         prefix = str(prefix).rstrip('/')
-                        yield f'{self._src_prefix_}{prefix}', True
+                        metadata = {
+                            'is_dir': True,
+                            'mtime': None,  # Directories don't have mod dates in S3
+                            'size': None   # Directories don't have sizes in S3
+                        }
+                        yield f'{self._src_prefix_}{prefix}', metadata
 
     def unlink(self,
                sub_path: str,
@@ -1169,6 +1705,22 @@ class FileCacheSourceFake(FileCacheSource):
 
         return (self._storage_dir / sub_path).is_file()
 
+    def modification_time(self,
+                          sub_path: str) -> float | None:
+        """Get the modification time of a file as a Unix timestamp."""
+
+        return (self._storage_dir / sub_path).stat().st_mtime
+
+    def is_dir(self,
+               sub_path: str) -> bool:
+        """Check if a file is a directory."""
+
+        path = self._storage_dir / sub_path
+        if not path.exists():
+            raise FileNotFoundError(f'File does not exist: {path}')
+
+        return path.is_dir()
+
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path) -> Path:
@@ -1196,6 +1748,10 @@ class FileCacheSourceFake(FileCacheSource):
         temp_local_path = local_path.with_suffix(f'.{local_path.suffix}_{uuid.uuid4()}')
         try:
             shutil.copy2(source_path, temp_local_path)
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                local_path.unlink(missing_ok=True)
             temp_local_path.rename(local_path)
         except Exception:
             temp_local_path.unlink(missing_ok=True)
@@ -1229,6 +1785,10 @@ class FileCacheSourceFake(FileCacheSource):
         temp_dest_path = dest_path.with_suffix(f'.{dest_path.suffix}_{uuid.uuid4()}')
         try:
             shutil.copy2(local_path, temp_dest_path)
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                dest_path.unlink(missing_ok=True)
             temp_dest_path.rename(dest_path)
         except Exception:
             temp_dest_path.unlink(missing_ok=True)
@@ -1236,14 +1796,26 @@ class FileCacheSourceFake(FileCacheSource):
 
         return local_path
 
-    def iterdir_type(self, sub_path: str) -> Iterator[tuple[str, bool]]:
+    def iterdir_metadata(self,
+                         sub_path: str) -> Iterator[tuple[str, dict[str, Any] | None]]:
         """Iterate over the contents of a directory in the fake remote storage.
 
         Parameters:
             sub_path: The path of the directory relative to the storage directory.
 
         Yields:
-            Tuples of (path, is_dir) for each item in the directory.
+            All files and sub-directories in the given directory (except ``.`` and
+            ``..``), in no particular order. Each file or directory is represented by a
+            tuple of the form (path, metadata), where path is the path of the file or
+            directory relative to the source prefix, and metadata is a dictionary with the
+            following keys:
+
+                - ``is_dir``: True if the returned name is a directory, False if it is a
+                  file.
+                - ``mtime``: The last modification time of the file as a float.
+                - ``size``: The approximate size of the file in bytes.
+
+            If the metadata can not be retrieved, None is returned for the metadata.
         """
 
         dir_path = self._storage_dir / sub_path if sub_path else self._storage_dir
@@ -1253,7 +1825,19 @@ class FileCacheSourceFake(FileCacheSource):
 
         for item in dir_path.iterdir():
             relative_path = str(item.relative_to(self._storage_dir)).replace('\\', '/')
-            yield f'{self._src_prefix_}{relative_path}', item.is_dir()
+            try:
+                obj_stat = item.stat()
+            except (OSError, IOError):  # pragma: no cover
+                # Fallback if stat fails
+                metadata: dict[str, Any] | None = None
+            else:
+                metadata = {
+                    'is_dir': stat.S_ISDIR(obj_stat.st_mode),
+                    'mtime': obj_stat.st_mtime,
+                    'size': obj_stat.st_size
+                }
+
+            yield f'{self._src_prefix_}{relative_path}', metadata
 
     def unlink(self,
                sub_path: str,
