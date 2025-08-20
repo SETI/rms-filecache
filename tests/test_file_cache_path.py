@@ -1278,8 +1278,8 @@ def test_expandvars_edge_cases():
 
         assert FCPath('$VAR_WITH_UNDERSCORE/file.txt').expandvars() == \
             FCPath('underscore_value/file.txt')
-            assert FCPath('$VAR.WITH.DOT/file.txt').expandvars() == \
-                FCPath('$VAR.WITH.DOT/file.txt')
+        assert FCPath('$VAR.WITH.DOT/file.txt').expandvars() == \
+            FCPath('$VAR.WITH.DOT/file.txt')
         if platform.system() != 'Windows':
             assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
                 FCPath('$VAR-WITH-DASH/file.txt')
