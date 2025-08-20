@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import platform
 import tempfile
+import time
 import uuid
 
 import pytest
@@ -154,7 +155,8 @@ def test_logger():
 #   Removing rms-filecache-tests
 #   Removing http_storage.googleapis.com
 #   Removing /tmp/.file_cache_424b280b-e62c-4582-8560-211f54cabc23
-    logger.has_prefix_list(['INFO Creating', 'Checking', 'File exists', 'Checking',
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Checking', 'File exists', 'Checking',
                             'File does not', 'Downloading', 'Deleting', 'Removing',
                             'Removing', 'Removing', 'Removing'])
 
@@ -172,7 +174,8 @@ def test_logger():
 #   Removing http_storage.googleapis.com
 #   Removing /tmp/.file_cache_global
 # Cleaning up cache /tmp/.file_cache_global
-    logger.has_prefix_list(['INFO Creating', 'Downloading', 'Deleting', 'Removing',
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Downloading', 'Deleting', 'Removing',
                             'Removing', 'Removing', 'Removing', 'Deleting'])
     logger.messages = []
 
@@ -197,7 +200,8 @@ def test_logger():
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com/rms-node-filecache-test-bucket
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613/http_storage.googleapis.com
 #   Removing /tmp/.file_cache_28d43982-dd49-493e-905d-9bcebd813613
-    logger.has_prefix_list(['INFO Creating', 'Downloading', 'Accessing', 'Deleting',
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Downloading', 'Accessing', 'Deleting',
                             'Removing', 'Removing', 'Removing', 'Removing'])
 
     # Specified logger
@@ -209,7 +213,8 @@ def test_logger():
 # Accessing local file lorem1.txt
 # Cleaning up cache /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
 #   Removing /tmp/.file_cache_63a1488e-6e9b-4fea-bb0c-3aaae655ec68
-    logger.has_prefix_list(['INFO Creating', 'Retrieving', 'Deleting', 'Removing'])
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Retrieving', 'Deleting', 'Removing'])
 
     # Uploading
     logger = MyLogger()
@@ -223,7 +228,8 @@ def test_logger():
 # Returning local path for test_file.txt as /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819/gs_rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt
 # Uploading /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819/gs_rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt to gs://rms-filecache-tests-writable/5bfef362-2ce1-49f9-beb9-4e96a8b747e6/test_file.txt
 # Cleaning up cache /tmp/.file_cache_e866e868-7d79-4a54-9b52-dc4df2fda819
-    logger.has_prefix_list(['INFO Creating', 'Returning', 'Uploading', 'Deleting'])
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Returning', 'Uploading', 'Deleting'])
 
 
 def test_easy_logger(capsys):
@@ -1037,7 +1043,8 @@ def test_cleanup_locking_bad():
         local_path = fc.get_local_path('gs://test/test.txt')
         with open(local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}', 'w') as fp:
             fp.write('A')
-    logger.has_prefix_list(['INFO Creating', 'Returning', 'Deleting', 'ERROR Deleting',
+    logger.has_prefix_list(['INFO Creating', '', '', '', '', '', '', '', '',
+                            'Returning', 'Deleting', 'ERROR Deleting',
                             'Removing', 'Removing', 'Removing'])
     with FileCache(cache_name=None) as fc:
         local_path = fc.get_local_path('gs://test/test.txt')
@@ -1919,7 +1926,6 @@ def test_iterdir(prefix):
     with FileCache(anonymous=True) as fc:
         if prefix == HTTP_INDEXABLE_TEST_ROOT:
             objs = sorted(list(fc.iterdir(f'{prefix}')))
-            print(objs)
             assert objs == [f'{wprefix}/archsis.lbl',
                             f'{wprefix}/archsis.pdf',
                             f'{wprefix}/archsis.txt',
@@ -2533,7 +2539,6 @@ def test_modification_time_multi_good(prefix):
         assert len(mtimes) == 2
 
         for idx, mtime in enumerate(mtimes):
-            print(idx, prefix, datetime.datetime.fromtimestamp(mtime))
             if prefix == EXPECTED_DIR:
                 assert mtime is not None
                 assert isinstance(mtime, float)
@@ -2843,3 +2848,137 @@ def test_is_dir_multi_pfx_mixed_2(prefix):
             assert results[3] is True
         else:
             assert results[3] is False
+
+
+@pytest.mark.parametrize('time_sensitive', [False, True])
+@pytest.mark.parametrize('cache_metadata', [False, True])
+def test_modification_time_caching(time_sensitive, cache_metadata):
+    prefix = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
+    with FileCache(cache_name=None, anonymous=True,
+                   time_sensitive=time_sensitive,
+                   cache_metadata=cache_metadata) as fc:
+        pfx = fc.new_path(prefix)
+        with pfx.open('file1.txt', mode='w') as fp:
+            fp.write('hi')
+        mtime_orig = pfx.modification_time('file1.txt')
+        assert mtime_orig is not None
+        assert isinstance(mtime_orig, float)
+        lp = pfx.get_local_path('file1.txt')
+        mtime_lp_orig = lp.stat().st_mtime
+        if time_sensitive:
+            # upload should not update the local file's mtime
+            assert mtime_lp_orig == mtime_orig
+        else:
+            assert mtime_lp_orig != mtime_orig
+
+        time.sleep(1)  # Make sure mod times will be different
+
+        with FileCache(cache_name=None, anonymous=True) as fc2:
+            # fc doesn't have visibility into fc2, so we we upload a new version
+            # there's no chance it will be cached
+            pfx2 = fc2.new_path(prefix)
+            with pfx2.open('file1.txt', mode='w') as fp:
+                fp.write('bye')
+
+        mtime_new = pfx.modification_time('file1.txt')
+        if cache_metadata:
+            assert mtime_new == mtime_orig  # Used cached version
+        else:
+            assert mtime_new != mtime_orig  # Remote changed
+
+        assert lp.stat().st_mtime == mtime_lp_orig  # Copy in this cache didn't change
+
+        pfx.retrieve('file1.txt')  # Should do nothing if not time_sensitive
+
+        if time_sensitive and not cache_metadata:
+            # Copy in this cache was re-retrieved
+            assert lp.read_text().strip() == 'bye'
+            assert lp.stat().st_mtime == mtime_new
+        else:
+            # Copy in this cache was not re-retrieved
+            assert lp.read_text().strip() == 'hi'
+            assert lp.stat().st_mtime == mtime_lp_orig
+
+
+@pytest.mark.parametrize('time_sensitive', [False, True])
+@pytest.mark.parametrize('cache_metadata', [False, True])
+@pytest.mark.parametrize('mp_safe', [False, True])
+def test_modification_time_caching_multi(time_sensitive, cache_metadata, mp_safe):
+    filecache.set_easy_logger()
+    prefix = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
+    filenames = ['file1.txt', 'file2.txt', 'file3.txt']
+    filenames2 = ['file1.txt', 'file2.txt', 'file4.txt']
+    filecache.set_easy_logger()
+    with FileCache(cache_name=None, anonymous=True,
+                   time_sensitive=time_sensitive,
+                   cache_metadata=cache_metadata,
+                   mp_safe=mp_safe) as fc:
+        pfx = fc.new_path(prefix)
+        for filename in filenames:
+            lp = pfx.get_local_path(filename)
+            lp.write_text('hi')
+        pfx.upload(filenames)
+
+        mtime_orig = pfx.modification_time(filenames)
+        assert mtime_orig[0] is not None
+        assert isinstance(mtime_orig[0], float)
+        assert mtime_orig[1] is not None
+        assert isinstance(mtime_orig[1], float)
+        assert mtime_orig[2] is not None
+        assert isinstance(mtime_orig[2], float)
+
+        lp = pfx.get_local_path(filenames)
+        mtime_lp_orig = [x.stat().st_mtime for x in lp]
+        if time_sensitive:
+            assert all(a == b for a, b in zip(mtime_lp_orig, mtime_orig))
+        else:
+            # upload should not update the local file's mtime
+            assert all(a != b for a, b in zip(mtime_lp_orig, mtime_orig))
+
+        time.sleep(1)  # Make sure mod times will be different
+
+        with FileCache(cache_name=None, anonymous=True,
+                       time_sensitive=time_sensitive,
+                       cache_metadata=cache_metadata,
+                       mp_safe=mp_safe) as fc2:
+            # fc doesn't have visibility into fc2, so we we upload a new version
+            # there's no chance it will be cached
+            pfx2 = fc2.new_path(prefix)
+            # Only update the first two files
+            for filename in filenames2:
+                pfx2.get_local_path(filename).write_text('bye')
+            pfx2.upload(filenames2)
+
+        mtime_new = pfx.modification_time(filenames)
+        if cache_metadata:
+            # Used cached version
+            assert all(a == b for a, b in zip(mtime_new, mtime_orig))
+        else:
+            # Remote changed for file1 and file2
+            assert mtime_orig[0] != mtime_new[0]
+            assert mtime_orig[1] != mtime_new[1]
+            assert mtime_orig[2] == mtime_new[2]
+
+        # Copy in this cache didn't change
+        assert lp[0].stat().st_mtime == mtime_lp_orig[0]
+        assert lp[1].stat().st_mtime == mtime_lp_orig[1]
+        assert lp[2].stat().st_mtime == mtime_lp_orig[2]
+
+        pfx.retrieve(filenames)  # Should do nothing if not time_sensitive
+
+        if time_sensitive and not cache_metadata:
+            # Copy in this cache was re-retrieved
+            assert lp[0].read_text().strip() == 'bye'
+            assert lp[1].read_text().strip() == 'bye'
+            assert lp[2].read_text().strip() == 'hi'
+            assert lp[0].stat().st_mtime == mtime_new[0]
+            assert lp[1].stat().st_mtime == mtime_new[1]
+            assert lp[2].stat().st_mtime == mtime_lp_orig[2]
+        else:
+            # Copy in this cache was not re-retrieved
+            assert lp[0].read_text().strip() == 'hi'
+            assert lp[1].read_text().strip() == 'hi'
+            assert lp[2].read_text().strip() == 'hi'
+            assert lp[0].stat().st_mtime == mtime_lp_orig[0]
+            assert lp[1].stat().st_mtime == mtime_lp_orig[1]
+            assert lp[2].stat().st_mtime == mtime_lp_orig[2]

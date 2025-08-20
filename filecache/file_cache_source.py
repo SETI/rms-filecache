@@ -228,12 +228,12 @@ class FileCacheSource(ABC):
         return ret
 
     def _is_dir_object(self,
-                        sub_path: str) -> bool:
+                       sub_path: str) -> bool:
         return self.is_dir(sub_path)
 
     def _is_dir_object_parallel(self,
-                                 sub_paths: Sequence[str],
-                                 nthreads: int) -> Iterator[tuple[str, bool | Exception]]:
+                                sub_paths: Sequence[str],
+                                nthreads: int) -> Iterator[tuple[str, bool | Exception]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
             future_to_paths = {executor.submit(self._is_dir_object, x): x
                                for x in sub_paths}

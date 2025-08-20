@@ -819,14 +819,13 @@ class FCPath:
                                              url_to_path=(url_to_path or
                                                           self._url_to_path))
 
-
     def modification_time(self,
-                         sub_path: Optional[StrOrPathOrSeqType] = None,
-                         *,
-                         nthreads: Optional[int] = None,
-                         exception_on_fail: bool = True,
-                         url_to_url: Optional[UrlToUrlFuncOrSeqType] = None
-                         ) -> float | None | Exception | list[float | None | Exception]:
+                          sub_path: Optional[StrOrPathOrSeqType] = None,
+                          *,
+                          nthreads: Optional[int] = None,
+                          exception_on_fail: bool = True,
+                          url_to_url: Optional[UrlToUrlFuncOrSeqType] = None
+                          ) -> float | None | Exception | list[float | None | Exception]:
         """Get the modification time of a remote file as a Unix timestamp.
 
         Parameters:
@@ -878,12 +877,14 @@ class FCPath:
 
         url_to_url = url_to_url or self._url_to_url
 
-        return self._filecache_to_use.modification_time(cast(StrOrPathOrSeqType,
-                                                             new_sub_path),
-                                                        anonymous=self._anonymous,
-                                                        nthreads=nthreads,
-                                                        exception_on_fail=exception_on_fail,
-                                                        url_to_url=url_to_url)
+        return (self._filecache_to_use
+                .modification_time(cast(StrOrPathOrSeqType,
+                                        new_sub_path),
+                                   anonymous=self._anonymous,
+                                   nthreads=nthreads,
+                                   exception_on_fail=exception_on_fail,
+                                   url_to_url=url_to_url)
+                )
 
     def is_dir(self,
                sub_path: Optional[StrOrPathOrSeqType] = None,
@@ -946,7 +947,6 @@ class FCPath:
                                              nthreads=nthreads,
                                              exception_on_fail=exception_on_fail,
                                              url_to_url=url_to_url)
-
 
     def retrieve(self,
                  sub_path: Optional[StrOrPathOrSeqType] = None,
