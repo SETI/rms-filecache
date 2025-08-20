@@ -1213,8 +1213,12 @@ def test_expandvars():
         # Cloud storage paths with environment variables
         assert FCPath('gs://$TEST_VAR/file.txt').expandvars() == \
             FCPath('gs://test_value/file.txt')
-        assert FCPath('s3://$TEST_VAR-bucket/file.txt').expandvars() == \
-            FCPath('s3://test_value-bucket/file.txt')
+        if platform.system() != 'Windows':
+            assert FCPath('s3://$TEST_VAR-bucket/file.txt').expandvars() == \
+                FCPath('s3://test_value-bucket/file.txt')
+        else:
+            assert FCPath('s3://$TEST_VAR-bucket/file.txt').expandvars() == \
+                FCPath('s3://$TEST_VAR-bucket/file.txt')
 
         # HTTP URLs with environment variables
         assert FCPath('http://$TEST_VAR.com/file.txt').expandvars() == \
@@ -1274,11 +1278,14 @@ def test_expandvars_edge_cases():
 
         assert FCPath('$VAR_WITH_UNDERSCORE/file.txt').expandvars() == \
             FCPath('underscore_value/file.txt')
-        # Note: os.path.expandvars doesn't support dashes or dots in variable names
-        assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
-            FCPath('$VAR-WITH-DASH/file.txt')
+        if platform.system() != 'Windows':
+            assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
+                FCPath('$VAR-WITH-DASH/file.txt')
+        else:
+            assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
+                FCPath('dash_value/file.txt')
         assert FCPath('$VAR.WITH.DOT/file.txt').expandvars() == \
-            FCPath('$VAR.WITH.DOT/file.txt')
+            FCPath('dot_value/file.txt')
 
     # Test with very long environment variable values
     with pytest.MonkeyPatch().context() as m:

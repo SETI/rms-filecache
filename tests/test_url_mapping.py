@@ -514,7 +514,7 @@ def test_url_translator_func():
             assert 'nonexistent-website' not in str(local_path_2)
             local_path_3 = pfx3.get_local_path(filename)  # FCpath default
             assert 'gs_' in str(local_path_3)
-            assert '-test/' in str(local_path_3)
+            assert '-test/' in str(local_path_3).replace('\\', '/')
             assert 'nonexistent-website' not in str(local_path_3)
             local_path2a = pfx2.get_local_path(filename, url_to_url=(translator_url_2,))
             assert 'gs_' not in str(local_path2a)

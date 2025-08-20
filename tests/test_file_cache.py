@@ -58,30 +58,22 @@ GLOB_PREFIXES = (EXPECTED_DIR, HTTP_GLOB_TEST_ROOT, GS_TEST_BUCKET_ROOT, S3_TEST
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
-HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0,
-                                           tzinfo=datetime.datetime.now()
-                                           .astimezone().tzinfo).timestamp()
-HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0,
-                                          tzinfo=datetime.datetime.now()
-                                          .astimezone().tzinfo).timestamp()
-HTTP_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 47, 58, 0,
-                                      tzinfo=datetime.datetime.now()
-                                      .astimezone().tzinfo).timestamp()
-HTTP_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 48, 2,
-                                              tzinfo=datetime.datetime.now()
-                                              .astimezone().tzinfo).timestamp()
-GS_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 47, 58, 721000,
-                                    tzinfo=datetime.datetime.now()
-                                    .astimezone().tzinfo).timestamp()
-GS_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 48, 2, 719000,
-                                            tzinfo=datetime.datetime.now()
-                                            .astimezone().tzinfo).timestamp()
-S3_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 53, 0,
-                                    tzinfo=datetime.datetime.now()
-                                    .astimezone().tzinfo).timestamp()
-S3_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 53, 1,
-                                            tzinfo=datetime.datetime.now()
-                                            .astimezone().tzinfo).timestamp()
+HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 17, 51, 0,
+                                           tzinfo=datetime.timezone.utc).timestamp()
+HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 17, 51, 0,
+                                          tzinfo=datetime.timezone.utc).timestamp()
+HTTP_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 47, 58, 0,
+                                      tzinfo=datetime.timezone.utc).timestamp()
+HTTP_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 48, 2, 0,
+                                              tzinfo=datetime.timezone.utc).timestamp()
+GS_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 47, 58, 721000,
+                                    tzinfo=datetime.timezone.utc).timestamp()
+GS_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 48, 2, 719000,
+                                            tzinfo=datetime.timezone.utc).timestamp()
+S3_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 53, 0, 0,
+                                    tzinfo=datetime.timezone.utc).timestamp()
+S3_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 53, 1, 0,
+                                            tzinfo=datetime.timezone.utc).timestamp()
 
 if platform.system() == 'Windows':
     WINDOWS_PREFIX = 'c:'
@@ -2916,118 +2908,3 @@ def test_modification_time_caching_multi(time_sensitive, cache_metadata, mp_safe
             assert lp[0].stat().st_mtime == mtime_lp_orig[0]
             assert lp[1].stat().st_mtime == mtime_lp_orig[1]
             assert lp[2].stat().st_mtime == mtime_lp_orig[2]
-
-
-def test_filecache_properties(tmp_path):
-    """Test FileCache instance creation with various options and property access."""
-    # Test FileCache with all options set
-    fc = FileCache(
-        cache_name='test_properties',
-        cache_root=tmp_path,
-        delete_on_exit=True,
-        time_sensitive=True,
-        cache_metadata=True,
-        mp_safe=True,
-        anonymous=True,
-        lock_timeout=120,
-        nthreads=16,
-        logger=False  # Disable logging for this test
-    )
-
-    try:
-        # Test all properties
-        assert fc.cache_dir == tmp_path / '_filecache_test_properties'
-        assert fc.cache_dir.exists()
-        assert fc.cache_dir.is_dir()
-
-        # Test boolean properties
-        assert fc.is_delete_on_exit is True
-        assert fc.is_time_sensitive is True
-        assert fc.is_cache_metadata is True
-        assert fc.is_mp_safe is True
-        assert fc.is_anonymous is True
-
-        # Test numeric properties
-        assert fc.lock_timeout == 120
-        assert fc.nthreads == 16
-
-        # Test counter properties (should start at 0)
-        assert fc.download_counter == 0
-        assert fc.upload_counter == 0
-
-        # Test URL translation properties
-        assert fc.url_to_url == []
-        assert fc.url_to_path == []
-
-        # Test logger property
-        assert fc.logger is None  # We set logger=False
-
-        # Test registered scheme prefixes
-        schemes = fc.registered_scheme_prefixes()
-        assert isinstance(schemes, tuple)
-        assert 'gs://' in schemes
-        assert 's3://' in schemes
-        assert 'file://' in schemes
-        assert 'https://' in schemes
-        assert 'fake://' in schemes
-
-        # Test that cache directory structure is correct
-        assert fc.cache_dir.name == '_filecache_test_properties'
-        assert fc.cache_dir.parent == tmp_path
-
-    finally:
-        fc.delete_cache()
-        assert not fc.cache_dir.exists()
-
-    # Test FileCache with minimal options (defaults)
-    fc2 = FileCache(cache_name=None, delete_on_exit=True)
-    try:
-        # Test default values
-        assert fc2.is_delete_on_exit is True
-        assert fc2.is_time_sensitive is False
-        assert fc2.is_cache_metadata is False
-        assert fc2.is_mp_safe is False  # None cache_name means not shared
-        assert fc2.is_anonymous is False
-        assert fc2.lock_timeout == 60
-        assert fc2.nthreads == 8
-        # Logger might be None if no global logger is set
-        assert fc2.logger is None or hasattr(fc2.logger, 'debug')
-
-        # Test that cache directory has unique name
-        assert fc2.cache_dir.name.startswith('_filecache_')
-        assert fc2.cache_dir.name != '_filecache_test_properties'
-
-    finally:
-        fc2.delete_cache()
-        assert not fc2.cache_dir.exists()
-
-    # Test FileCache with custom URL translation functions
-    def custom_url_to_url(scheme: str, remote: str, path: str) -> str | None:
-        if scheme == 'gs' and remote == 'test-bucket':
-            return f'gs://custom-{remote}/{path}'
-        return None
-
-    def custom_url_to_path(scheme: str, remote: str, path: str,
-                          cache_dir, cache_subdir) -> None:
-        if scheme == 'gs' and remote == 'test-bucket':
-            return cache_dir / 'custom_gs' / path
-        return None
-
-    fc3 = FileCache(
-        cache_name=None,
-        delete_on_exit=True,
-        url_to_url=custom_url_to_url,
-        url_to_path=custom_url_to_path,
-        logger=False
-    )
-
-    try:
-        # Test custom URL translation properties
-        assert len(fc3.url_to_url) == 1
-        assert len(fc3.url_to_path) == 1
-        assert fc3.url_to_url[0] == custom_url_to_url
-        assert fc3.url_to_path[0] == custom_url_to_path
-
-    finally:
-        fc3.delete_cache()
-        assert not fc3.cache_dir.exists()

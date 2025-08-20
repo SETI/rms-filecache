@@ -9,7 +9,9 @@ from collections.abc import Sequence
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 import datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+import platform
 import re
 import requests
 import shutil
@@ -759,7 +761,6 @@ class FileCacheSourceHTTP(FileCacheSource):
             if last_modified:
                 # Parse the HTTP date format and convert to Unix timestamp
                 # HTTP dates are typically in format: "Wed, 21 Oct 2015 07:28:00 GMT"
-                from email.utils import parsedate_to_datetime
                 dt = parsedate_to_datetime(last_modified)
                 return dt.timestamp()
 
@@ -843,6 +844,10 @@ class FileCacheSourceHTTP(FileCacheSource):
             with open(temp_local_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024*1024):
                     f.write(chunk)
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                local_path.unlink(missing_ok=True)
             temp_local_path.rename(local_path)
         except Exception:
             temp_local_path.unlink(missing_ok=True)
@@ -967,7 +972,7 @@ class FileCacheSourceHTTP(FileCacheSource):
             basename = parts[0]
             date_str = parts[1] + 'T' + parts[2]
 
-            mtime = datetime.datetime.fromisoformat(date_str).timestamp()  # + tz_delta
+            mtime = datetime.datetime.fromisoformat(date_str).timestamp()
             size = _int_size(parts[3])
 
             is_dir = basename.endswith('/')
@@ -1164,6 +1169,10 @@ class FileCacheSourceGS(FileCacheSource):
         temp_local_path = local_path.with_suffix(f'.{local_path.suffix}_{uuid.uuid4()}')
         try:
             blob.download_to_filename(str(temp_local_path))
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                local_path.unlink(missing_ok=True)
             temp_local_path.rename(local_path)
         except (google.api_core.exceptions.BadRequest,  # bad bucket name
                 google.cloud.exceptions.NotFound):  # bad filename
@@ -1464,6 +1473,10 @@ class FileCacheSourceS3(FileCacheSource):
         try:
             self._client.download_file(self._bucket_name, sub_path,
                                        str(temp_local_path))
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                local_path.unlink(missing_ok=True)
             temp_local_path.rename(local_path)
         except botocore.exceptions.ClientError:
             temp_local_path.unlink(missing_ok=True)
@@ -1731,6 +1744,10 @@ class FileCacheSourceFake(FileCacheSource):
         temp_local_path = local_path.with_suffix(f'.{local_path.suffix}_{uuid.uuid4()}')
         try:
             shutil.copy2(source_path, temp_local_path)
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                local_path.unlink(missing_ok=True)
             temp_local_path.rename(local_path)
         except Exception:
             temp_local_path.unlink(missing_ok=True)
@@ -1764,6 +1781,10 @@ class FileCacheSourceFake(FileCacheSource):
         temp_dest_path = dest_path.with_suffix(f'.{dest_path.suffix}_{uuid.uuid4()}')
         try:
             shutil.copy2(local_path, temp_dest_path)
+            # If windows delete the old file first because we can't rename over an
+            # existing file
+            if platform.system() == 'Windows':
+                dest_path.unlink(missing_ok=True)
             temp_dest_path.rename(dest_path)
         except Exception:
             temp_dest_path.unlink(missing_ok=True)
