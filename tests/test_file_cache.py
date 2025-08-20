@@ -12,6 +12,7 @@ import platform
 import tempfile
 import time
 import uuid
+import zoneinfo
 
 import pytest
 
@@ -58,11 +59,14 @@ GLOB_PREFIXES = (EXPECTED_DIR, HTTP_GLOB_TEST_ROOT, GS_TEST_BUCKET_ROOT, S3_TEST
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
-_PDT_Z = pytz.timezone("America/Los_Angeles")
+# The pds-rings webserver is in PT
+_PDT_Z = zoneinfo.ZoneInfo("America/Los_Angeles")
 HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 17, 51, 0,
                                            tzinfo=_PDT_Z).timestamp()
 HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 17, 51, 0,
                                           tzinfo=_PDT_Z).timestamp()
+
+# Everything else is in UTC
 HTTP_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 47, 58, 0,
                                       tzinfo=datetime.timezone.utc).timestamp()
 HTTP_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 10, 1, 1, 48, 2, 0,
