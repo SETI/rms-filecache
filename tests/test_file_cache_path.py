@@ -1162,3 +1162,127 @@ def test_relative_paths():
 
         finally:
             os.chdir(f_cur_dir.as_posix())
+
+
+def test_expandvars():
+    """Test the expandvars method for FCPath."""
+    # Test with no environment variables
+    assert FCPath('a/b/c.txt').expandvars() == FCPath('a/b/c.txt')
+    assert FCPath('/absolute/path/file.txt').expandvars() == \
+        FCPath('/absolute/path/file.txt')
+    assert FCPath('gs://bucket/file.txt').expandvars() == FCPath('gs://bucket/file.txt')
+
+    # Test with environment variables
+    with pytest.MonkeyPatch().context() as m:
+        m.setenv('TEST_VAR', 'test_value')
+        m.setenv('PATH_VAR', '/usr/local/bin')
+        m.setenv('EMPTY_VAR', '')
+
+        # Basic environment variable expansion
+        assert FCPath('$TEST_VAR/file.txt').expandvars() == FCPath('test_value/file.txt')
+        # Note: os.path.expandvars can create double slashes when expanding
+        # variables that start with /
+        assert FCPath('/$PATH_VAR/script.sh').expandvars() == \
+            FCPath('//usr/local/bin/script.sh')
+        assert FCPath('${TEST_VAR}/data.csv').expandvars() == \
+            FCPath('test_value/data.csv')
+
+        # Multiple environment variables
+        # Note: os.path.expandvars can create double slashes when expanding
+        # variables that start with /
+        assert FCPath('$TEST_VAR/$PATH_VAR/file.txt').expandvars() == \
+            FCPath('test_value//usr/local/bin/file.txt')
+
+        # Mixed with regular path components
+        assert FCPath('home/$TEST_VAR/documents').expandvars() == \
+            FCPath('home/test_value/documents')
+
+        # Empty environment variable
+        assert FCPath('$EMPTY_VAR/file.txt').expandvars() == FCPath('/file.txt')
+
+        # Undefined environment variable (should remain unchanged)
+        assert FCPath('$UNDEFINED_VAR/file.txt').expandvars() == \
+            FCPath('$UNDEFINED_VAR/file.txt')
+
+        # Windows-style paths with environment variables
+        assert FCPath('C:/$TEST_VAR/file.txt').expandvars() == \
+            FCPath('C:/test_value/file.txt')
+        assert FCPath('c:\\$TEST_VAR\\file.txt').expandvars() == \
+            FCPath('C:/test_value/file.txt')
+
+        # Cloud storage paths with environment variables
+        assert FCPath('gs://$TEST_VAR/file.txt').expandvars() == \
+            FCPath('gs://test_value/file.txt')
+        assert FCPath('s3://$TEST_VAR-bucket/file.txt').expandvars() == \
+            FCPath('s3://test_value-bucket/file.txt')
+
+        # HTTP URLs with environment variables
+        assert FCPath('http://$TEST_VAR.com/file.txt').expandvars() == \
+            FCPath('http://test_value.com/file.txt')
+
+        # Complex nested paths
+        # Note: os.path.expandvars can create double slashes when expanding
+        # variables that start with /
+        assert FCPath('$TEST_VAR/$PATH_VAR/subdir/$TEST_VAR.txt').expandvars() == \
+            FCPath('test_value//usr/local/bin/subdir/test_value.txt')
+
+    # Test that environment variables are restored after the test
+    assert 'TEST_VAR' not in os.environ
+    assert 'PATH_VAR' not in os.environ
+    assert 'EMPTY_VAR' not in os.environ
+
+
+def test_expandvars_preserves_attributes():
+    """Test that expandvars preserves FCPath attributes."""
+    with FileCache('test', delete_on_exit=True) as fc:
+        p = FCPath('$TEST_VAR/file.txt', filecache=fc, anonymous=True,
+                   lock_timeout=59, nthreads=2)
+
+        with pytest.MonkeyPatch().context() as m:
+            m.setenv('TEST_VAR', 'test_value')
+
+            expanded = p.expandvars()
+            assert str(expanded) == 'test_value/file.txt'
+            assert expanded._filecache is fc
+            assert expanded._anonymous
+            assert expanded._lock_timeout == 59
+            assert expanded._nthreads == 2
+
+
+def test_expandvars_edge_cases():
+    """Test edge cases for the expandvars method."""
+    # Test with empty string
+    assert FCPath('').expandvars() == FCPath('')
+
+    # Test with just environment variable
+    with pytest.MonkeyPatch().context() as m:
+        m.setenv('SINGLE_VAR', 'single_value')
+        assert FCPath('$SINGLE_VAR').expandvars() == FCPath('single_value')
+        assert FCPath('${SINGLE_VAR}').expandvars() == FCPath('single_value')
+
+    # Test with malformed environment variable syntax
+    assert FCPath('$').expandvars() == FCPath('$')
+    assert FCPath('${').expandvars() == FCPath('${')
+    assert FCPath('$}').expandvars() == FCPath('$}')
+    assert FCPath('${}').expandvars() == FCPath('${}')
+
+    # Test with special characters in environment variable names
+    with pytest.MonkeyPatch().context() as m:
+        m.setenv('VAR_WITH_UNDERSCORE', 'underscore_value')
+        m.setenv('VAR-WITH-DASH', 'dash_value')
+        m.setenv('VAR.WITH.DOT', 'dot_value')
+
+        assert FCPath('$VAR_WITH_UNDERSCORE/file.txt').expandvars() == \
+            FCPath('underscore_value/file.txt')
+        # Note: os.path.expandvars doesn't support dashes or dots in variable names
+        assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
+            FCPath('$VAR-WITH-DASH/file.txt')
+        assert FCPath('$VAR.WITH.DOT/file.txt').expandvars() == \
+            FCPath('$VAR.WITH.DOT/file.txt')
+
+    # Test with very long environment variable values
+    with pytest.MonkeyPatch().context() as m:
+        long_value = 'x' * 1000
+        m.setenv('LONG_VAR', long_value)
+        assert FCPath('$LONG_VAR/file.txt').expandvars() == \
+            FCPath(f'{long_value}/file.txt')

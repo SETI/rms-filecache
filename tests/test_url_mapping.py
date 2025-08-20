@@ -1,18 +1,22 @@
 ################################################################################
-# tests/test_url_to_path.py
+# tests/test_url_mapping.py
 ################################################################################
 
+import os
 from pathlib import Path
 import uuid
 
 import pytest
 
+import filecache
 from filecache import FileCache
 
 from .test_file_cache import (EXPECTED_DIR,
                               HTTP_TEST_ROOT,
+                              GS_WRITABLE_TEST_BUCKET,
                               GS_WRITABLE_TEST_BUCKET_ROOT,
-                              EXPECTED_FILENAMES
+                              EXPECTED_FILENAMES,
+                              LIMITED_FILENAMES
                               )
 
 
@@ -63,7 +67,7 @@ def translator_subdir2b_abs(scheme, remote, path, cache_dir, cache_subdir):
 
 
 def test_path_translator_local_rel():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             assert fc.get_local_path(path) == path
@@ -71,7 +75,7 @@ def test_path_translator_local_rel():
             assert fc.retrieve(path) == path
             assert fc.upload(path) == path
 
-    with FileCache(url_to_path=translator_subdir2a_rel) as fc:
+    with FileCache(cache_name=None, url_to_path=translator_subdir2a_rel) as fc:
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             new_path = EXPECTED_DIR / (filename.replace('subdir2a/', ''))
@@ -83,7 +87,7 @@ def test_path_translator_local_rel():
             # assert fc.retrieve(path) == new_path
             # assert fc.upload(path) == new_path
 
-    with FileCache(url_to_path=translator_subdir2b_rel) as fc:
+    with FileCache(cache_name=None, url_to_path=translator_subdir2b_rel) as fc:
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             new_path = EXPECTED_DIR / (filename.replace('subdir2b/', ''))
@@ -95,8 +99,8 @@ def test_path_translator_local_rel():
             # assert fc.retrieve(path) == new_path
             # assert fc.upload(path) == new_path
 
-    with FileCache(url_to_path=(translator_subdir2a_rel,
-                                translator_subdir2b_rel)) as fc:
+    with FileCache(cache_name=None, url_to_path=(translator_subdir2a_rel,
+                                                 translator_subdir2b_rel)) as fc:
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
             new_path = EXPECTED_DIR / (filename
@@ -110,7 +114,7 @@ def test_path_translator_local_rel():
             # assert fc.retrieve(path) == new_path
             # assert fc.upload(path) == new_path
 
-    with FileCache(url_to_path=[translator_subdir2a_rel]) as fc:
+    with FileCache(cache_name=None, url_to_path=[translator_subdir2a_rel]) as fc:
         translators = [translator_subdir2a_rel,
                        translator_subdir2b_rel]
         for filename in EXPECTED_FILENAMES:
@@ -128,7 +132,7 @@ def test_path_translator_local_rel():
 
 
 def test_path_translator_local_abs():
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         translators = [translator_subdir2a_abs, translator_subdir2b_abs]
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
@@ -168,7 +172,7 @@ def test_path_translator_local_pfx():
             assert pfx.retrieve(filename) == path
             assert pfx.upload(filename) == path
 
-    with FileCache() as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_path(EXPECTED_DIR, url_to_path=translator_subdir2a_rel)
         for filename in EXPECTED_FILENAMES:
             path = EXPECTED_DIR / filename
@@ -181,7 +185,7 @@ def test_path_translator_local_pfx():
             # assert fc.retrieve(path) == new_path
             # assert fc.upload(path) == new_path
 
-    with FileCache(url_to_path=[translator_subdir2a_rel]) as fc:
+    with FileCache(cache_name=None, url_to_path=[translator_subdir2a_rel]) as fc:
         translators = [translator_subdir2a_rel,
                        translator_subdir2b_rel]
         pfx = fc.new_path(EXPECTED_DIR)
@@ -200,13 +204,13 @@ def test_path_translator_local_pfx():
 
 
 def test_path_translator_http():
-    with FileCache(None, url_to_path=translator_subdir2a_rel) as fc:
+    with FileCache(cache_name=None, url_to_path=translator_subdir2a_rel) as fc:
         url = HTTP_TEST_ROOT + '/' + EXPECTED_FILENAMES[1]
         path = EXPECTED_FILENAMES[1].replace('subdir2a/', '')
         exp_local_path = fc.cache_dir / (HTTP_TEST_ROOT.replace('https://', 'http_') +
                                          '/' + path)
 
-        with FileCache(None) as fc2:
+        with FileCache(cache_name=None) as fc2:
             fc2_path = str(uuid.uuid4()) + '/' + EXPECTED_FILENAMES[1]
             url2 = GS_WRITABLE_TEST_BUCKET_ROOT + '/' + fc2_path
 
@@ -252,14 +256,14 @@ def test_path_translator_http():
 
 
 def test_path_translator_http_pfx():
-    with FileCache(None) as fc:
+    with FileCache(cache_name=None) as fc:
         pfx = fc.new_path(HTTP_TEST_ROOT, url_to_path=translator_subdir2a_rel)
         url = EXPECTED_FILENAMES[1]
         path = EXPECTED_FILENAMES[1].replace('subdir2a/', '')
         exp_local_path = fc.cache_dir / (HTTP_TEST_ROOT.replace('https://', 'http_') +
                                          '/' + path)
 
-        with FileCache(None) as fc2:
+        with FileCache(cache_name=None) as fc2:
             uid = str(uuid.uuid4())
             fc2_path = uid + '/' + EXPECTED_FILENAMES[1]
             pfx2 = fc2.new_path(GS_WRITABLE_TEST_BUCKET_ROOT + '/' + uid)
@@ -304,3 +308,240 @@ def test_path_translator_http_pfx():
             assert new_local_path != pfx.get_local_path(url)
 
             assert pfx2.retrieve(url2) == new_local_path
+
+
+def gen_translator_url_1():
+    local_uuid = str(uuid.uuid4())
+
+    def translator_url_1(scheme, remote, path):
+        if scheme != 'https':
+            return None
+
+        if remote == 'nonexistent-website.org':
+            return f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{local_uuid}/{path}'
+
+        return None
+
+    translator_url_1.uuid = local_uuid
+
+    return translator_url_1
+
+
+def translator_url_2(scheme, remote, path):
+    if scheme != 'gs':
+        return None
+
+    if remote == f'{GS_WRITABLE_TEST_BUCKET}-test':
+        return f'https://nonexistent-website.org/{path}'
+
+    return None
+
+
+def translator_url_3(scheme, remote, path):
+    return f'https://bad-website.com/{path}'
+
+
+def test_url_translator_url():
+    translator_url_1 = gen_translator_url_1()
+    with FileCache(cache_name=None) as fc:
+        # No translation
+        for filename in LIMITED_FILENAMES:
+            path = EXPECTED_DIR / filename
+            assert fc.get_local_path(path) == path
+            assert fc.exists(path)
+            assert fc.retrieve(path) == path
+            assert fc.upload(path) == path
+
+    with FileCache(cache_name=None, url_to_url=translator_url_1) as fc:
+        # Translation but not for file scheme
+        for filename in LIMITED_FILENAMES:
+            path = EXPECTED_DIR / filename
+            assert fc.get_local_path(path) == path
+            assert fc.exists(path)
+            assert fc.retrieve(path) == path
+            assert fc.upload(path) == path
+
+    with FileCache(cache_name=None, url_to_url=translator_url_1) as fc:
+        # Translation for this scheme but not for this URL
+        for filename in LIMITED_FILENAMES:
+            path = f'{HTTP_TEST_ROOT}/{filename}'
+            local_path = fc.get_local_path(path)
+            assert 'gs_' not in str(local_path)
+            assert fc.exists(path)
+            assert fc.retrieve(path) == local_path
+            with pytest.raises(NotImplementedError):
+                fc.upload(path)
+
+    with FileCache(cache_name=None, url_to_url=translator_url_1) as fc:
+        # Translation for this URL
+        for filename in LIMITED_FILENAMES:
+            path = f'https://nonexistent-website.org/{filename}'
+            local_path = fc.get_local_path(path)
+            assert 'gs_' in str(local_path)
+            assert not fc.exists(path)
+            with pytest.raises(FileNotFoundError):
+                fc.retrieve(path)
+            try:
+                os.unlink(local_path)
+            except FileNotFoundError:
+                pass
+            with pytest.raises(FileNotFoundError):
+                fc.upload(path)
+            with open(local_path, 'w') as f:
+                f.write('test')
+            assert fc.upload(path) == local_path
+            assert fc.exists(path)
+            assert fc.retrieve(path) == local_path
+
+
+def test_url_translator_pfx():
+    translator_url_1 = gen_translator_url_1()
+    with FileCache(cache_name=None) as fc:
+        # No translation
+        pfx = fc.new_path(EXPECTED_DIR)
+        for filename in LIMITED_FILENAMES:
+            path = EXPECTED_DIR / filename
+            assert pfx.get_local_path(filename) == path
+            assert pfx.exists(filename)
+            assert pfx.retrieve(filename) == path
+            assert pfx.upload(filename) == path
+
+    with FileCache(cache_name=None,
+                   url_to_url=[translator_url_1, translator_url_2]) as fc:
+        # Translation but not for file scheme
+        pfx = fc.new_path(EXPECTED_DIR)
+        for filename in LIMITED_FILENAMES:
+            path = EXPECTED_DIR / filename
+            assert pfx.get_local_path(filename) == path
+            assert pfx.exists(filename)
+            assert pfx.retrieve(filename) == path
+            assert pfx.upload(filename) == path
+
+    with FileCache(cache_name=None,
+                   url_to_url=(translator_url_1, translator_url_2)) as fc:
+        # Translation for this scheme but not for this URL
+        pfx = fc.new_path(HTTP_TEST_ROOT)
+        for filename in LIMITED_FILENAMES:
+            path = f'{HTTP_TEST_ROOT}/{filename}'
+            local_path = pfx.get_local_path(filename)
+            assert 'gs_' not in str(local_path)
+            assert pfx.exists(filename)
+            assert pfx.retrieve(filename) == local_path
+            with pytest.raises(NotImplementedError):
+                pfx.upload(filename)
+
+    with FileCache(cache_name=None,
+                   url_to_url=(translator_url_1, translator_url_2)) as fc:
+        # Translation for this URL
+        pfx = fc.new_path(f'https://nonexistent-website.org/{translator_url_1.uuid}')
+        for filename in LIMITED_FILENAMES:
+            path = f'https://nonexistent-website.org/{filename}'
+            local_path = pfx.get_local_path(filename)
+            assert 'gs_' in str(local_path)
+            assert not pfx.exists(filename)
+            with pytest.raises(FileNotFoundError):
+                pfx.retrieve(filename)
+            try:
+                os.unlink(local_path)
+            except FileNotFoundError:
+                pass
+            with pytest.raises(FileNotFoundError):
+                pfx.upload(filename)
+            with open(local_path, 'w') as f:
+                f.write('test')
+            assert pfx.upload(filename) == local_path
+            assert pfx.exists(filename)
+            assert pfx.retrieve(filename) == local_path
+
+    with FileCache(cache_name=None,
+                   url_to_url=[translator_url_1, translator_url_2]) as fc:
+        # Translation for this scheme but not for this URL
+        pfx = fc.new_path(f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{translator_url_1.uuid}')
+        for filename in LIMITED_FILENAMES:
+            local_path = pfx.get_local_path(filename)
+            assert 'gs_' in str(local_path)
+            try:
+                os.unlink(local_path)
+            except FileNotFoundError:
+                pass
+            with open(local_path, 'w') as f:
+                f.write('test')
+            assert pfx.upload(filename) == local_path
+            assert pfx.exists(filename)
+            assert pfx.retrieve(filename) == local_path
+
+    with FileCache(cache_name=None,
+                   url_to_url=[translator_url_1, translator_url_2]) as fc:
+        # Translation for this URL
+        pfx = fc.new_path(f'{GS_WRITABLE_TEST_BUCKET_ROOT}-test')
+        for filename in LIMITED_FILENAMES:
+            path = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{filename}'
+            local_path = pfx.get_local_path(filename)
+            assert 'gs_' not in str(local_path)
+            assert 'nonexistent-website' in str(local_path)
+            assert not pfx.exists(filename)
+            with pytest.raises(FileNotFoundError):
+                pfx.retrieve(filename)
+            with pytest.raises(NotImplementedError):
+                pfx.upload(filename)
+
+
+def test_url_translator_func():
+    translator_url_1 = gen_translator_url_1()
+    with FileCache(cache_name=None) as fc:
+        # pfx0 writes directly to GS
+        pfx0 = fc.new_path(f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{translator_url_1.uuid}')
+        for filename in LIMITED_FILENAMES:
+            (pfx0 / filename).write_text('test')
+
+    # Default translator returns bad-website
+    with FileCache(cache_name=None, url_to_url=[translator_url_3]) as fc:
+        # pfx1 returns bad-website
+        pfx1 = fc.new_path('https://nonexistent-website.org')
+        # pfx2 nonexistent-website.org to GS
+        pfx2 = fc.new_path('https://nonexistent-website.org', url_to_url=translator_url_1)
+        # pfx3 nonexistent-website.org to GS
+        pfx3 = fc.new_path(GS_WRITABLE_TEST_BUCKET_ROOT+'-test',
+                           url_to_url=translator_url_1)
+        # translator_url_2 gs-test to nonexistent-website.org
+        for filename in LIMITED_FILENAMES:
+            local_path_1 = pfx1.get_local_path(filename)  # FileCache default
+            assert 'gs_' not in str(local_path_1)
+            assert 'nonexistent-website' not in str(local_path_1)
+            assert 'bad-website' in str(local_path_1)
+            local_path_2 = pfx2.get_local_path(filename)  # FCPath default
+            assert 'gs_' in str(local_path_2)
+            assert 'nonexistent-website' not in str(local_path_2)
+            local_path_3 = pfx3.get_local_path(filename)  # FCpath default
+            assert 'gs_' in str(local_path_3)
+            assert '-test/' in str(local_path_3)
+            assert 'nonexistent-website' not in str(local_path_3)
+            local_path2a = pfx2.get_local_path(filename, url_to_url=(translator_url_2,))
+            assert 'gs_' not in str(local_path2a)
+            assert 'nonexistent-website' in str(local_path2a)
+            local_path3a = pfx3.get_local_path(filename, url_to_url=[translator_url_2])
+            assert 'gs_' not in str(local_path3a)
+            assert '-test/' not in str(local_path3a)
+            assert 'nonexistent-website' in str(local_path3a)
+
+            with pytest.raises(FileNotFoundError):
+                assert pfx1.retrieve(filename)  # FileCache default
+            assert pfx2.retrieve(filename) == local_path_2  # FCPath default
+            with pytest.raises(FileNotFoundError):
+                pfx3.retrieve(filename)  # FCpath default
+            with pytest.raises(FileNotFoundError):
+                pfx2.retrieve(filename, url_to_url=[translator_url_2])
+            with pytest.raises(FileNotFoundError):
+                pfx3.retrieve(filename, url_to_url=translator_url_2)
+
+
+def test_url_and_path_translators():
+    # Default translator returns bad-website
+    filecache.set_easy_logger()
+    with FileCache(cache_name=None,
+                   url_to_url=[translator_url_3],
+                   url_to_path=translator_subdir2a_rel) as fc:
+        for filename in EXPECTED_FILENAMES:
+            path = EXPECTED_DIR / filename
+            new_path = EXPECTED_DIR / (filename.replace('subdir2a/', ''))
+            assert fc.get_local_path(path) == new_path

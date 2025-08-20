@@ -53,6 +53,7 @@ WRITABLE_CLOUD_PREFIXES = (GS_WRITABLE_TEST_BUCKET_ROOT, S3_WRITABLE_TEST_BUCKET
 
 INDEXABLE_PREFIXES = (EXPECTED_DIR, HTTP_INDEXABLE_TEST_ROOT, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
 NON_HTTP_INDEXABLE_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
+GLOB_PREFIXES = (EXPECTED_DIR, HTTP_GLOB_TEST_ROOT, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT)
 
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
@@ -1130,8 +1131,8 @@ def test_double_delete():
 
 def test_open_context_read():
     with FileCache(cache_name=None) as fc:
-        pfx = fc.new_path(HTTP_TEST_ROOT)
-        with pfx.open(LIMITED_FILENAMES[0], 'r') as fp:
+        pfx = fc.new_path(HTTP_TEST_ROOT + '/' + LIMITED_FILENAMES[0])
+        with pfx.open('r') as fp:
             cache_data = fp.read()
         assert fc.upload_counter == 0
         assert fc.download_counter == 1
@@ -1209,8 +1210,8 @@ def test_local_upl_pfx_ctx():
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir)
         with FileCache(cache_name=None) as fc:
-            pfx = fc.new_path(temp_dir)
-            with pfx.open('dir1/test_file.txt', 'wb') as fp2:
+            pfx = fc.new_path(temp_dir / 'dir1/test_file.txt')
+            with pfx.open('wb') as fp2:
                 with open(EXPECTED_DIR / EXPECTED_FILENAMES[0], 'rb') as fp1:
                     fp2.write(fp1.read())
             assert os.path.exists(temp_dir / 'dir1/test_file.txt')
@@ -1375,12 +1376,12 @@ def test_complex_read_write():
 def test_complex_read_write_pfx():
     pfx_name = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
     with FileCache(cache_name=None, anonymous=True) as fc:
-        pfx = fc.new_path(pfx_name)
-        with pfx.open('test_file.txt', 'wb') as fp:
+        pfx = fc.new_path(pfx_name + '/test_file.txt')
+        with pfx.open('wb') as fp:
             fp.write(b'A')
-        with pfx.open('test_file.txt', 'ab') as fp:
+        with pfx.open('ab') as fp:
             fp.write(b'B')
-        with pfx.open('test_file.txt', 'rb') as fp:
+        with pfx.open('rb') as fp:
             res = fp.read()
         assert res == b'AB'
         assert fc.download_counter == 0
@@ -1388,8 +1389,8 @@ def test_complex_read_write_pfx():
         assert pfx.download_counter == 0
         assert pfx.upload_counter == 2
     with FileCache(cache_name=None, anonymous=True) as fc:
-        pfx = fc.new_path(pfx_name)
-        with pfx.open('test_file.txt', 'rb') as fp:
+        pfx = fc.new_path(pfx_name + '/test_file.txt')
+        with pfx.open('rb') as fp:
             res = fp.read()
         assert res == b'AB'
         assert fc.download_counter == 1
@@ -2705,149 +2706,66 @@ def test_modification_time_multi_pfx_mixed_2(prefix):
             assert mtimes[3] == S3_SUBDIR1_LORUM1_MTIME
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', GLOB_PREFIXES)
 def test_is_dir_all_good(prefix):
     with FileCache(cache_name=None, anonymous=True) as fc:
-        # Test root directory
-        isdir = fc.is_dir(str(prefix))
-        assert isdir is True
+        assert fc.is_dir(str(prefix))
 
-        # Test subdirectory
-        if prefix != HTTP_INDEXABLE_TEST_ROOT:
-            isdir = fc.is_dir(f'{prefix}/subdir1')
-            assert isdir is True
-
-        # Test file
-        isdir = fc.is_dir(f'{prefix}/lorem1.txt')
-        assert isdir is False
+        filecache.set_easy_logger()
+        if prefix == HTTP_GLOB_TEST_ROOT:
+            assert fc.is_dir(f'{prefix}/document')
+            assert not fc.is_dir(f'{prefix}/document/archsis.lbl')
+        else:
+            assert fc.is_dir(f'{prefix}/subdir1')
+            assert not fc.is_dir(f'{prefix}/lorem1.txt')
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', GLOB_PREFIXES)
 def test_is_dir_all_bad(prefix):
     with FileCache(cache_name=None, anonymous=True) as fc:
         # Test non-existent path
-        isdir = fc.is_dir(f'{prefix}/nonexistent')
-        assert isdir is False
+        with pytest.raises(FileNotFoundError):
+            fc.is_dir(f'{prefix}/nonexistent')
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', GLOB_PREFIXES)
 def test_is_dir_pfx_good(prefix):
     with FileCache(cache_name=None, anonymous=True) as fc:
         pfx = fc.new_path(prefix)
-        # Test root directory
-        isdir = pfx.is_dir('')
-        assert isdir is True
+        assert pfx.is_dir('')
 
-        # Test subdirectory
-        if prefix != HTTP_INDEXABLE_TEST_ROOT:
-            isdir = pfx.is_dir('subdir1')
-            assert isdir is True
-
-        # Test file
-        isdir = pfx.is_dir('lorem1.txt')
-        assert isdir is False
+        if prefix == HTTP_GLOB_TEST_ROOT:
+            assert pfx.is_dir('document')
+            assert not pfx.is_dir('document/archsis.lbl')
+        else:
+            assert pfx.is_dir('subdir1')
+            assert not pfx.is_dir('lorem1.txt')
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', GLOB_PREFIXES)
 def test_is_dir_pfx_bad(prefix):
     with FileCache(cache_name=None, anonymous=True) as fc:
         pfx = fc.new_path(prefix)
         # Test non-existent path
-        isdir = pfx.is_dir('nonexistent')
-        assert isdir is False
+        with pytest.raises(FileNotFoundError):
+            pfx.is_dir('nonexistent')
 
 
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
-def test_is_dir_pfx_subdir(prefix):
-    with FileCache(cache_name=None, anonymous=True) as fc:
-        if prefix != HTTP_INDEXABLE_TEST_ROOT:
-            pfx = fc.new_path(f'{prefix}/subdir1')
-            # Test subdirectory contents
-            isdir = pfx.is_dir('')
-            assert isdir is True
-
-            isdir = pfx.is_dir('lorem1.txt')
-            assert isdir is False
-
-            isdir = pfx.is_dir('subdir2a')
-            assert isdir is True
-
-            isdir = pfx.is_dir('subdir2b')
-            assert isdir is True
-
-
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
+@pytest.mark.parametrize('prefix', NON_HTTP_INDEXABLE_PREFIXES)
 def test_is_dir_multi_pfx_mixed(prefix):
     with FileCache(cache_name=None, anonymous=True) as fc:
         pfx = fc.new_path(prefix)
         # Test mix of existing and non-existing paths
         paths = ['', 'nonexistent', 'subdir1']
 
-        # Should work normally by default (return False for non-existent paths)
-        results = pfx.is_dir(paths)
-        assert len(results) == 3
+        with pytest.raises(FileNotFoundError):
+            pfx.is_dir('nonexistent')
 
-        # First path should be True (root directory)
-        assert results[0] is True
-
-        # Second path should be False (non-existent path is not a directory)
-        assert results[1] is False
-
-        # Third path should be True (subdirectory) for non-HTTP prefixes
-        if prefix != HTTP_INDEXABLE_TEST_ROOT:
-            assert results[2] is True
-        else:
-            # HTTP indexable prefix doesn't support subdirectories
-            assert results[2] is False
-
-        # Should work the same when exception_on_fail=False
         results = pfx.is_dir(paths, exception_on_fail=False)
         assert len(results) == 3
         assert results[0] is True
-        assert results[1] is False
-        if prefix != HTTP_INDEXABLE_TEST_ROOT:
-            assert results[2] is True
-        else:
-            assert results[2] is False
-
-
-@pytest.mark.parametrize('prefix', INDEXABLE_PREFIXES)
-def test_is_dir_multi_pfx_mixed_2(prefix):
-    with FileCache(cache_name=None, anonymous=True) as fc:
-        pfx = fc.new_path(prefix)
-        # Test mix of existing and non-existing paths with different pattern
-        paths = ['nonexistent1', '', 'nonexistent2', 'subdir1']
-
-        # Should work normally by default (return False for non-existent paths)
-        results = pfx.is_dir(paths)
-        assert len(results) == 4
-
-        # First path should be False (non-existent path is not a directory)
-        assert results[0] is False
-
-        # Second path should be True (root directory)
-        assert results[1] is True
-
-        # Third path should be False (non-existent path is not a directory)
-        assert results[2] is False
-
-        # Fourth path should be True (subdirectory) for non-HTTP prefixes
-        if prefix != HTTP_INDEXABLE_TEST_ROOT:
-            assert results[3] is True
-        else:
-            # HTTP indexable prefix doesn't support subdirectories
-            assert results[3] is False
-
-        # Should work the same when exception_on_fail=False
-        results = pfx.is_dir(paths, exception_on_fail=False)
-        assert len(results) == 4
-        assert results[0] is False
-        assert results[1] is True
-        assert results[2] is False
-        if prefix != HTTP_INDEXABLE_TEST_ROOT:
-            assert results[3] is True
-        else:
-            assert results[3] is False
+        assert isinstance(results[1], FileNotFoundError)
+        assert results[2] is True
 
 
 @pytest.mark.parametrize('time_sensitive', [False, True])
@@ -2857,13 +2775,13 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
     with FileCache(cache_name=None, anonymous=True,
                    time_sensitive=time_sensitive,
                    cache_metadata=cache_metadata) as fc:
-        pfx = fc.new_path(prefix)
-        with pfx.open('file1.txt', mode='w') as fp:
+        pfx = fc.new_path(prefix + '/file1.txt')
+        with pfx.open('w') as fp:
             fp.write('hi')
-        mtime_orig = pfx.modification_time('file1.txt')
+        mtime_orig = pfx.modification_time()
         assert mtime_orig is not None
         assert isinstance(mtime_orig, float)
-        lp = pfx.get_local_path('file1.txt')
+        lp = pfx.get_local_path()
         mtime_lp_orig = lp.stat().st_mtime
         if time_sensitive:
             # upload should not update the local file's mtime
@@ -2876,11 +2794,11 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
         with FileCache(cache_name=None, anonymous=True) as fc2:
             # fc doesn't have visibility into fc2, so we we upload a new version
             # there's no chance it will be cached
-            pfx2 = fc2.new_path(prefix)
-            with pfx2.open('file1.txt', mode='w') as fp:
+            pfx2 = fc2.new_path(prefix + '/file1.txt')
+            with pfx2.open('w') as fp:
                 fp.write('bye')
 
-        mtime_new = pfx.modification_time('file1.txt')
+        mtime_new = pfx.modification_time()
         if cache_metadata:
             assert mtime_new == mtime_orig  # Used cached version
         else:
@@ -2888,7 +2806,7 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
 
         assert lp.stat().st_mtime == mtime_lp_orig  # Copy in this cache didn't change
 
-        pfx.retrieve('file1.txt')  # Should do nothing if not time_sensitive
+        pfx.retrieve()  # Should do nothing if not time_sensitive
 
         if time_sensitive and not cache_metadata:
             # Copy in this cache was re-retrieved
@@ -2982,3 +2900,118 @@ def test_modification_time_caching_multi(time_sensitive, cache_metadata, mp_safe
             assert lp[0].stat().st_mtime == mtime_lp_orig[0]
             assert lp[1].stat().st_mtime == mtime_lp_orig[1]
             assert lp[2].stat().st_mtime == mtime_lp_orig[2]
+
+
+def test_filecache_properties(tmp_path):
+    """Test FileCache instance creation with various options and property access."""
+    # Test FileCache with all options set
+    fc = FileCache(
+        cache_name='test_properties',
+        cache_root=tmp_path,
+        delete_on_exit=True,
+        time_sensitive=True,
+        cache_metadata=True,
+        mp_safe=True,
+        anonymous=True,
+        lock_timeout=120,
+        nthreads=16,
+        logger=False  # Disable logging for this test
+    )
+
+    try:
+        # Test all properties
+        assert fc.cache_dir == tmp_path / '_filecache_test_properties'
+        assert fc.cache_dir.exists()
+        assert fc.cache_dir.is_dir()
+
+        # Test boolean properties
+        assert fc.is_delete_on_exit is True
+        assert fc.is_time_sensitive is True
+        assert fc.is_cache_metadata is True
+        assert fc.is_mp_safe is True
+        assert fc.is_anonymous is True
+
+        # Test numeric properties
+        assert fc.lock_timeout == 120
+        assert fc.nthreads == 16
+
+        # Test counter properties (should start at 0)
+        assert fc.download_counter == 0
+        assert fc.upload_counter == 0
+
+        # Test URL translation properties
+        assert fc.url_to_url == []
+        assert fc.url_to_path == []
+
+        # Test logger property
+        assert fc.logger is None  # We set logger=False
+
+        # Test registered scheme prefixes
+        schemes = fc.registered_scheme_prefixes()
+        assert isinstance(schemes, tuple)
+        assert 'gs://' in schemes
+        assert 's3://' in schemes
+        assert 'file://' in schemes
+        assert 'https://' in schemes
+        assert 'fake://' in schemes
+
+        # Test that cache directory structure is correct
+        assert fc.cache_dir.name == '_filecache_test_properties'
+        assert fc.cache_dir.parent == tmp_path
+
+    finally:
+        fc.delete_cache()
+        assert not fc.cache_dir.exists()
+
+    # Test FileCache with minimal options (defaults)
+    fc2 = FileCache(cache_name=None, delete_on_exit=True)
+    try:
+        # Test default values
+        assert fc2.is_delete_on_exit is True
+        assert fc2.is_time_sensitive is False
+        assert fc2.is_cache_metadata is False
+        assert fc2.is_mp_safe is False  # None cache_name means not shared
+        assert fc2.is_anonymous is False
+        assert fc2.lock_timeout == 60
+        assert fc2.nthreads == 8
+        # Logger might be None if no global logger is set
+        assert fc2.logger is None or hasattr(fc2.logger, 'debug')
+
+        # Test that cache directory has unique name
+        assert fc2.cache_dir.name.startswith('_filecache_')
+        assert fc2.cache_dir.name != '_filecache_test_properties'
+
+    finally:
+        fc2.delete_cache()
+        assert not fc2.cache_dir.exists()
+
+    # Test FileCache with custom URL translation functions
+    def custom_url_to_url(scheme: str, remote: str, path: str) -> str | None:
+        if scheme == 'gs' and remote == 'test-bucket':
+            return f'gs://custom-{remote}/{path}'
+        return None
+
+    def custom_url_to_path(scheme: str, remote: str, path: str,
+                          cache_dir, cache_subdir) -> None:
+        if scheme == 'gs' and remote == 'test-bucket':
+            return cache_dir / 'custom_gs' / path
+        return None
+
+    fc3 = FileCache(
+        cache_name=None,
+        delete_on_exit=True,
+        url_to_url=custom_url_to_url,
+        url_to_path=custom_url_to_path,
+        logger=False
+    )
+
+    try:
+        # Test custom URL translation properties
+        assert len(fc3.url_to_url) == 1
+        assert len(fc3.url_to_path) == 1
+        assert fc3.url_to_url[0] == custom_url_to_url
+        assert fc3.url_to_path[0] == custom_url_to_path
+
+    finally:
+        fc3.delete_cache()
+        assert not fc3.cache_dir.exists()

@@ -98,6 +98,14 @@ def test_source_nthreads_bad():
         FileCacheSourceFile('file', '').unlink_multi(['/test'], nthreads=-1)
     with pytest.raises(ValueError):
         FileCacheSourceFile('file', '').unlink_multi(['/test'], nthreads=4.5)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').modification_time_multi(['/test'], nthreads=-1)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').modification_time_multi(['/test'], nthreads=4.5)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').is_dir_multi(['/test'], nthreads=-1)
+    with pytest.raises(ValueError):
+        FileCacheSourceFile('file', '').is_dir_multi(['/test'], nthreads=4.5)
 
 
 def test_fake_source_init():
@@ -167,6 +175,13 @@ def test_fake_source_file_operations(tmp_path: Path):
         fake.retrieve('test.txt', dest_file)
         assert dest_file.read_text() == 'test content'
 
+        # Test modification_time for existing file
+        mtime = fake.modification_time('test.txt')
+        assert mtime == (tmp_path / 'test-bucket' / 'test.txt').stat().st_mtime
+
+        # Test is_dir for file (should return False)
+        assert not fake.is_dir('test.txt')
+
         # Test unlink
         fake.unlink('test.txt')
         assert not fake.exists('test.txt')
@@ -177,6 +192,14 @@ def test_fake_source_file_operations(tmp_path: Path):
 
         # Test unlink missing file with missing_ok=True
         fake.unlink('missing.txt', missing_ok=True)
+
+        # Test modification_time for non-existent file
+        with pytest.raises(FileNotFoundError):
+            fake.modification_time('non_existent_file.txt')
+
+        # Test is_dir for non-existent path
+        with pytest.raises(FileNotFoundError):
+            fake.is_dir('non_existent_dir')
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
 
@@ -187,14 +210,31 @@ def test_fake_source_directory_operations(tmp_path: Path):
     try:
         fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
 
-        # Create some test files and directories
+        # Create some test files and directories in the fake source storage
         (tmp_path / 'test-bucket/dir1').mkdir(parents=True)
         (tmp_path / 'test-bucket/dir1/file1.txt').write_text('content1')
         (tmp_path / 'test-bucket/dir2').mkdir(parents=True)
         (tmp_path / 'test-bucket/dir2/file2.txt').write_text('content2')
         (tmp_path / 'test-bucket/file3.txt').write_text('content3')
 
-        # Test iterdir_type
+        # Test is_dir for existing directories
+        assert fake.is_dir('dir1')
+        assert fake.is_dir('dir2')
+
+        # Test is_dir for existing file (should return False)
+        assert not fake.is_dir('file3.txt')
+
+        # Test modification_time for directories
+        dir1_mtime = fake.modification_time('dir1')
+        dir2_mtime = fake.modification_time('dir2')
+        assert dir1_mtime == (tmp_path / 'test-bucket' / 'dir1').stat().st_mtime
+        assert dir2_mtime == (tmp_path / 'test-bucket' / 'dir2').stat().st_mtime
+
+        # Test modification_time for file
+        file_mtime = fake.modification_time('file3.txt')
+        assert file_mtime == (tmp_path / 'test-bucket' / 'file3.txt').stat().st_mtime
+
+        # Test iterdir_metadata
         entries = list(fake.iterdir_metadata(''))
         assert len(entries) == 3
 
