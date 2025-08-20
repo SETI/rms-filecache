@@ -974,7 +974,7 @@ class FileCacheSourceHTTP(FileCacheSource):
             # Interpret the fields
             parts = rec.split()
             basename = parts[0]
-            date_str = parts[1] + 'T' + parts[2] + '+00'
+            date_str = parts[1] + 'T' + parts[2] + '+00:00'
 
             mtime = datetime.datetime.fromisoformat(date_str).timestamp()
             size = _int_size(parts[3])

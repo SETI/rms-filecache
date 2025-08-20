@@ -1278,16 +1278,14 @@ def test_expandvars_edge_cases():
 
         assert FCPath('$VAR_WITH_UNDERSCORE/file.txt').expandvars() == \
             FCPath('underscore_value/file.txt')
+            assert FCPath('$VAR.WITH.DOT/file.txt').expandvars() == \
+                FCPath('$VAR.WITH.DOT/file.txt')
         if platform.system() != 'Windows':
             assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
                 FCPath('$VAR-WITH-DASH/file.txt')
-            assert FCPath('$VAR.WITH.DOT/file.txt').expandvars() == \
-                FCPath('$VAR.WITH.DOT/file.txt')
         else:
             assert FCPath('$VAR-WITH-DASH/file.txt').expandvars() == \
                 FCPath('dash_value/file.txt')
-            assert FCPath('$VAR.WITH.DOT/file.txt').expandvars() == \
-                FCPath('dot_value/file.txt')
 
     # Test with very long environment variable values
     with pytest.MonkeyPatch().context() as m:

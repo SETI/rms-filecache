@@ -12,7 +12,6 @@ import platform
 import tempfile
 import time
 import uuid
-import zoneinfo
 
 import pytest
 

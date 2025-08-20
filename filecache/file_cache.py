@@ -1909,8 +1909,9 @@ class FileCache:
                     except KeyError:
                         pass
 
-            new_mtimes = cast(list[float | None],
-                              self.modification_time(cast(list[str | Path], ok_urls)))
+            new_mtimes = cast(list[Union[float, None]],
+                              self.modification_time(cast(list[Union[str, Path]],
+                                                          ok_urls)))
 
             mtimes_num = 0
             for idx, (source, sub_path, local_path, ret_val) in enumerate(zip(sources,
