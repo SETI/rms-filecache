@@ -891,6 +891,10 @@ class FileCacheSourceHTTP(FileCacheSource):
             This method relies on the webserver returning a "fancy index" page in some
             recognizable format. If server-side indexing is disabled, this method will
             not work.
+
+            We have no way of knowing what the timezone of the webserver is, and the
+            fancy index page does not include the timezone. As a result we assume all
+            times are in UTC.
         """
 
         def _int_size(size: str) -> int | None:
@@ -970,7 +974,7 @@ class FileCacheSourceHTTP(FileCacheSource):
             # Interpret the fields
             parts = rec.split()
             basename = parts[0]
-            date_str = parts[1] + 'T' + parts[2]
+            date_str = parts[1] + 'T' + parts[2] + '+00'
 
             mtime = datetime.datetime.fromisoformat(date_str).timestamp()
             size = _int_size(parts[3])

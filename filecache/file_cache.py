@@ -1386,7 +1386,7 @@ class FileCache:
         if self._time_sensitive:
             urls: list[str | Path] = [f'{source._src_prefix_}{sub_path}'
                                       for source, sub_path in zip(sources, sub_paths)]
-            source_times = cast(list[float | None], self.modification_time(urls))
+            source_times = cast(list[Union[float, None]], self.modification_time(urls))
         else:
             source_times = [None] * len(sources)
 
@@ -1499,7 +1499,7 @@ class FileCache:
         if self._time_sensitive:
             urls: list[str | Path] = [f'{source._src_prefix_}{sub_path}'
                                       for source, sub_path in zip(sources, sub_paths)]
-            source_times = cast(list[float | None], self.modification_time(urls))
+            source_times = cast(list[Union[float, None]], self.modification_time(urls))
         else:
             source_times = [None] * len(sources)
 
