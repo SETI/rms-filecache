@@ -58,14 +58,30 @@ GLOB_PREFIXES = (EXPECTED_DIR, HTTP_GLOB_TEST_ROOT, GS_TEST_BUCKET_ROOT, S3_TEST
 ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
                 HTTP_TEST_ROOT)
 
-HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0).timestamp()
-HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0).timestamp()
-HTTP_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 47, 58, 0).timestamp()
-HTTP_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 48, 2).timestamp()
-GS_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 47, 58, 721000).timestamp()
-GS_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 48, 2, 719000).timestamp()
-S3_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 53, 0).timestamp()
-S3_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 53, 1).timestamp()
+HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0,
+                                           tzinfo=datetime.datetime.now()
+                                           .astimezone().tzinfo).timestamp()
+HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0,
+                                          tzinfo=datetime.datetime.now()
+                                          .astimezone().tzinfo).timestamp()
+HTTP_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 47, 58, 0,
+                                      tzinfo=datetime.datetime.now()
+                                      .astimezone().tzinfo).timestamp()
+HTTP_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 48, 2,
+                                              tzinfo=datetime.datetime.now()
+                                              .astimezone().tzinfo).timestamp()
+GS_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 47, 58, 721000,
+                                    tzinfo=datetime.datetime.now()
+                                    .astimezone().tzinfo).timestamp()
+GS_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 48, 2, 719000,
+                                            tzinfo=datetime.datetime.now()
+                                            .astimezone().tzinfo).timestamp()
+S3_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 53, 0,
+                                    tzinfo=datetime.datetime.now()
+                                    .astimezone().tzinfo).timestamp()
+S3_SUBDIR1_LORUM1_MTIME = datetime.datetime(2024, 9, 30, 18, 53, 1,
+                                            tzinfo=datetime.datetime.now()
+                                            .astimezone().tzinfo).timestamp()
 
 if platform.system() == 'Windows':
     WINDOWS_PREFIX = 'c:'
