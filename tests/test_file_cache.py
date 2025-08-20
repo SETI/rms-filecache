@@ -61,9 +61,9 @@ ALL_PREFIXES = (EXPECTED_DIR, GS_TEST_BUCKET_ROOT, S3_TEST_BUCKET_ROOT,
 
 # The pds-rings webserver is in PT
 _PDT_Z = zoneinfo.ZoneInfo("America/Los_Angeles")
-HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 17, 51, 0,
+HTTP_ARCHSIS_LBL_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0,
                                            tzinfo=_PDT_Z).timestamp()
-HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 17, 51, 0,
+HTTP_REPORT_DIR_MTIME = datetime.datetime(2010, 10, 4, 10, 51, 0,
                                           tzinfo=_PDT_Z).timestamp()
 
 # Everything else is in UTC
