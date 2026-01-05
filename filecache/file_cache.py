@@ -85,7 +85,9 @@ def set_easy_logger() -> None:
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter(
+        '%(asctime)s.%(msecs)03d - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(formatter)
     easy_logger.addHandler(handler)
 
@@ -444,6 +446,8 @@ class FileCache:
             # We default to local files
             if not Path(url).is_absolute():
                 raise ValueError(f'Local file URL is not absolute: {url}')
+            while '//' in url:  # Clean up badly appended paths
+                url = url.replace('//', '/')
             return 'file', '', url
         elif len(parts) == 2:
             slash_split = parts[1].split('/', maxsplit=1)
@@ -452,6 +456,8 @@ class FileCache:
                 sub_path = ''
             else:
                 remote, sub_path = slash_split
+            while '//' in sub_path:  # Clean up badly appended paths
+                sub_path = sub_path.replace('//', '/')
             scheme = parts[0].lower()
             if scheme == 'file':
                 # All file accesses are absolute
@@ -823,6 +829,7 @@ class FileCache:
     def modification_time(self,
                           url: StrOrPathOrSeqType,
                           *,
+                          bypass_cache: bool = False,
                           anonymous: Optional[bool] = None,
                           nthreads: Optional[int] = None,
                           exception_on_fail: bool = True,
@@ -835,6 +842,10 @@ class FileCache:
                 tuple, all URLs are checked. This may be more efficient because files can
                 be checked in parallel. It is OK to check files from multiple sources
                 using one call.
+            bypass_cache: If False, retrieve the modification time for the file first from
+                the metadata cache, if enabled, and if not found there then from the
+                remote server. If True, only retrieve the modification time directly from
+                the remote server.
             anonymous: If specified, override the default setting for anonymous access.
                 If True, access cloud resources without specifying credentials. If False,
                 credentials must be initialized in the program's environment.
@@ -890,7 +901,7 @@ class FileCache:
                 sub_paths.append(sub_path)
 
             return self._modification_time_multi(sources, sub_paths, nthreads,
-                                                 exception_on_fail)
+                                                 exception_on_fail, bypass_cache)
 
         self._log_debug(f'Checking file for modification time: {url}')
 
@@ -900,7 +911,7 @@ class FileCache:
                                                          url_to_url,
                                                          None)
         new_url = f'{source._src_prefix_}{sub_path}'
-        if (self._metadata_cache_mtime is not None and
+        if (not bypass_cache and self._metadata_cache_mtime is not None and
                 new_url in self._metadata_cache_mtime):
             ret = self._metadata_cache_mtime[new_url]
             self._log_debug(f'  Modification time (cached): {ret}')
@@ -923,7 +934,8 @@ class FileCache:
                                  sources: list[FileCacheSource],
                                  sub_paths: list[str],
                                  nthreads: int,
-                                 exception_on_fail: bool
+                                 exception_on_fail: bool,
+                                 bypass_cache: bool
                                  ) -> list[float | None | Exception]:
         """Get the modification time of multiple files as a Unix timestamp."""
 
@@ -938,7 +950,7 @@ class FileCache:
         self._log_debug('Performing multi-file modification time check of:')
         for idx, (source, sub_path) in enumerate(zip(sources, sub_paths)):
             pfx = source._src_prefix_
-            if self._metadata_cache_mtime is not None:
+            if not bypass_cache and self._metadata_cache_mtime is not None:
                 url = f'{pfx}{sub_path}'
                 if url in self._metadata_cache_mtime:
                     func_ret[idx] = self._metadata_cache_mtime[url]
@@ -1041,6 +1053,8 @@ class FileCache:
             Unlike ``os.path.isdir`` or `pathlib.Path.is_dir``, this method raises an
             exception if the URL does not exist instead of returning ``False``. This
             is so that remote connection errors are not masked by the return value.
+            Contrast this with the return value of :meth:`FileCache.exists`, which will
+            return ``False`` if the file does not exist or cannot be accessed.
         """
 
         nthreads = self._validate_nthreads(nthreads)
@@ -1309,43 +1323,43 @@ class FileCache:
                     raise
                 return e
 
-        # We are guaranteed not to be referencing a local file source at this point
-        # so it's always worth checking the modification time
-        source_time = None
-        if self._time_sensitive:
-            source_time = self.modification_time(url)
-            if source_time is None:
-                self._log_debug(f'No modification time available for {url}')
-
-        # If the file actually exists, possibly check the modification time
-        if local_path.is_file():
-            if not self._time_sensitive or source_time is None:
-                self._log_debug(f'Accessing cached file for {url} at {local_path}')
-                return local_path
-            local_time = local_path.stat().st_mtime
-            if cast(float, source_time) <= local_time:
-                self._log_debug(f'Accessing current cached file for {url} at '
-                                f'{local_path}')
-                return local_path
-            self._log_debug(f'Updating out of date cached file for {url} '
-                            f'at {local_path}')
-            # We don't delete the file here because source.retrieve will do it
-            # atomically
-
-        if locking:
-            self._log_debug(
-                f'Downloading {source._src_prefix_}{sub_path} into '
-                f'{local_path} with locking')
-        else:
-            self._log_debug(f'Downloading {source._src_prefix_}{sub_path} into '
-                            f'{local_path}')
         try:
-            ret = source.retrieve(sub_path, local_path)
-        except Exception as e:
-            self._log_debug(f'Download failed {source._src_prefix_}{sub_path}: {e!r}')
-            if exception_on_fail:
-                raise
-            return e
+            # If the file actually exists, possibly check the modification time
+            if local_path.is_file():
+                source_time: float | None = None
+                if self._time_sensitive:
+                    source_time = cast(float | None, self.modification_time(url))
+                    if source_time is None:
+                        self._log_debug(f'No modification time available for {url} '
+                                        'even though a local copy exists')
+                if source_time is None:
+                    self._log_debug(f'Accessing cached file for {url} at {local_path}')
+                    return local_path
+                local_time = local_path.stat().st_mtime
+                if source_time <= local_time:
+                    self._log_debug(f'Accessing current cached file for {url} at '
+                                    f'{local_path}')
+                    return local_path
+                self._log_debug(f'Updating out of date cached file for {url} '
+                                f'at {local_path}')
+                # We don't delete the file here because source.retrieve will do it
+                # atomically
+
+            if locking:
+                self._log_debug(
+                    f'Downloading {source._src_prefix_}{sub_path} into '
+                    f'{local_path} with locking')
+            else:
+                self._log_debug(f'Downloading {source._src_prefix_}{sub_path} into '
+                                f'{local_path}')
+            try:
+                ret = source.retrieve(sub_path, local_path,
+                                      preserve_mtime=self._time_sensitive)
+            except Exception as e:
+                self._log_debug(f'Download failed {source._src_prefix_}{sub_path}: {e!r}')
+                if exception_on_fail:
+                    raise
+                return e
         finally:
             # There is a potential race condition here in the case of a raised
             # exception, because after we release the lock but before we delete
@@ -1359,10 +1373,6 @@ class FileCache:
             if locking:
                 lock.release()
                 lock_path.unlink(missing_ok=True)
-
-        if source_time is not None:
-            os.utime(local_path, (cast(float, source_time),
-                                  cast(float, source_time)))
 
         self._download_counter += 1
 
@@ -1435,7 +1445,12 @@ class FileCache:
                 f'  Performing multi-file download for prefix {source_pfx}:')
             for sub_path in source_sub_paths:
                 self._log_debug(f'    {sub_path}')
+            # We intentionally don't use preserve_mtime here because we already went to
+            # the effort of retrieving the modification_times earlier and we don't want to
+            # to possibly cause additional server round trips to retrieve information we
+            # already have.
             rets = source.retrieve_multi(source_sub_paths, source_local_paths,
+                                         preserve_mtime=False,
                                          nthreads=nthreads)
             assert len(source_idxes) == len(rets)
             for ret, sub_path in zip(rets, source_sub_paths):
@@ -1579,8 +1594,12 @@ class FileCache:
                 source_sub_paths.append(sub_path)
                 source_local_paths.append(local_path)
 
-            # Now we can actually download the files that we locked
+            # Now we can actually download the files that we locked. We intentionally
+            # don't use preserve_mtime here because we already went to the effort of
+            # retrieving the modification_times earlier and we don't wan't to possible
+            # cause additional server round trips to retrieve information we already have.
             rets = source.retrieve_multi(source_sub_paths, source_local_paths,
+                                         preserve_mtime=False,
                                          nthreads=nthreads)
             assert len(source_sub_paths) == len(rets)
             for ret, sub_path in zip(rets, source_sub_paths):
@@ -1791,7 +1810,7 @@ class FileCache:
             self._log_debug(f'Uploading {local_path} to {source._src_prefix_}{sub_path}')
 
         try:
-            ret = source.upload(sub_path, local_path)
+            ret = source.upload(sub_path, local_path, preserve_mtime=self._time_sensitive)
         except Exception as e:
             self._log_debug(f'Upload failed {source._src_prefix_}{sub_path}: {e!r}')
             if exception_on_fail:
@@ -1800,19 +1819,6 @@ class FileCache:
                 return e
 
         self._upload_counter += 1
-
-        if self._time_sensitive and source.primary_scheme() != 'file':
-            new_url = f'{source._src_prefix_}{sub_path}'
-            # Set the mtime of the local file to that of the remote file
-            if self._metadata_cache_mtime is not None:
-                try:
-                    del self._metadata_cache_mtime[new_url]
-                except KeyError:
-                    pass
-            mtime = self.modification_time(new_url)
-            if mtime is not None:
-                os.utime(local_path, (cast(float, mtime), cast(float, mtime)))
-            self._log_debug(f'  Set modification time of {local_path} to {mtime}')
 
         return ret
 
@@ -1840,7 +1846,8 @@ class FileCache:
             pfx = source._src_prefix_
             if source.primary_scheme() == 'file':
                 try:
-                    func_ret[idx] = source.upload(sub_path, local_path)
+                    func_ret[idx] = source.upload(sub_path, local_path,
+                                                  preserve_mtime=self._time_sensitive)
                     self._log_debug(f'    Local file     {pfx}{sub_path}')
                 except FileNotFoundError as e:
                     self._log_debug(f'    LOCAL FILE DOES NOT EXIST {pfx}{sub_path}')
@@ -1869,6 +1876,7 @@ class FileCache:
             for sub_path in source_sub_paths:
                 self._log_debug(f'    {sub_path}')
             rets = source.upload_multi(source_sub_paths, source_local_paths,
+                                       preserve_mtime=self._time_sensitive,
                                        nthreads=nthreads)
             assert len(source_idxes) == len(rets)
             for ret, local_path in zip(rets, source_local_paths):
@@ -1900,34 +1908,6 @@ class FileCache:
                         del self._metadata_cache_mtime[url]
                     except KeyError:
                         pass
-
-            if self._metadata_cache_mtime is not None:
-                # Invalidate the cache so modification_time reads it fresh
-                for url in ok_urls:
-                    try:
-                        del self._metadata_cache_mtime[url]
-                    except KeyError:
-                        pass
-
-            new_mtimes = cast(list[Union[float, None]],
-                              self.modification_time(cast(list[Union[str, Path]],
-                                                          ok_urls)))
-
-            mtimes_num = 0
-            for idx, (source, sub_path, local_path, ret_val) in enumerate(zip(sources,
-                                                                              sub_paths,
-                                                                              local_paths,
-                                                                              func_ret)):
-                if source.primary_scheme() == 'file':
-                    continue
-                if isinstance(ret_val, Exception):
-                    continue
-                mtime = new_mtimes[mtimes_num]
-                if mtime is not None:
-                    os.utime(local_path, (mtime, mtime))
-                    self._log_debug(f'  Set modification time of {local_path} to {mtime}')
-                mtimes_num += 1
-            self._log_debug('Finished updating modification times of local files')
 
         if exception_on_fail:
             exc_str = ''
@@ -2261,13 +2241,20 @@ class FileCache:
         self._log_debug(f'Unlinking {url3}')
         try:
             source.unlink(sub_path, missing_ok=missing_ok)
-            local_path.unlink(missing_ok=True)  # Don't care if it's cached or not
         except Exception as e:
             self._log_debug(f'Unlink failed {source._src_prefix_}{sub_path}: {e!r}')
             if exception_on_fail:
                 raise
             else:
                 return e
+        finally:
+            # Go ahead and remove the cached copy even if the remote unlink failed.
+            # The caller will expect the file to be gone, and this will prevent
+            # cache inconsistencies if the remote unlink really succeeded but reported
+            # an error (like during a connection timeout). Worst case the remote file
+            # is still there (and the exception is reported to the user) but the local
+            # copy is gone, so it will be downloaded again the next time it's needed.
+            local_path.unlink(missing_ok=True)  # Don't care if it's cached or not
 
         return sub_path
 
@@ -2325,10 +2312,9 @@ class FileCache:
             assert len(source_idxes) == len(rets)
             for ret2, local_path, url in zip(rets, source_local_paths, urls):
                 if isinstance(ret2, Exception):
-                    self._log_debug(f'    Unlink failed: {url} {ret2}')
+                    self._log_debug(f'    Remote unlink failed: {url} {ret2}')
                     files_not_exist.append(str(url))
-                else:
-                    local_path.unlink(missing_ok=True)  # Remove from cache
+                local_path.unlink(missing_ok=True)  # Remove from cache
 
             for source_ret, source_idx in zip(rets, source_idxes):
                 if isinstance(source_ret, Exception):

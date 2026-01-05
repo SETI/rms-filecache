@@ -266,6 +266,8 @@ class FCPath:
             if not path:
                 continue
             drive, root, subpath = FCPath._split_parts(path)
+            while '//' in subpath:
+                subpath = subpath.replace('//', '/')
             if root == '/':  # Absolute path - start over
                 ret = ''
             if ret == '':
@@ -634,7 +636,8 @@ class FCPath:
         return match(self._path) is not None
 
     @property
-    def _filecache_to_use(self) -> "FileCache":
+    def filecache(self) -> "FileCache":
+        """The FileCache associated with this path."""
         from .file_cache import FileCache
         global _DEFAULT_FILECACHE
         if self._filecache is None:
@@ -732,12 +735,12 @@ class FCPath:
 
         url_to_url = url_to_url or self._url_to_url
         url_to_path = url_to_path or self._url_to_path
-        return self._filecache_to_use.get_local_path(cast(StrOrPathOrSeqType,
-                                                          new_sub_path),
-                                                     anonymous=self._anonymous,
-                                                     create_parents=create_parents,
-                                                     url_to_url=url_to_url,
-                                                     url_to_path=url_to_path)
+        return self.filecache.get_local_path(cast(StrOrPathOrSeqType,
+                                                  new_sub_path),
+                                             anonymous=self._anonymous,
+                                             create_parents=create_parents,
+                                             url_to_url=url_to_url,
+                                             url_to_path=url_to_path)
 
     def exists(self,
                sub_path: Optional[StrOrPathOrSeqType] = None,
@@ -812,19 +815,20 @@ class FCPath:
 
         new_sub_path = self._make_paths_absolute(sub_path)
 
-        return self._filecache_to_use.exists(cast(StrOrPathOrSeqType,
-                                                  new_sub_path),
-                                             bypass_cache=bypass_cache,
-                                             nthreads=nthreads,
-                                             anonymous=self._anonymous,
-                                             url_to_url=(url_to_url or
-                                                         self._url_to_url),
-                                             url_to_path=(url_to_path or
-                                                          self._url_to_path))
+        return self.filecache.exists(cast(StrOrPathOrSeqType,
+                                          new_sub_path),
+                                     bypass_cache=bypass_cache,
+                                     nthreads=nthreads,
+                                     anonymous=self._anonymous,
+                                     url_to_url=(url_to_url or
+                                                 self._url_to_url),
+                                     url_to_path=(url_to_path or
+                                                  self._url_to_path))
 
     def modification_time(self,
                           sub_path: Optional[StrOrPathOrSeqType] = None,
                           *,
+                          bypass_cache: bool = False,
                           nthreads: Optional[int] = None,
                           exception_on_fail: bool = True,
                           url_to_url: Optional[UrlToUrlFuncOrSeqType] = None
@@ -833,11 +837,15 @@ class FCPath:
 
         Parameters:
             sub_path: The path of the file relative to this path. If not specified, this
-                path is used. If `sub_path` is a list or tuple, all URLs are checked.
-                This may be more efficient because files can be checked in parallel. If
-                the resulting derived path is not absolute, it is assumed to be a relative
+                path is used. If `sub_path` is a list or tuple, all URLs are checked. This
+                may be more efficient because files can be checked in parallel. If the
+                resulting derived path is not absolute, it is assumed to be a relative
                 local path and is converted to an absolute path by expanding usernames and
                 resolving links.
+            bypass_cache: If False, retrieve the modification time for the file first from
+                the metadata cache, if enabled, and if not found there then from the
+                remote server. If True, only retrieve the modification time directly from
+                the remote server.
             nthreads: The maximum number of threads to use. If None, use the default value
                 given when this :class:`FCPath` was created.
             exception_on_fail: If True, if any file does not exist a FileNotFound
@@ -880,10 +888,11 @@ class FCPath:
 
         url_to_url = url_to_url or self._url_to_url
 
-        return (self._filecache_to_use
+        return (self.filecache
                 .modification_time(cast(StrOrPathOrSeqType,
                                         new_sub_path),
                                    anonymous=self._anonymous,
+                                   bypass_cache=bypass_cache,
                                    nthreads=nthreads,
                                    exception_on_fail=exception_on_fail,
                                    url_to_url=url_to_url)
@@ -945,11 +954,11 @@ class FCPath:
 
         url_to_url = url_to_url or self._url_to_url
 
-        return self._filecache_to_use.is_dir(cast(StrOrPathOrSeqType, new_sub_path),
-                                             anonymous=self._anonymous,
-                                             nthreads=nthreads,
-                                             exception_on_fail=exception_on_fail,
-                                             url_to_url=url_to_url)
+        return self.filecache.is_dir(cast(StrOrPathOrSeqType, new_sub_path),
+                                     anonymous=self._anonymous,
+                                     nthreads=nthreads,
+                                     exception_on_fail=exception_on_fail,
+                                     url_to_url=url_to_url)
 
     def retrieve(self,
                  sub_path: Optional[StrOrPathOrSeqType] = None,
@@ -1047,7 +1056,7 @@ class FCPath:
             many files as possible are downloaded before an exception is raised.
         """
 
-        old_download_counter = self._filecache_to_use.download_counter
+        old_download_counter = self.filecache.download_counter
 
         nthreads = self._validate_nthreads(nthreads)
 
@@ -1060,16 +1069,16 @@ class FCPath:
         url_to_path = url_to_path or self._url_to_path
 
         try:
-            ret = self._filecache_to_use.retrieve(cast(StrOrPathOrSeqType,
-                                                       new_sub_path),
-                                                  anonymous=self._anonymous,
-                                                  lock_timeout=lock_timeout,
-                                                  nthreads=nthreads,
-                                                  exception_on_fail=exception_on_fail,
-                                                  url_to_url=url_to_url,
-                                                  url_to_path=url_to_path)
+            ret = self.filecache.retrieve(cast(StrOrPathOrSeqType,
+                                               new_sub_path),
+                                          anonymous=self._anonymous,
+                                          lock_timeout=lock_timeout,
+                                          nthreads=nthreads,
+                                          exception_on_fail=exception_on_fail,
+                                          url_to_url=url_to_url,
+                                          url_to_path=url_to_path)
         finally:
-            self._download_counter += (self._filecache_to_use.download_counter -
+            self._download_counter += (self.filecache.download_counter -
                                        old_download_counter)
 
         return ret
@@ -1151,7 +1160,7 @@ class FCPath:
                 and exception_on_fail is True.
         """
 
-        old_upload_counter = self._filecache_to_use.upload_counter
+        old_upload_counter = self.filecache.upload_counter
 
         nthreads = self._validate_nthreads(nthreads)
 
@@ -1161,15 +1170,15 @@ class FCPath:
         url_to_path = url_to_path or self._url_to_path
 
         try:
-            ret = self._filecache_to_use.upload(cast(StrOrPathOrSeqType,
-                                                     new_sub_path),
-                                                anonymous=self._anonymous,
-                                                nthreads=nthreads,
-                                                exception_on_fail=exception_on_fail,
-                                                url_to_url=url_to_url,
-                                                url_to_path=url_to_path)
+            ret = self.filecache.upload(cast(StrOrPathOrSeqType,
+                                             new_sub_path),
+                                        anonymous=self._anonymous,
+                                        nthreads=nthreads,
+                                        exception_on_fail=exception_on_fail,
+                                        url_to_url=url_to_url,
+                                        url_to_path=url_to_path)
         finally:
-            self._upload_counter += (self._filecache_to_use.upload_counter -
+            self._upload_counter += (self.filecache.upload_counter -
                                      old_upload_counter)
 
         return ret
@@ -1338,14 +1347,14 @@ class FCPath:
         url_to_url = url_to_url or self._url_to_url
         url_to_path = url_to_path or self._url_to_path
 
-        return self._filecache_to_use.unlink(cast(StrOrPathOrSeqType,
-                                                  new_sub_path),
-                                             missing_ok=missing_ok,
-                                             anonymous=self._anonymous,
-                                             nthreads=nthreads,
-                                             exception_on_fail=exception_on_fail,
-                                             url_to_url=url_to_url,
-                                             url_to_path=url_to_path)
+        return self.filecache.unlink(cast(StrOrPathOrSeqType,
+                                          new_sub_path),
+                                     missing_ok=missing_ok,
+                                     anonymous=self._anonymous,
+                                     nthreads=nthreads,
+                                     exception_on_fail=exception_on_fail,
+                                     url_to_url=url_to_url,
+                                     url_to_path=url_to_path)
 
     @property
     def download_counter(self) -> int:
@@ -1417,8 +1426,7 @@ class FCPath:
         are not included.
         """
 
-        for obj in self._filecache_to_use.iterdir(self._path,
-                                                  url_to_url=self._url_to_url):
+        for obj in self.filecache.iterdir(self._path, url_to_url=self._url_to_url):
             yield FCPath(obj, copy_from=self)
 
     def iterdir_metadata(self) -> Iterator[tuple[FCPath, dict[str, Any] | None]]:
@@ -1440,8 +1448,7 @@ class FCPath:
         """
 
         for obj, metadata in (
-            self._filecache_to_use.iterdir_metadata(self._path,
-                                                    url_to_url=self._url_to_url)):
+                self.filecache.iterdir_metadata(self._path, url_to_url=self._url_to_url)):
             yield FCPath(obj, copy_from=self), metadata
 
     def glob(self,
@@ -1679,7 +1686,8 @@ class FCPath:
         """
 
         if not self.is_local():
-            raise NotImplementedError('stat on a remote file is not implemented')
+            raise NotImplementedError('stat on a remote file is not implemented; use '
+                                      'modification_time() if you just want that info')
 
         return self.as_pathlib().stat(follow_symlinks=follow_symlinks)
 

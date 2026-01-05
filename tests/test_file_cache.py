@@ -2141,7 +2141,7 @@ def test_cloud_unlink(prefix):
         assert not fc.exists(path, bypass_cache=True)
         with pytest.raises(FileNotFoundError):
             fc.unlink(path, missing_ok=False)
-        assert local_path.exists()
+        assert not local_path.exists()
         assert isinstance(fc.unlink(path, missing_ok=False, exception_on_fail=False),
                           FileNotFoundError)
 
@@ -2175,14 +2175,18 @@ def test_cloud_unlink_multi(prefix):
         with pytest.raises(FileNotFoundError):
             fc.unlink(paths, missing_ok=False)
         for lp in local_paths:
-            assert lp.exists()
+            assert not lp.exists()
 
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = fc.unlink(paths, exception_on_fail=False)
         for r in ret:
             assert isinstance(r, FileNotFoundError)
         for lp in local_paths:
-            assert lp.exists()
+            assert not lp.exists()
 
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = fc.unlink(paths, missing_ok=True)
         assert ret == paths
         for lp in local_paths:
@@ -2268,14 +2272,18 @@ def test_cloud_unlink_multi_pfx(prefix):
         with pytest.raises(FileNotFoundError):
             pfx.unlink(paths, missing_ok=False)
         for lp in local_paths:
-            assert lp.exists()
+            assert not lp.exists()
 
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = pfx.unlink(paths, exception_on_fail=False)
         for r in ret:
             assert isinstance(r, FileNotFoundError)
         for lp in local_paths:
-            assert lp.exists()
+            assert not lp.exists()
 
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = pfx.unlink(paths, missing_ok=True)
         assert ret == [f'{new_path}/{x}' for x in paths]
         for lp in local_paths:
@@ -2792,10 +2800,14 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
         lp = pfx.get_local_path()
         mtime_lp_orig = lp.stat().st_mtime
         if time_sensitive:
-            # upload should not update the local file's mtime
+            # upload should update the remote file's mtime
+            # the cache doesn't matter because the URL won't be in the cache now
             assert mtime_lp_orig == mtime_orig
         else:
+            # upload should not update the remote file's mtime
+            # the cache doesn't matter because the URL won't be in the cache now
             assert mtime_lp_orig != mtime_orig
+        _ = pfx.modification_time()  # update the cache, if turned on
 
         time.sleep(1)  # Make sure mod times will be different
 
@@ -2812,11 +2824,14 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
         else:
             assert mtime_new != mtime_orig  # Remote changed
 
+        mtime_new = pfx.modification_time(bypass_cache=True)
+        assert mtime_new != mtime_orig  # Remote changed
+
         assert lp.stat().st_mtime == mtime_lp_orig  # Copy in this cache didn't change
 
         pfx.retrieve()  # Should do nothing if not time_sensitive
 
-        if time_sensitive and not cache_metadata:
+        if time_sensitive:
             # Copy in this cache was re-retrieved
             assert lp.read_text().strip() == 'bye'
             assert lp.stat().st_mtime == mtime_new
@@ -2824,6 +2839,16 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
             # Copy in this cache was not re-retrieved
             assert lp.read_text().strip() == 'hi'
             assert lp.stat().st_mtime == mtime_lp_orig
+
+        lp.unlink()
+        pfx.retrieve()  # Force a download again
+
+        if time_sensitive:
+            # Copy in this cache should have the new mtime
+            assert lp.stat().st_mtime == mtime_new
+        else:
+            # Copy in this cache should have the time of the download
+            assert lp.stat().st_mtime > mtime_new
 
 
 @pytest.mark.parametrize('time_sensitive', [False, True])

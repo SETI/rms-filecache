@@ -444,6 +444,8 @@ def test_truediv():
     assert str(FCPath('a/b') / 'c') == 'a/b/c'
     assert str(FCPath('/a/b') / 'c') == '/a/b/c'
     assert str(FCPath('/a/b') / '/c') == '/c'
+    assert str(FCPath('/a/b') / '/c' / 'd/' / 'e//' / 'f///') == '/c/d/e/f'
+    assert str(FCPath('/a/b') / '/c' / 'd///e' / 'f///') == '/c/d/e/f'
     assert str(FCPath('/a/b') / 'c' / 'http://bucket/x' / 'y') == 'http://bucket/x/y'
     assert str(FCPath('/a') / Path('b', 'c') / FCPath('d/e')) == '/a/b/c/d/e'
     with FileCache('test', delete_on_exit=True) as fc:

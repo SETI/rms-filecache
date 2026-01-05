@@ -1,3 +1,5 @@
+.. _module_file_cache:
+
 ``filecache`` Module
 ====================
 
