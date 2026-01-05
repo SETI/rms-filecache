@@ -519,6 +519,23 @@ class FCPath:
         else:
             return FCPath(other, self._path, copy_from=self)
 
+    def splitpath(self, search_dir: str) -> tuple[FCPath, ...]:
+        """Split the path into a list of FCPaths at each occurrence of search_dir.
+
+        Parameters:
+            search_dir: The directory to search for.
+
+        Returns:
+            A tuple of FCPaths, each of which is a segment of the path between instances
+            of search_dir, not including the search_dir itself.
+        """
+
+        parts = self.parts
+        indices = [i for i, part in enumerate(parts) if part == search_dir]
+        indices = [-1] + indices + [len(parts)]
+        return tuple(FCPath(*parts[i+1:j], copy_from=self)
+                     for i, j in zip(indices[:-1], indices[1:]))
+
     def __repr__(self) -> str:
         return f'FCPath({self._path!r})'
 
