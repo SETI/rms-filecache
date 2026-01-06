@@ -2186,7 +2186,7 @@ def test_cloud_unlink_multi(prefix):
         for lp in local_paths:
             assert not lp.exists()
 
-        for lp, p in zip(local_paths, paths):
+        for lp in local_paths:
             _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = fc.unlink(paths, exception_on_fail=False)
         for r in ret:
@@ -2861,7 +2861,9 @@ def test_modification_time_caching(time_sensitive, cache_metadata, prefix):
                 assert lp.stat().st_mtime == mtime_new
             else:
                 # Copy in this cache should have the time of the download
-                assert lp.stat().st_mtime > mtime_new
+                # Depending on the local time vs. the time on the remote server,
+                # this could be earlier or later.
+                assert lp.stat().st_mtime != mtime_new
 
 
 @pytest.mark.parametrize('time_sensitive', [False, True])
