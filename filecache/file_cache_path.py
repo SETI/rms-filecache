@@ -238,8 +238,10 @@ class FCPath:
         if '/' not in subpath:
             return drive, subpath
         if root == '/' and subpath == root:
-            return drive, ''
+            return drive + '/', ''
         idx = subpath.rindex('/')
+        if idx == 0:
+            return drive + '/', subpath[idx+1:]
         return drive + subpath[:idx].rstrip('/'), subpath[idx+1:]
 
     @staticmethod

@@ -90,9 +90,9 @@ def test_split():
     assert FCPath._split('a') == ('', 'a')
     assert FCPath._split('a/b/c') == ('a/b', 'c')
     assert FCPath._split('/a/b/c') == ('/a/b', 'c')
-    assert FCPath._split('http://domain.name') == ('http://domain.name', '')
-    assert FCPath._split('http://domain.name/') == ('http://domain.name', '')
-    assert FCPath._split('http://domain.name/a') == ('http://domain.name', 'a')
+    assert FCPath._split('http://domain.name') == ('http://domain.name/', '')
+    assert FCPath._split('http://domain.name/') == ('http://domain.name/', '')
+    assert FCPath._split('http://domain.name/a') == ('http://domain.name/', 'a')
     assert FCPath._split('http://domain.name/a/b') == ('http://domain.name/a', 'b')
 
 
@@ -396,10 +396,10 @@ def test_parts():
     assert FCPath('').parts == ()
     assert FCPath('a').parts == ('a',)
     assert FCPath('a/b').parts == ('a', 'b')
-    assert FCPath('/a/b').parts == ('a', 'b')
-    assert FCPath('C:/a/b').parts == ('C:', 'a', 'b')
-    assert FCPath('c:/a/b').parts == ('C:', 'a', 'b')
-    assert FCPath('gs://bucket/a/b').parts == ('gs://bucket', 'a', 'b')
+    assert FCPath('/a/b').parts == ('/', 'a', 'b')
+    assert FCPath('C:/a/b').parts == ('C:/', 'a', 'b')
+    assert FCPath('c:/a/b').parts == ('C:/', 'a', 'b')
+    assert FCPath('gs://bucket/a/b').parts == ('gs://bucket/', 'a', 'b')
 
 
 def test_joinpath():
@@ -539,8 +539,8 @@ def test_match():
     assert not p.match('/*f')
     assert p.match('*/*f')
     assert not p.match('/def')
-    assert p.match('/*/def')
-    assert p.match('/abc/def')
+    assert not p.match('/*/def')
+    assert not p.match('/abc/def')
     assert not p.match('/ABC/def')
     assert not p.match('/zz/abc/def')
     p = FCPath('ABC/def')
@@ -555,9 +555,9 @@ def test_match():
     assert not p.match('/*f')
     assert p.match('*/*f')
     assert not p.match('/def')
-    assert p.match('/*/def')
+    assert not p.match('/*/def')
     assert not p.match('/abc/def')
-    assert p.match('/ABC/def')
+    assert not p.match('/ABC/def')
     assert not p.match('/zz/abc/def')
     p = FCPath('a/b/c.py')
     assert not p.match('a/**')
@@ -1295,3 +1295,18 @@ def test_expandvars_edge_cases():
         m.setenv('LONG_VAR', long_value)
         assert FCPath('$LONG_VAR/file.txt').expandvars() == \
             FCPath(f'{long_value}/file.txt')
+
+
+def test_splitpath():
+    assert FCPath('/a/c/b/c/d').splitpath('x') == (FCPath('/a/c/b/c/d'),)
+    assert FCPath('gs://bucket/a/c/b/c/d').splitpath('x') == \
+        (FCPath('gs://bucket/a/c/b/c/d'),)
+    assert FCPath('/a/c/b/c/d').splitpath('c') == (FCPath('/a'),
+                                                   FCPath('b'),
+                                                   FCPath('d'))
+    assert FCPath('gs://bucket/a/c/b/c/d').splitpath('c') == (FCPath('gs://bucket/'),
+                                                              FCPath('a'),
+                                                              FCPath('b'),
+                                                              FCPath('d'))
+    assert FCPath('gs://bucket/a/c/b/b1/c/d/d1').splitpath('c') == \
+        (FCPath('gs://bucket/'), FCPath('a'), FCPath('b/b1'), FCPath('d/d1'))
