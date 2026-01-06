@@ -141,9 +141,7 @@ If ``time_sensitive`` is ``True``, then:
   set on the local copy. If a local copy already exists, the times on both copies are
   compared and the local copy is updated if the source is newer.
 - When a file is uploaded, the modification timestamp on the remote copy is set to that of
-  the local copy, if possible. If not, the modification timestamp on the local copy is set
-  to the new modification timestamp of the remote copy, thus guaranteeing that the
-  timestamps will agree.
+  the local copy, if possible.
 
 By default, when ``time_sensitive`` is ``True``, the modification timestamps on both local
 and remote copies are queried each time they are needed. Thus, if the remote copy is
@@ -354,7 +352,7 @@ Get the Modification Time of a File
 
 The :meth:`FileCache.modification_time` method is used to get the modification time of a
 file. It takes a URL as an argument and returns the modification time of the file *on the
-remote source* as a UNIX timestamp. The local cache version is ignored.
+remote source* as a UNIX timestamp. The local cache version of the file is ignored.
 
 .. code-block:: python
 
@@ -543,4 +541,9 @@ Best Practices
 
 - Segment data by purpose, lifetime, and sharing. Create a separate cache for each logical
   grouping.
--
+- When creating a new :class:`FCPath`, be sure to specify an appropriate `filecache` or use the
+  :meth:`FileCache.new_path` method. Otherwise it will always use the default global cache.
+- Do not use ``time_sensitive=True`` unless you expect the remote source to change during the
+  program's execution.
+- Use ``cache_metadata=True`` when possible, especially if you are iterating over the contents
+  of a directory before downloading files.

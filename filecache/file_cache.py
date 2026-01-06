@@ -1328,7 +1328,8 @@ class FileCache:
             if local_path.is_file():
                 source_time: float | None = None
                 if self._time_sensitive:
-                    source_time = cast(float | None, self.modification_time(url))
+                    source_time = cast(float | None, self.modification_time(url,
+                                                                            bypass_cache=True))
                     if source_time is None:
                         self._log_debug(f'No modification time available for {url} '
                                         'even though a local copy exists')
@@ -1396,7 +1397,8 @@ class FileCache:
         if self._time_sensitive:
             urls: list[str | Path] = [f'{source._src_prefix_}{sub_path}'
                                       for source, sub_path in zip(sources, sub_paths)]
-            source_times = cast(list[Union[float, None]], self.modification_time(urls))
+            source_times = cast(list[Union[float, None]],
+                                self.modification_time(urls, bypass_cache=True))
         else:
             source_times = [None] * len(sources)
 
@@ -1514,7 +1516,8 @@ class FileCache:
         if self._time_sensitive:
             urls: list[str | Path] = [f'{source._src_prefix_}{sub_path}'
                                       for source, sub_path in zip(sources, sub_paths)]
-            source_times = cast(list[Union[float, None]], self.modification_time(urls))
+            source_times = cast(list[Union[float, None]],
+                                self.modification_time(urls, bypass_cache=True))
         else:
             source_times = [None] * len(sources)
 
