@@ -251,6 +251,7 @@ class FileCacheSource(ABC):
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path,
+                 *,
                  preserve_mtime: bool = False) -> Path:
         ...  # pragma: no cover
 
@@ -326,6 +327,7 @@ class FileCacheSource(ABC):
     def upload(self,
                sub_path: str,
                local_path: str | Path,
+               *,
                preserve_mtime: bool = False) -> Path:
         ...  # pragma: no cover
 
@@ -564,6 +566,7 @@ class FileCacheSourceFile(FileCacheSource):
     def retrieve(self,
                  sub_path: str | Path,
                  local_path: str | Path,
+                 *,
                  preserve_mtime: bool = False) -> Path:
         """Retrieve a file from the storage location.
 
@@ -598,6 +601,7 @@ class FileCacheSourceFile(FileCacheSource):
     def upload(self,
                sub_path: str | Path,
                local_path: str | Path,
+               *,
                preserve_mtime: bool = False) -> Path:
         """Upload a file from the local filesystem to the storage location.
 
@@ -824,6 +828,7 @@ class FileCacheSourceHTTP(FileCacheSource):
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path,
+                 *,
                  preserve_mtime: bool = False) -> Path:
         """Retrieve a file from a webserver.
 
@@ -891,6 +896,7 @@ class FileCacheSourceHTTP(FileCacheSource):
     def upload(self,
                sub_path: str,
                local_path: str | Path,
+               *,
                preserve_mtime: bool = False) -> Path:
         """Upload a local file to a webserver. Not implemented."""
 
@@ -1177,6 +1183,7 @@ class FileCacheSourceGS(FileCacheSource):
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path,
+                 *,
                  preserve_mtime: bool = False) -> Path:
         """Retrieve a file from a Google Storage bucket.
 
@@ -1249,6 +1256,7 @@ class FileCacheSourceGS(FileCacheSource):
     def upload(self,
                sub_path: str,
                local_path: str | Path,
+               *,
                preserve_mtime: bool = False) -> Path:
         """Upload a local file to a Google Storage bucket.
 
@@ -1276,9 +1284,10 @@ class FileCacheSourceGS(FileCacheSource):
         if preserve_mtime:
             mtime_sec = local_path.stat().st_mtime
             mtime_str = str(mtime_sec)
-            if blob.metadata is None:
-                blob.metadata = {}
-            blob.metadata = {'goog-reserved-file-mtime': mtime_str}
+            blob_metadata = blob.metadata or {}
+            blob_metadata['goog-reserved-file-mtime'] = mtime_str
+            # For some reason the Google API doesn't let you update this directly
+            blob.metadata = blob_metadata
 
         blob.upload_from_filename(str(local_path))
 
@@ -1515,6 +1524,7 @@ class FileCacheSourceS3(FileCacheSource):
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path,
+                 *,
                  preserve_mtime: bool = False) -> Path:
         """Retrieve a file from an AWS S3 bucket.
 
@@ -1574,6 +1584,7 @@ class FileCacheSourceS3(FileCacheSource):
     def upload(self,
                sub_path: str,
                local_path: str | Path,
+               *,
                preserve_mtime: bool = False) -> Path:
         """Upload a local file to an AWS S3 bucket.
 
@@ -1819,6 +1830,7 @@ class FileCacheSourceFake(FileCacheSource):
     def retrieve(self,
                  sub_path: str,
                  local_path: str | Path,
+                 *,
                  preserve_mtime: bool = False) -> Path:
         """Retrieve a file from the fake remote storage.
 
@@ -1864,6 +1876,7 @@ class FileCacheSourceFake(FileCacheSource):
     def upload(self,
                sub_path: str,
                local_path: str | Path,
+               *,
                preserve_mtime: bool = False) -> Path:
         """Upload a file to the fake remote storage.
 

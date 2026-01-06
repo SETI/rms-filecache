@@ -1246,7 +1246,9 @@ class FileCache:
 
         Raises:
             FileNotFoundError: If a file does not exist or could not be downloaded, and
-                exception_on_fail is True.
+                exception_on_fail is True. Also if time_sensitive is True and the
+                modification time of the remote file can not be determined because a
+                locally cached file has been deleted on the remote source.
             TimeoutError: If we could not acquire the lock to allow downloading of a file
                 within the given timeout or, for a multi-file download, if we timed out
                 waiting for other processes to download locked files, and
@@ -1328,8 +1330,14 @@ class FileCache:
             if local_path.is_file():
                 source_time: float | None = None
                 if self._time_sensitive:
-                    source_time = cast(float | None,
-                                       self.modification_time(url, bypass_cache=True))
+                    try:
+                        source_time = cast(float | None, self.modification_time(url))
+                    except Exception as e:
+                        self._log_debug(
+                            f'Modification time check failed for {url}: {e!r}')
+                        if exception_on_fail:
+                            raise
+                        return e
                     if source_time is None:
                         self._log_debug(f'No modification time available for {url} '
                                         'even though a local copy exists')
@@ -1398,7 +1406,8 @@ class FileCache:
             urls: list[str | Path] = [f'{source._src_prefix_}{sub_path}'
                                       for source, sub_path in zip(sources, sub_paths)]
             source_times = cast(list[Union[float, None]],
-                                self.modification_time(urls, bypass_cache=True))
+                                self.modification_time(
+                                    urls, exception_on_fail=exception_on_fail))
         else:
             source_times = [None] * len(sources)
 
@@ -1517,7 +1526,8 @@ class FileCache:
             urls: list[str | Path] = [f'{source._src_prefix_}{sub_path}'
                                       for source, sub_path in zip(sources, sub_paths)]
             source_times = cast(list[Union[float, None]],
-                                self.modification_time(urls, bypass_cache=True))
+                                self.modification_time(
+                                    urls, exception_on_fail=exception_on_fail))
         else:
             source_times = [None] * len(sources)
 
@@ -1599,7 +1609,7 @@ class FileCache:
 
             # Now we can actually download the files that we locked. We intentionally
             # don't use preserve_mtime here because we already went to the effort of
-            # retrieving the modification_times earlier and we don't wan't to possible
+            # retrieving the modification_times earlier and we don't want to possibly
             # cause additional server round trips to retrieve information we already have.
             rets = source.retrieve_multi(source_sub_paths, source_local_paths,
                                          preserve_mtime=False,

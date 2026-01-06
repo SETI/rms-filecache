@@ -105,7 +105,7 @@ Download errors are returned as Exceptions in the return list.
         'gs://my-bucket/file4.txt'
     ]
     # All files downloaded in parallel
-    paths = fc.retrieve(urls)
+    paths = fc.retrieve(urls, exception_on_fail=False)
     for path in paths:
         if isinstance(path, Exception):
             print(f'Download failed: {path}')
@@ -174,7 +174,7 @@ with the original webserver layout), a mapping function can be used to translate
             dir_num_match = re.match(r"data/file(\d+)\.txt", path)
             if dir_num_match:
                 dir_num = dir_num_match.group(1)
-                return f"gs://my-bucket/data/dir{dir_num}/file{dir_num}.txt"
+                return f"gs://my-bucket/data/dir{dir_num[0]}/file{dir_num}.txt"
         return None
 
 This code will now work both with the original webserver layout and the new Google Cloud Storage
@@ -219,7 +219,7 @@ To store the above Google Cloud Storage data in a flat hierarchy like this:
 .. code-block:: python
 
     def url_to_path(scheme, remote, path, cache_dir, cache_subdir):
-        if scheme == "gs" and remote == "bucket" and path.startswith("data/dir"):
+        if scheme == "gs" and remote == "my-bucket" and path.startswith("data/dir"):
             path_split = path.split("/", 2)
             if len(path_split) > 2:
                 new_path = path_split[2]
@@ -270,7 +270,7 @@ Useful when you need more control over cache lifetime.
 
     from filecache import FileCache
 
-    # Create an ephemeral cache (will auto-delete on program exit)
+    # Create a permanent cache (would not auto-delete on program exit)
     fc = FileCache(cache_name='mycache')
 
     # Use the cache
@@ -300,8 +300,8 @@ Here are examples of creating :class:`FCPath` instances and using them to access
     from filecache import FileCache, FCPath
 
     with FileCache(cache_name=None) as fc:
-        # Create an FCPath that encapsulates the cache and time_sensitive setting
-        base_path = fc.new_path('gs://my-bucket/data', time_sensitive=True)
+        # Create an FCPath that encapsulates the cache settings
+        base_path = fc.new_path('gs://my-bucket/data')
 
         # Use Path-like operations
         file1 = base_path / 'subdir' / 'file1.txt'
