@@ -358,9 +358,10 @@ remote source* as a UNIX timestamp. The local cache version of the file is ignor
 
     mtime = fc.modification_time('https://data.com/data/file.txt')
 
-If the file does not exist, can not be accessed, or the remote does not support
-modification time retrieval, an exception is raised.
-
+If the file does not exist or cannot be accessed, an exception is raised by
+default. When called with ``exception_on_fail=False``, those failures are
+returned as :class:`Exception` instances instead of being raised. If the
+remote exists but no modification time is available, ``None`` is returned.
 Multiple URLs, including from different sources, can be checked at the same time by
 passing a list of URLs:
 

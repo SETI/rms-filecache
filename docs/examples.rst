@@ -229,11 +229,11 @@ To store the above Google Cloud Storage data in a flat hierarchy like this:
         return None
 
     fc = FileCache()
-    # This file will be stored in <cache_root>/_filecache_global/gs_bucket/data/dir1/file11.txt
+    # This file will be stored in <cache_root>/_filecache_global/gs_my-bucket/data/dir1/file11.txt
     fc.retrieve("gs://my-bucket/data/dir1/file11.txt")
 
     fc = FileCache(url_to_path=url_to_path)
-    # This file will be stored in <cache_root>/_filecache_global/gs_bucket/data/file11.txt
+    # This file will be stored in <cache_root>/_filecache_global/gs_my-bucket/data/file11.txt
     fc.retrieve("gs://my-bucket/data/dir1/file11.txt")
 
 
