@@ -1301,8 +1301,7 @@ def test_splitpath():
     assert FCPath('/a/c/b/c/d').splitpath('x') == (FCPath('/a/c/b/c/d'),)
     assert FCPath('gs://bucket/a/c/b/c/d').splitpath('x') == \
         (FCPath('gs://bucket/a/c/b/c/d'),)
-    assert FCPath('/a/c/b/c/d').splitpath('c') == (FCPath('/a'),
-                                                   FCPath('b'),
+    assert FCPath('/a/c/b/c/d').splitpath('c') == (FCPath('/a'), FCPath('b'),
                                                    FCPath('d'))
     assert FCPath('gs://bucket/a/c/b/c/d').splitpath('c') == (FCPath('gs://bucket/a'),
                                                               FCPath('b'),
