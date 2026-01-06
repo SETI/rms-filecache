@@ -110,7 +110,7 @@ Download errors are returned as Exceptions in the return list.
         if isinstance(path, Exception):
             print(f'Download failed: {path}')
             continue
-        print(f'Downloaded: {path}'')
+        print(f'Downloaded: {path}')
 
 
 Example 6: Upload Operations

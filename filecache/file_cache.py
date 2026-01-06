@@ -1328,8 +1328,8 @@ class FileCache:
             if local_path.is_file():
                 source_time: float | None = None
                 if self._time_sensitive:
-                    source_time = cast(float | None, self.modification_time(url,
-                                                                            bypass_cache=True))
+                    source_time = cast(float | None,
+                                       self.modification_time(url, bypass_cache=True))
                     if source_time is None:
                         self._log_debug(f'No modification time available for {url} '
                                         'even though a local copy exists')

@@ -1241,7 +1241,7 @@ class FileCacheSourceGS(FileCacheSource):
                 mtime_sec = cast(float, blob.updated.timestamp())
             if mtime_sec is None:
                 raise RuntimeError('Failed to retrieve modification time from Google '
-                                   'Storage bucket for {self._src_prefix_}{sub_path}')
+                                   f'Storage bucket for {self._src_prefix_}{sub_path}')
             os.utime(local_path, (mtime_sec, mtime_sec))
 
         return local_path

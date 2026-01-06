@@ -62,7 +62,7 @@ variables, but this will affect other modules that use the system temporary dire
 as ``tempdir``. To specify a different default base directory for all :class:`FileCache`
 instances without affecting the system temporary directory, set the
 ``FILECACHE_CACHE_ROOT`` environment variable. Finally, to provide a different base
-directory for a particular :class:`FileCache`` instance, pass the ``cache_root`` argument
+directory for a particular :class:`FileCache` instance, pass the ``cache_root`` argument
 to the :class:`FileCache` constructor. The ``cache_root`` argument can be a string or
 `Path` object.
 
@@ -371,6 +371,12 @@ passing a list of URLs:
 
 In this case, the returned list of modification times will be in the same order as the
 input list of URLs.
+
+If ``cache_metadata`` is ``True`` for the :class:`FileCache` instance, then the
+modification time is retrieved from the metadata cache if possible. This could result in
+an erroneous result if the remote file changed during the execution of the program and
+lifetime of the cache. The remote source can be queried directly by passing
+``bypass_cache=True`` to the :meth:`FileCache.modification_time` method.
 
 
 Upload a File
