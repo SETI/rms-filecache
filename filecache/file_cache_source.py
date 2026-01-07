@@ -10,6 +10,7 @@ from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 import datetime
 from email.utils import parsedate_to_datetime
+import os
 from pathlib import Path
 import platform
 import re
@@ -249,13 +250,16 @@ class FileCacheSource(ABC):
     @abstractmethod
     def retrieve(self,
                  sub_path: str,
-                 local_path: str | Path) -> Path:
+                 local_path: str | Path,
+                 *,
+                 preserve_mtime: bool = False) -> Path:
         ...  # pragma: no cover
 
     def retrieve_multi(self,
                        sub_paths: Sequence[str],
                        local_paths: Sequence[str | Path],
                        *,
+                       preserve_mtime: bool = False,
                        nthreads: int = 8) -> list[Path | BaseException]:
         """Retrieve multiple files from the storage location using threads.
 
@@ -263,6 +267,8 @@ class FileCacheSource(ABC):
             sub_paths: The path of the files to retrieve relative to the source prefix.
             local_paths: The paths to the destinations where the downloaded files will be
                 stored.
+            preserve_mtime: If True, the modification time of the remote files will be
+                copied to the local files.
             nthreads: The maximum number of threads to use.
 
         Returns:
@@ -283,7 +289,7 @@ class FileCacheSource(ABC):
 
         results = {}
         for sub_path, result in self._download_object_parallel(sub_paths, local_paths,
-                                                               nthreads):
+                                                               preserve_mtime, nthreads):
             results[sub_path] = result
 
         ret = []
@@ -294,17 +300,20 @@ class FileCacheSource(ABC):
 
     def _download_object(self,
                          sub_path: str,
-                         local_path: str | Path) -> Path:
-        self.retrieve(sub_path, local_path)
+                         local_path: str | Path,
+                         preserve_mtime: bool) -> Path:
+        self.retrieve(sub_path, local_path, preserve_mtime=preserve_mtime)
         return Path(local_path)
 
     def _download_object_parallel(self,
                                   sub_paths: Sequence[str],
                                   local_paths: Sequence[str | Path],
+                                  preserve_mtime: bool,
                                   nthreads: int) -> Iterator[
                                       tuple[str, Path | BaseException]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
-            future_to_paths = {executor.submit(self._download_object, x[0], x[1]): x[0]
+            future_to_paths = {executor.submit(self._download_object,
+                                               x[0], x[1], preserve_mtime): x[0]
                                for x in zip(sub_paths, local_paths)}
             for future in futures.as_completed(future_to_paths):
                 sub_path = future_to_paths[future]
@@ -317,19 +326,24 @@ class FileCacheSource(ABC):
     @abstractmethod
     def upload(self,
                sub_path: str,
-               local_path: str | Path) -> Path:
+               local_path: str | Path,
+               *,
+               preserve_mtime: bool = False) -> Path:
         ...  # pragma: no cover
 
     def upload_multi(self,
                      sub_paths: Sequence[str],
                      local_paths: Sequence[str | Path],
                      *,
+                     preserve_mtime: bool = False,
                      nthreads: int = 8) -> list[Path | BaseException]:
         """Upload multiple files to a storage location.
 
         Parameters:
             sub_paths: The path of the destination files relative to the source prefix.
             local_paths: The paths of the files to upload.
+            preserve_mtime: If True, the modification time of the local files will be
+                copied to the remote files.
             nthreads: The maximum number of threads to use.
 
         Returns:
@@ -343,7 +357,7 @@ class FileCacheSource(ABC):
 
         results = {}
         for sub_path, result in self._upload_object_parallel(sub_paths, local_paths,
-                                                             nthreads=nthreads):
+                                                             preserve_mtime, nthreads):
             results[sub_path] = result
 
         ret = []
@@ -354,17 +368,20 @@ class FileCacheSource(ABC):
 
     def _upload_object(self,
                        sub_path: str,
-                       local_path: str | Path) -> Path:
-        self.upload(sub_path, local_path)
+                       local_path: str | Path,
+                       preserve_mtime: bool) -> Path:
+        self.upload(sub_path, local_path, preserve_mtime=preserve_mtime)
         return Path(local_path)
 
     def _upload_object_parallel(self,
                                 sub_paths: Sequence[str],
                                 local_paths: Sequence[str | Path],
+                                preserve_mtime: bool,
                                 nthreads: int) -> Iterator[tuple[str,
                                                                  Path | BaseException]]:
         with ThreadPoolExecutor(max_workers=nthreads) as executor:
-            future_to_paths = {executor.submit(self._upload_object, x[0], x[1]): x[0]
+            future_to_paths = {executor.submit(self._upload_object,
+                                               x[0], x[1], preserve_mtime): x[0]
                                for x in zip(sub_paths, local_paths)}
             for future in futures.as_completed(future_to_paths):
                 sub_path = future_to_paths[future]
@@ -548,13 +565,17 @@ class FileCacheSourceFile(FileCacheSource):
 
     def retrieve(self,
                  sub_path: str | Path,
-                 local_path: str | Path) -> Path:
+                 local_path: str | Path,
+                 *,
+                 preserve_mtime: bool = False) -> Path:
         """Retrieve a file from the storage location.
 
         Parameters:
             sub_path: The absolute path of the local file to retrieve.
             local_path: The path to the desination where the file will be stored. Must be
                 the same as `sub_path`.
+            preserve_mtime: If True, the modification time of the remote file will be
+                copied to the local file. Not used for local files.
 
         Returns:
             The Path of the filename, which is the same as the `sub_path` parameter.
@@ -579,13 +600,17 @@ class FileCacheSourceFile(FileCacheSource):
 
     def upload(self,
                sub_path: str | Path,
-               local_path: str | Path) -> Path:
+               local_path: str | Path,
+               *,
+               preserve_mtime: bool = False) -> Path:
         """Upload a file from the local filesystem to the storage location.
 
         Parameters:
             sub_path: The absolute path of the destination.
             local_path: The absolute path of the local file to upload. Must be the same as
                 `sub_path`.
+            preserve_mtime: If True, the modification time of the local file will be
+                copied to the remote file. Not used for local files.
 
         Returns:
             The Path of the filename, which is the same as the `local_path` parameter.
@@ -802,13 +827,17 @@ class FileCacheSourceHTTP(FileCacheSource):
 
     def retrieve(self,
                  sub_path: str,
-                 local_path: str | Path) -> Path:
+                 local_path: str | Path,
+                 *,
+                 preserve_mtime: bool = False) -> Path:
         """Retrieve a file from a webserver.
 
         Parameters:
             sub_path: The path of the file to retrieve relative to the source prefix.
             local_path: The path to the destination where the downloaded file will be
                 stored.
+            preserve_mtime: If True, the modification time of the remote file will be
+                copied to the local file.
 
         Returns:
             The Path where the file was stored (same as `local_path`).
@@ -853,11 +882,22 @@ class FileCacheSourceHTTP(FileCacheSource):
             temp_local_path.unlink(missing_ok=True)
             raise
 
+        if preserve_mtime:
+            last_modified = response.headers.get('Last-Modified')
+            if last_modified:
+                # Parse the HTTP date format and convert to Unix timestamp
+                # HTTP dates are typically in format: "Wed, 21 Oct 2015 07:28:00 GMT"
+                dt = parsedate_to_datetime(last_modified)
+                last_modified_sec = dt.timestamp()
+                os.utime(local_path, (last_modified_sec, last_modified_sec))
+
         return local_path
 
     def upload(self,
                sub_path: str,
-               local_path: str | Path) -> Path:
+               local_path: str | Path,
+               *,
+               preserve_mtime: bool = False) -> Path:
         """Upload a local file to a webserver. Not implemented."""
 
         raise NotImplementedError
@@ -1092,6 +1132,10 @@ class FileCacheSourceGS(FileCacheSource):
                 google.api_core.exceptions.NotFound,  # bad filename
                 google.cloud.exceptions.NotFound):  # bad filename
             raise FileNotFoundError(f'File not found: {self._src_prefix_}{sub_path}')
+        if blob.metadata is not None:
+            mtime = blob.metadata.get('goog-reserved-file-mtime')
+            if mtime is not None:
+                return float(mtime)
         return cast(float, blob.updated.timestamp())
 
     def is_dir(self,
@@ -1138,7 +1182,9 @@ class FileCacheSourceGS(FileCacheSource):
 
     def retrieve(self,
                  sub_path: str,
-                 local_path: str | Path) -> Path:
+                 local_path: str | Path,
+                 *,
+                 preserve_mtime: bool = False) -> Path:
         """Retrieve a file from a Google Storage bucket.
 
         Parameters:
@@ -1146,6 +1192,8 @@ class FileCacheSourceGS(FileCacheSource):
                 source prefix.
             local_path: The path to the destination where the downloaded file will be
                 stored.
+            preserve_mtime: If True, the modification time of the remote file will be
+                copied to the local file.
 
         Returns:
             The Path where the file was stored (same as `local_path`).
@@ -1189,17 +1237,35 @@ class FileCacheSourceGS(FileCacheSource):
             temp_local_path.unlink(missing_ok=True)
             raise
 
+        if preserve_mtime:
+            mtime_sec = None
+            blob.reload()
+            if blob.metadata is not None:
+                mtime_str = blob.metadata.get('goog-reserved-file-mtime')
+                if mtime_str is not None:
+                    mtime_sec = float(mtime_str)
+            if mtime_sec is None and blob.updated is not None:
+                mtime_sec = cast(float, blob.updated.timestamp())
+            if mtime_sec is None:
+                raise RuntimeError('Failed to retrieve modification time from Google '
+                                   f'Storage bucket for {self._src_prefix_}{sub_path}')
+            os.utime(local_path, (mtime_sec, mtime_sec))
+
         return local_path
 
     def upload(self,
                sub_path: str,
-               local_path: str | Path) -> Path:
+               local_path: str | Path,
+               *,
+               preserve_mtime: bool = False) -> Path:
         """Upload a local file to a Google Storage bucket.
 
         Parameters:
             sub_path: The path of the destination file in the Google Storage bucket given
                 by the source prefix.
             local_path: The absolute path of the local file to upload.
+            preserve_mtime: If True, the modification time of the local file will be
+                copied to the remote file.
 
         Returns:
             The Path of the filename, which is the same as the `local_path` parameter.
@@ -1214,6 +1280,15 @@ class FileCacheSourceGS(FileCacheSource):
             raise FileNotFoundError(f'File does not exist: {local_path}')
 
         blob = self._bucket.blob(sub_path)
+
+        if preserve_mtime:
+            mtime_sec = local_path.stat().st_mtime
+            mtime_str = str(mtime_sec)
+            blob_metadata = blob.metadata or {}
+            blob_metadata['goog-reserved-file-mtime'] = mtime_str
+            # For some reason the Google API doesn't let you update this directly
+            blob.metadata = blob_metadata
+
         blob.upload_from_filename(str(local_path))
 
         return local_path
@@ -1384,6 +1459,11 @@ class FileCacheSourceS3(FileCacheSource):
         try:
             # Use head_object to get metadata without downloading the content
             response = self._client.head_object(Bucket=self._bucket_name, Key=sub_path)
+            # Check for custom mtime metadata first (if preserve_mtime was used)
+            if 'Metadata' in response and response['Metadata']:
+                mtime_str = response['Metadata'].get('mtime')
+                if mtime_str is not None:
+                    return float(mtime_str)
             # Convert the LastModified time to a Unix timestamp
             return response['LastModified'].timestamp()
         except botocore.exceptions.ClientError as e:
@@ -1443,7 +1523,9 @@ class FileCacheSourceS3(FileCacheSource):
 
     def retrieve(self,
                  sub_path: str,
-                 local_path: str | Path) -> Path:
+                 local_path: str | Path,
+                 *,
+                 preserve_mtime: bool = False) -> Path:
         """Retrieve a file from an AWS S3 bucket.
 
         Parameters:
@@ -1451,6 +1533,8 @@ class FileCacheSourceS3(FileCacheSource):
                 prefix.
             local_path: The path to the destination where the downloaded file will be
                 stored.
+            preserve_mtime: If True, the modification time of the remote file will be
+                copied to the local file.
 
         Returns:
             The Path where the file was stored (same as `local_path`).
@@ -1490,17 +1574,26 @@ class FileCacheSourceS3(FileCacheSource):
             temp_local_path.unlink(missing_ok=True)
             raise
 
+        if preserve_mtime:
+            mtime_src = self.modification_time(sub_path)
+            if mtime_src is not None:
+                os.utime(local_path, (mtime_src, mtime_src))
+
         return local_path
 
     def upload(self,
                sub_path: str,
-               local_path: str | Path) -> Path:
+               local_path: str | Path,
+               *,
+               preserve_mtime: bool = False) -> Path:
         """Upload a local file to an AWS S3 bucket.
 
         Parameters:
             sub_path: The path of the destination file in the AWS S3 bucket given by the
                 source prefix.
             local_path: The full path of the local file to upload.
+            preserve_mtime: If True, the modification time of the local file will be
+                copied to the remote file. Not used for local files.
 
         Returns:
             The Path of the filename, which is the same as the `local_path` parameter.
@@ -1511,7 +1604,20 @@ class FileCacheSourceS3(FileCacheSource):
 
         local_path = Path(local_path)
 
-        self._client.upload_file(str(local_path), self._bucket_name, sub_path)
+        if not local_path.exists():
+            raise FileNotFoundError(f'File does not exist: {local_path}')
+
+        extra_args = {}
+        if preserve_mtime:
+            mtime_sec = local_path.stat().st_mtime
+            mtime_str = str(mtime_sec)
+            extra_args['Metadata'] = {'mtime': mtime_str}
+
+        if extra_args:
+            self._client.upload_file(str(local_path), self._bucket_name, sub_path,
+                                     ExtraArgs=extra_args)
+        else:
+            self._client.upload_file(str(local_path), self._bucket_name, sub_path)
 
         return local_path
 
@@ -1723,12 +1829,16 @@ class FileCacheSourceFake(FileCacheSource):
 
     def retrieve(self,
                  sub_path: str,
-                 local_path: str | Path) -> Path:
+                 local_path: str | Path,
+                 *,
+                 preserve_mtime: bool = False) -> Path:
         """Retrieve a file from the fake remote storage.
 
         Parameters:
             sub_path: The path of the file relative to the storage directory.
             local_path: The path where the file should be copied to.
+            preserve_mtime: If True, the modification time of the fake remote file will be
+                copied to the local file.
 
         Returns:
             The Path where the file was stored (same as local_path).
@@ -1757,16 +1867,24 @@ class FileCacheSourceFake(FileCacheSource):
             temp_local_path.unlink(missing_ok=True)
             raise
 
+        if preserve_mtime:
+            mtime_src = os.path.getmtime(source_path)
+            os.utime(local_path, (mtime_src, mtime_src))
+
         return local_path
 
     def upload(self,
                sub_path: str,
-               local_path: str | Path) -> Path:
+               local_path: str | Path,
+               *,
+               preserve_mtime: bool = False) -> Path:
         """Upload a file to the fake remote storage.
 
         Parameters:
             sub_path: The destination path relative to the storage directory.
             local_path: The path of the local file to upload.
+            preserve_mtime: If True, the modification time of the local file will be
+                copied to the remote file.
 
         Returns:
             The Path of the local file that was uploaded.
@@ -1793,6 +1911,10 @@ class FileCacheSourceFake(FileCacheSource):
         except Exception:
             temp_dest_path.unlink(missing_ok=True)
             raise
+
+        if preserve_mtime:
+            mtime_src = os.path.getmtime(local_path)
+            os.utime(dest_path, (mtime_src, mtime_src))
 
         return local_path
 

@@ -14,6 +14,8 @@ Welcome to ``filecache``'s documentation!
    :maxdepth: 2
    :caption: Contents:
 
+   introduction
+   examples
    module
 
 

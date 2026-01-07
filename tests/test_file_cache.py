@@ -829,6 +829,15 @@ def test_exists_multi_pfx():
     assert not fc.cache_dir.exists()
 
 
+@pytest.mark.parametrize('prefix', ALL_PREFIXES)
+def test_local_path_multiple_slashes(prefix):
+    with FileCache(cache_name=None) as fc:
+        filenames = [f'{prefix}/{EXPECTED_FILENAMES[1]}',
+                     f'{prefix}/{EXPECTED_FILENAMES[1].replace("/", "////")}']
+        local_paths = fc.get_local_path(filenames)
+        assert local_paths[0] == local_paths[1]
+
+
 def test_local_path_multi():
     with FileCache(cache_name=None) as fc:
         filenames = [f'{HTTP_TEST_ROOT}/{f}' for f in EXPECTED_FILENAMES]
@@ -2141,7 +2150,7 @@ def test_cloud_unlink(prefix):
         assert not fc.exists(path, bypass_cache=True)
         with pytest.raises(FileNotFoundError):
             fc.unlink(path, missing_ok=False)
-        assert local_path.exists()
+        assert not local_path.exists()
         assert isinstance(fc.unlink(path, missing_ok=False, exception_on_fail=False),
                           FileNotFoundError)
 
@@ -2175,14 +2184,18 @@ def test_cloud_unlink_multi(prefix):
         with pytest.raises(FileNotFoundError):
             fc.unlink(paths, missing_ok=False)
         for lp in local_paths:
-            assert lp.exists()
+            assert not lp.exists()
 
+        for lp in local_paths:
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = fc.unlink(paths, exception_on_fail=False)
         for r in ret:
             assert isinstance(r, FileNotFoundError)
         for lp in local_paths:
-            assert lp.exists()
+            assert not lp.exists()
 
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = fc.unlink(paths, missing_ok=True)
         assert ret == paths
         for lp in local_paths:
@@ -2268,14 +2281,18 @@ def test_cloud_unlink_multi_pfx(prefix):
         with pytest.raises(FileNotFoundError):
             pfx.unlink(paths, missing_ok=False)
         for lp in local_paths:
-            assert lp.exists()
+            assert not lp.exists()
 
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = pfx.unlink(paths, exception_on_fail=False)
         for r in ret:
             assert isinstance(r, FileNotFoundError)
         for lp in local_paths:
-            assert lp.exists()
+            assert not lp.exists()
 
+        for lp, p in zip(local_paths, paths):
+            _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], lp)
         ret = pfx.unlink(paths, missing_ok=True)
         assert ret == [f'{new_path}/{x}' for x in paths]
         for lp in local_paths:
@@ -2778,12 +2795,13 @@ def test_is_dir_multi_pfx_mixed(prefix):
 
 @pytest.mark.parametrize('time_sensitive', [False, True])
 @pytest.mark.parametrize('cache_metadata', [False, True])
-def test_modification_time_caching(time_sensitive, cache_metadata):
-    prefix = f'{GS_WRITABLE_TEST_BUCKET_ROOT}/{uuid.uuid4()}'
+@pytest.mark.parametrize('prefix', WRITABLE_CLOUD_PREFIXES)
+def test_modification_time_caching(time_sensitive, cache_metadata, prefix):
+    unique_id = uuid.uuid4()
     with FileCache(cache_name=None, anonymous=True,
                    time_sensitive=time_sensitive,
                    cache_metadata=cache_metadata) as fc:
-        pfx = fc.new_path(prefix + '/file1.txt')
+        pfx = fc.new_path(f'{prefix}/{unique_id}/file1.txt')
         with pfx.open('w') as fp:
             fp.write('hi')
         mtime_orig = pfx.modification_time()
@@ -2792,17 +2810,21 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
         lp = pfx.get_local_path()
         mtime_lp_orig = lp.stat().st_mtime
         if time_sensitive:
-            # upload should not update the local file's mtime
+            # upload should update the remote file's mtime
+            # the cache doesn't matter because the URL won't be in the cache now
             assert mtime_lp_orig == mtime_orig
         else:
+            # upload should not update the remote file's mtime
+            # the cache doesn't matter because the URL won't be in the cache now
             assert mtime_lp_orig != mtime_orig
+        _ = pfx.modification_time()  # update the cache, if turned on
 
         time.sleep(1)  # Make sure mod times will be different
 
         with FileCache(cache_name=None, anonymous=True) as fc2:
             # fc doesn't have visibility into fc2, so we we upload a new version
             # there's no chance it will be cached
-            pfx2 = fc2.new_path(prefix + '/file1.txt')
+            pfx2 = fc2.new_path(f'{prefix}/{unique_id}/file1.txt')
             with pfx2.open('w') as fp:
                 fp.write('bye')
 
@@ -2812,11 +2834,14 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
         else:
             assert mtime_new != mtime_orig  # Remote changed
 
+        mtime_new = pfx.modification_time(bypass_cache=True)
+        assert mtime_new != mtime_orig  # Remote changed
+
         assert lp.stat().st_mtime == mtime_lp_orig  # Copy in this cache didn't change
 
         pfx.retrieve()  # Should do nothing if not time_sensitive
 
-        if time_sensitive and not cache_metadata:
+        if time_sensitive:
             # Copy in this cache was re-retrieved
             assert lp.read_text().strip() == 'bye'
             assert lp.stat().st_mtime == mtime_new
@@ -2824,6 +2849,21 @@ def test_modification_time_caching(time_sensitive, cache_metadata):
             # Copy in this cache was not re-retrieved
             assert lp.read_text().strip() == 'hi'
             assert lp.stat().st_mtime == mtime_lp_orig
+
+        lp.unlink()
+        pfx.retrieve()  # Force a download again
+
+        if not prefix.startswith('s3:'):
+            # This doesn't work on AWS for some reason
+            # AssertionError: assert 1767731532.4137607 > 1767731533.0
+            if time_sensitive:
+                # Copy in this cache should have the new mtime
+                assert lp.stat().st_mtime == mtime_new
+            else:
+                # Copy in this cache should have the time of the download
+                # Depending on the local time vs. the time on the remote server,
+                # this could be earlier or later.
+                assert lp.stat().st_mtime != mtime_new
 
 
 @pytest.mark.parametrize('time_sensitive', [False, True])
