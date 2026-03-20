@@ -324,6 +324,14 @@ class FileCache:
 
         atexit.register(self._maybe_delete_cache)
 
+    def __str__(self) -> str:
+        """Return the cache directory path as the string representation."""
+        return str(self._cache_dir)
+
+    def __repr__(self) -> str:
+        """Return a string showing the class name and cache directory."""
+        return f'FileCache({self._cache_dir!r})'
+
     def _validate_nthreads(self,
                            nthreads: Optional[int]) -> int:
         if nthreads is not None and (not isinstance(nthreads, int) or nthreads <= 0):

@@ -353,6 +353,23 @@ def test_cache_name_named():
     assert not fc4.cache_dir.exists()
 
 
+def test_filecache_str_repr():
+    """Test FileCache __str__ and __repr__ (issue #21)."""
+    with FileCache(cache_name=None) as fc:
+        assert str(fc) == str(fc.cache_dir)
+        r = repr(fc)
+        assert r.startswith('FileCache(')
+        assert r.endswith(')')
+        assert str(fc.cache_dir) in r
+    fc2 = FileCache(cache_name='repr_test')
+    try:
+        assert str(fc2) == str(fc2.cache_dir)
+        assert 'FileCache(' in repr(fc2)
+        assert '_filecache_repr_test' in repr(fc2) or str(fc2.cache_dir) in repr(fc2)
+    finally:
+        fc2.delete_cache()
+
+
 def test_cache_name_bad():
     with pytest.raises(TypeError):
         FileCache(cache_name=5)

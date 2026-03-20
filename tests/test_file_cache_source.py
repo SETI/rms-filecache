@@ -63,6 +63,35 @@ def test_filesource_good():
     assert sl.exists(EXPECTED_DIR / EXPECTED_FILENAMES[1])
 
 
+def test_source_str_repr():
+    """Test FileCacheSource subclasses __str__ and __repr__ (issue #21)."""
+    sl = FileCacheSourceFile('file', '')
+    assert str(sl) == 'file://'
+    assert repr(sl) == "FileCacheSourceFile('file://', anonymous=False)"
+
+    http_src = FileCacheSourceHTTP('https', 'example.com')
+    assert str(http_src) == 'https://example.com'
+    assert repr(http_src) == "FileCacheSourceHTTP('https://example.com', anonymous=False)"
+
+    gs_src = FileCacheSourceGS('gs', 'my-bucket', anonymous=True)
+    assert str(gs_src) == 'gs://my-bucket'
+    assert repr(gs_src) == "FileCacheSourceGS('gs://my-bucket', anonymous=True)"
+
+    s3_src = FileCacheSourceS3('s3', 'my-bucket', anonymous=True)
+    assert str(s3_src) == 's3://my-bucket'
+    assert repr(s3_src) == "FileCacheSourceS3('s3://my-bucket', anonymous=True)"
+
+
+def test_fake_source_str_repr(tmp_path: Path):
+    """Test FileCacheSourceFake __str__ and __repr__ (issue #21)."""
+    fake = FileCacheSourceFake('fake', 'test-bucket', storage_dir=tmp_path)
+    assert str(fake) == 'fake://test-bucket'
+    assert "FileCacheSourceFake('fake://test-bucket'" in repr(fake)
+    assert 'anonymous=False' in repr(fake)
+    assert 'storage_dir=' in repr(fake)
+    assert str(tmp_path) in repr(fake)
+
+
 def test_source_notimp():
     with pytest.raises(TypeError):
         FileCacheSource('', '').exists('')
