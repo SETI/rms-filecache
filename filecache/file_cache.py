@@ -263,6 +263,7 @@ class FileCache:
         else:
             raise TypeError(f'cache_name argument {cache_name} is of improper type')
 
+        self._cache_name = cache_name
         is_shared = (cache_name is not None)
 
         self._delete_on_exit = (delete_on_exit if delete_on_exit is not None
@@ -335,6 +336,12 @@ class FileCache:
     @classmethod
     def registered_scheme_prefixes(self) -> tuple[str, ...]:
         return tuple([x + '://' for x in _SCHEME_CLASSES])
+
+    @property
+    def cache_name(self) -> str | None:
+        """The name of this cache, or None if unnamed."""
+
+        return self._cache_name
 
     @property
     def cache_dir(self) -> Path:
@@ -437,6 +444,62 @@ class FileCache:
         logger = _GLOBAL_LOGGER if self._logger is None else self._logger
         if logger:
             logger.error(msg)  # type: ignore
+
+    def __str__(self) -> str:
+        return str(self._cache_dir)
+
+    def __repr__(self) -> str:
+        parts = [repr(self._cache_name)]
+        if self._delete_on_exit:
+            parts.append('delete_on_exit=True')
+        if self._time_sensitive:
+            parts.append('time_sensitive=True')
+        if self._is_mp_safe:
+            parts.append('mp_safe=True')
+        if self._anonymous:
+            parts.append('anonymous=True')
+        if self._lock_timeout != 60:
+            parts.append(f'lock_timeout={self._lock_timeout!r}')
+        if self._nthreads != 8:
+            parts.append(f'nthreads={self._nthreads!r}')
+        return f'FileCache({", ".join(parts)})'
+
+    def clean_up_stale_locks(self) -> int:
+        """Remove stale lock files left behind by crashed processes.
+
+        Walks the cache directory looking for lock files. For each one found,
+        attempts to acquire the lock with no timeout. If the lock can be acquired,
+        no other process holds it and the lock file is stale; it is removed. If the
+        lock cannot be acquired, another process is actively using it and it is left
+        alone.
+
+        Returns:
+            The number of stale lock files removed.
+        """
+
+        removed = 0
+        if not self._cache_dir.is_dir():
+            return removed
+
+        for root, _dirs, files in os.walk(self._cache_dir):
+            for name in files:
+                if not name.startswith(self._LOCK_PREFIX):
+                    continue
+                lock_path = Path(root) / name
+                lock = filelock.FileLock(lock_path, timeout=0)
+                try:
+                    lock.acquire()
+                except filelock._error.Timeout:
+                    self._log_debug(f'Lock file is active, skipping: {lock_path}')
+                    continue
+                try:
+                    lock_path.unlink(missing_ok=True)
+                    removed += 1
+                    self._log_info(f'Removed stale lock file: {lock_path}')
+                finally:
+                    lock.release()
+
+        return removed
 
     @staticmethod
     def _split_url(url: str) -> tuple[str, str, str]:
@@ -1646,6 +1709,9 @@ class FileCache:
         # sit here and wait for all of the missing files to magically show up, or for
         # us to time out. If the lock file disappears but the destination file isn't
         # present, that means the other process failed in its download.
+        # We also check for stale locks left by crashed processes: if we can acquire
+        # a lock that we previously couldn't, the holding process must have exited
+        # without cleaning up.
         timed_out = False
         while wait_to_appear:
             new_wait_to_appear = []
@@ -1659,7 +1725,25 @@ class FileCache:
                         f'Another process failed to download {url}')
                     self._log_debug(f'  Download elsewhere failed: {url}')
                     continue
-                new_wait_to_appear.append((idx, url, local_path, lock_path))
+                # Check for stale lock: try acquiring it to see if the holding
+                # process has exited without cleaning up
+                stale_lock = filelock.FileLock(lock_path, timeout=0)
+                try:
+                    stale_lock.acquire()
+                except filelock._error.Timeout:
+                    # Lock is still actively held by another process
+                    new_wait_to_appear.append((idx, url, local_path, lock_path))
+                    continue
+                # We acquired the lock, meaning the previous holder exited.
+                # The file wasn't downloaded, so this is a failed download
+                # from a crashed process.
+                stale_lock.release()
+                lock_path.unlink(missing_ok=True)
+                self._log_info(f'  Cleaned up stale lock for: {url}')
+                func_ret[idx] = FileNotFoundError(
+                    f'Another process failed to download {url} '
+                    f'(stale lock cleaned up)')
+                files_not_exist.append(url)
 
             if not new_wait_to_appear:
                 break

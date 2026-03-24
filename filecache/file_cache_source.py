@@ -72,6 +72,15 @@ class FileCacheSource(ABC):
         # The _cache_subdir attribute is only used by the FileCache class
         self._cache_subdir = ''
 
+    def __str__(self) -> str:
+        return self._src_prefix
+
+    def __repr__(self) -> str:
+        parts = [f'{self._scheme!r}', f'{self._remote!r}']
+        if self._anonymous:
+            parts.append('anonymous=True')
+        return f'{type(self).__name__}({", ".join(parts)})'
+
     @classmethod
     @abstractmethod
     def schemes(self) -> tuple[str, ...]:
@@ -1786,6 +1795,14 @@ class FileCacheSourceFake(FileCacheSource):
         self._storage_dir = self._storage_base / remote
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._cache_subdir = self._src_prefix.replace('fake://', 'fake_')
+
+    def __repr__(self) -> str:
+        parts = [f'{self._scheme!r}', f'{self._remote!r}']
+        if self._anonymous:
+            parts.append('anonymous=True')
+        if self._storage_base != self._DEFAULT_STORAGE_DIR:
+            parts.append(f'storage_dir={str(self._storage_base)!r}')
+        return f'FileCacheSourceFake({", ".join(parts)})'
 
     @classmethod
     def schemes(cls) -> tuple[str, ...]:

@@ -18,6 +18,39 @@ from filecache import (FileCacheSource,
 from .test_file_cache import EXPECTED_DIR, EXPECTED_FILENAMES
 
 
+def test_source_str_repr():
+    sl = FileCacheSourceFile('file', '')
+    assert str(sl) == 'file://'
+    assert repr(sl) == "FileCacheSourceFile('file', '')"
+
+    sh = FileCacheSourceHTTP('https', 'example.com')
+    assert str(sh) == 'https://example.com'
+    assert repr(sh) == "FileCacheSourceHTTP('https', 'example.com')"
+
+    sg = FileCacheSourceGS('gs', 'my-bucket', anonymous=True)
+    assert str(sg) == 'gs://my-bucket'
+    assert repr(sg) == "FileCacheSourceGS('gs', 'my-bucket', anonymous=True)"
+
+    ss = FileCacheSourceS3('s3', 'my-bucket')
+    assert str(ss) == 's3://my-bucket'
+    assert repr(ss) == "FileCacheSourceS3('s3', 'my-bucket')"
+
+    FileCacheSourceFake.delete_default_storage_dir()
+    try:
+        sf = FileCacheSourceFake('fake', 'test-bucket')
+        assert str(sf) == 'fake://test-bucket'
+        assert repr(sf) == "FileCacheSourceFake('fake', 'test-bucket')"
+    finally:
+        FileCacheSourceFake.delete_default_storage_dir()
+
+
+def test_source_fake_repr_custom_storage(tmp_path: Path):
+    sf = FileCacheSourceFake('fake', 'bucket', storage_dir=tmp_path)
+    r = repr(sf)
+    assert r.startswith("FileCacheSourceFake('fake', 'bucket'")
+    assert 'storage_dir=' in r
+
+
 def test_source_bad():
     with pytest.raises(ValueError):
         FileCacheSourceFile('fred', 'hi')

@@ -197,6 +197,24 @@ src2.retrieve('subdir1/subdir2a/binary1.bin', 'local_file2.bin')
 
 Details of each class are available in the [module documentation](https://rms-filecache.readthedocs.io/en/latest/module.html).
 
+## Stale Lock Cleanup
+
+When using shared caches with multiprocessor-safe locking (`mp_safe=True`), a process that
+crashes while downloading a file may leave behind a lock file. While the OS-level lock is
+released on process exit, the lock file remains on disk and can cause other processes to
+wait or time out. `FileCache` provides a method to clean up these stale locks:
+
+```python
+fc = FileCache('shared-cache')
+removed = fc.clean_up_stale_locks()
+print(f'Cleaned up {removed} stale lock(s)')
+```
+
+The method walks the cache directory, identifies lock files that are not actively held by
+any process, and removes them. Active locks held by running processes are left untouched.
+Additionally, the multi-file retrieval path automatically detects and cleans up stale locks
+from crashed processes during the download wait loop.
+
 # Contributing
 
 Information on contributing to this package can be found in the

@@ -180,6 +180,15 @@ def test__repr():
     assert repr(FCPath(Path('a/b'))) == "FCPath('a/b')"
     assert repr(FCPath(r'\a\b')) == "FCPath('/a/b')"
 
+    r = repr(FCPath('a/b', anonymous=True))
+    assert r == "FCPath('a/b', anonymous=True)"
+
+    r = repr(FCPath('a/b', lock_timeout=30))
+    assert r == "FCPath('a/b', lock_timeout=30)"
+
+    r = repr(FCPath('a/b', anonymous=False, lock_timeout=10, nthreads=4))
+    assert r == "FCPath('a/b', anonymous=False, lock_timeout=10, nthreads=4)"
+
 
 def test_comparison():
     p1a = FCPath('/a/b/c1.py')

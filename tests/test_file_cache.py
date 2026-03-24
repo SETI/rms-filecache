@@ -1070,6 +1070,82 @@ def test_cleanup_locking_bad():
             fp.write('A')
 
 
+def test_clean_up_stale_locks():
+    with FileCache(cache_name=None, mp_safe=True) as fc:
+        local_path = fc.get_local_path('gs://test/test.txt')
+        lock_path = local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}'
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text('stale')
+        assert lock_path.is_file()
+        removed = fc.clean_up_stale_locks()
+        assert removed == 1
+        assert not lock_path.is_file()
+
+
+def test_clean_up_stale_locks_active():
+    with FileCache(cache_name=None, mp_safe=True) as fc:
+        local_path = fc.get_local_path('gs://test/test.txt')
+        lock_path = local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}'
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock = filelock.FileLock(lock_path, timeout=0)
+        lock.acquire()
+        try:
+            removed = fc.clean_up_stale_locks()
+            assert removed == 0
+            assert lock_path.is_file()
+        finally:
+            lock.release()
+            lock_path.unlink(missing_ok=True)
+
+
+def test_clean_up_stale_locks_empty():
+    with FileCache(cache_name=None) as fc:
+        removed = fc.clean_up_stale_locks()
+        assert removed == 0
+
+
+def test_clean_up_stale_locks_multiple():
+    with FileCache(cache_name=None, mp_safe=True) as fc:
+        for i in range(3):
+            local_path = fc.get_local_path(f'gs://test/test{i}.txt')
+            lock_path = local_path.parent / f'{fc._LOCK_PREFIX}{local_path.name}'
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text('stale')
+        removed = fc.clean_up_stale_locks()
+        assert removed == 3
+
+
+def test_filecache_str_repr():
+    with FileCache(cache_name=None) as fc:
+        assert str(fc) == str(fc.cache_dir)
+        r = repr(fc)
+        assert r.startswith('FileCache(None')
+        assert 'delete_on_exit=True' in r or r.startswith('FileCache(None)')
+
+    with FileCache('test-repr-cache', delete_on_exit=True) as fc:
+        assert str(fc) == str(fc.cache_dir)
+        r = repr(fc)
+        assert r.startswith("FileCache('test-repr-cache'")
+        assert 'mp_safe=True' in r
+
+    with FileCache(cache_name=None, time_sensitive=True,
+                   anonymous=True, lock_timeout=30,
+                   nthreads=4) as fc:
+        r = repr(fc)
+        assert 'time_sensitive=True' in r
+        assert 'anonymous=True' in r
+        assert 'lock_timeout=30' in r
+        assert 'nthreads=4' in r
+
+
+def test_filecache_cache_name():
+    with FileCache(cache_name=None) as fc:
+        assert fc.cache_name is None
+
+    with FileCache('test-name-cache', delete_on_exit=True) as fc:
+        assert fc.cache_name == 'test-name-cache'
+
+
 def test_bad_cache_dir():
     with pytest.raises(ValueError):
         with FileCache(cache_name=None) as fc:
