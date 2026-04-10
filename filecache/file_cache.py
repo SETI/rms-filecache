@@ -38,6 +38,7 @@ from .file_cache_path import FCPath
 from .file_cache_types import (StrOrPathOrSeqType,
                                UrlToPathFuncOrSeqType,
                                UrlToUrlFuncOrSeqType)
+from .exceptions import UploadFailed
 
 
 # Global cache of all instantiated FileCacheSource since they may involve opening
@@ -1600,7 +1601,7 @@ class FileCache:
                 except filelock._error.Timeout:
                     self._log_debug(f'    Failed to lock: {sub_path}')
                     wait_to_appear.append((idx, f'{source_pfx}{sub_path}', local_path,
-                                           lock_path))
+                                           lock_path, source, sub_path))
                     continue
                 lock_list.append((lock_path, lock))
                 source_idxes.append(idx)
@@ -1644,12 +1645,29 @@ class FileCache:
         # If wait_to_appear is not empty, then we failed to acquire at least one lock,
         # which means that another process was downloading the file. So now we just
         # sit here and wait for all of the missing files to magically show up, or for
-        # us to time out. If the lock file disappears but the destination file isn't
-        # present, that means the other process failed in its download.
+        # us to time out.
+        #
+        # In each iteration we also check for stale locks: a stale lock exists when the
+        # lock file is present but the process that created it has died (the OS released
+        # the advisory flock, but did not delete the file). We detect a stale lock by
+        # attempting a non-blocking acquire -- if it succeeds, no live process holds the
+        # lock, so we steal it and initiate the download ourselves.
+        #
+        # Race-condition guarantee: multiple waiting processes may all notice the same
+        # stale lock and all attempt `lock.acquire(timeout=0)` simultaneously. Because
+        # the underlying flock(2) call is atomic, exactly one process wins the race; the
+        # others receive a Timeout and remain in the wait list. The winner downloads the
+        # file atomically (write to temp path + rename), so the losers will find the
+        # completed file on their next poll iteration.
+        #
+        # If the lock file disappears without the destination file appearing, that means
+        # the other process failed (or cleaned up after itself on error).
         timed_out = False
         while wait_to_appear:
             new_wait_to_appear = []
-            for idx, url, local_path, lock_path in wait_to_appear:
+            stale_lock_items = []  # Items whose locks we have stolen
+
+            for idx, url, local_path, lock_path, source, sub_path in wait_to_appear:
                 if local_path.is_file():
                     func_ret[idx] = local_path
                     self._log_debug(f'  Downloaded elsewhere: {url}')
@@ -1659,7 +1677,36 @@ class FileCache:
                         f'Another process failed to download {url}')
                     self._log_debug(f'  Download elsewhere failed: {url}')
                     continue
-                new_wait_to_appear.append((idx, url, local_path, lock_path))
+                # Lock file exists and destination is absent. Check whether the lock is
+                # stale (flock released by a crashed process but file not cleaned up).
+                stale_lock = filelock.FileLock(lock_path, timeout=0)
+                try:
+                    stale_lock.acquire()
+                    # Acquired with timeout=0 → no live process holds this lock.
+                    stale_lock_items.append(
+                        (idx, url, local_path, lock_path, stale_lock, source, sub_path))
+                    self._log_debug(f'  Stale lock detected for {url}, will re-download')
+                except filelock._error.Timeout:
+                    # Lock is actively held -- another process is still downloading.
+                    new_wait_to_appear.append(
+                        (idx, url, local_path, lock_path, source, sub_path))
+
+            # Download all files whose stale locks we have just acquired.
+            for idx, url, local_path, lock_path, stale_lock, source, sub_path in (
+                    stale_lock_items):
+                try:
+                    ret = source.retrieve(sub_path, local_path, preserve_mtime=False)
+                    func_ret[idx] = ret
+                    self._download_counter += 1
+                    self._log_debug(f'  Re-downloaded after stale lock recovery: {url}')
+                except Exception as e:
+                    func_ret[idx] = e
+                    files_not_exist.append(url)
+                    self._log_debug(
+                        f'  Download failed after stale lock recovery: {url}: {e!r}')
+                finally:
+                    stale_lock.release()
+                    lock_path.unlink(missing_ok=True)
 
             if not new_wait_to_appear:
                 break
@@ -1670,7 +1717,7 @@ class FileCache:
                     'Timeout while waiting for another process to finish downloading')
                 self._log_debug(
                     '  Timeout while waiting for another process to finish downloading:')
-                for idx, url, local_path, lock_path in wait_to_appear:
+                for idx, url, local_path, lock_path, source, sub_path in wait_to_appear:
                     func_ret[idx] = exc
                     self._log_debug(f'    {url}')
                 if exception_on_fail:
@@ -1923,15 +1970,15 @@ class FileCache:
                         pass
 
         if exception_on_fail:
-            exc_str = ''
-            if files_not_exist:
-                exc_str += f"File(s) do not exist: {', '.join(files_not_exist)}"
-            if files_failed:
-                if exc_str:
-                    exc_str += ' AND '
-                exc_str += f"Failed to upload file(s): {', '.join(files_failed)}"
-            if exc_str:
-                raise FileNotFoundError(exc_str)
+            if files_not_exist and not files_failed:
+                raise FileNotFoundError(
+                    f"File(s) do not exist: {', '.join(files_not_exist)}")
+            elif files_failed:
+                exc_str = f"Failed to upload file(s): {', '.join(files_failed)}"
+                if files_not_exist:
+                    exc_str = (f"File(s) do not exist: {', '.join(files_not_exist)}"
+                               f' AND {exc_str}')
+                raise UploadFailed(exc_str)
 
         return cast(list[Union[Path, Exception]], func_ret)
 

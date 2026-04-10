@@ -174,6 +174,7 @@ from .file_cache_source import (FileCacheSource,  # noqa: ignore E401
                                 FileCacheSourceGS,
                                 FileCacheSourceS3,
                                 FileCacheSourceFake)
+from .exceptions import FileCacheError, UploadFailed  # noqa: ignore E401
 
 __all__ = ['get_global_logger',
            'register_filecachesource',
@@ -186,4 +187,6 @@ __all__ = ['get_global_logger',
            'FileCacheSourceHTTP',
            'FileCacheSourceGS',
            'FileCacheSourceS3',
-           'FileCacheSourceFake']
+           'FileCacheSourceFake',
+           'FileCacheError',
+           'UploadFailed']

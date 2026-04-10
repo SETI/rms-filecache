@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import platform
 import tempfile
+import threading
 import time
 import uuid
 
@@ -1055,6 +1056,179 @@ def test_locking_multi_pfx_2():
     assert not fc.cache_dir.exists()
 
 
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason='Uses POSIX fcntl for stale-lock simulation')
+def test_stale_lock_single():
+    """A stale lock (file exists, no flock held) must not block a single-file retrieve.
+
+    We simulate a stale lock by acquiring the flock with raw fcntl, then releasing
+    only the flock (leaving the lock file on disk) before the retrieve.  On the
+    next call, filelock should acquire the lock immediately because no process
+    holds it.
+    """
+    import fcntl
+
+    with FileCache(delete_on_exit=True) as fc:
+        filename = EXPECTED_FILENAMES[0]
+        local_path = (fc.cache_dir /
+                      (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' + filename))
+        lock_path = fc._lock_path(local_path)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create and hold the lock via raw fcntl so we can release the flock without
+        # deleting the file (simulating a process that crashed).
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        # Release the flock but keep the file -- this is the "stale lock" state.
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+        # The lock file exists, but nobody holds the flock.  The retrieve must
+        # succeed rather than raising a TimeoutError.
+        path = fc.retrieve(f'{HTTP_TEST_ROOT}/{filename}', lock_timeout=0)
+        assert isinstance(path, Path)
+        assert path.is_file()
+        _compare_to_expected_path(path, filename)
+        assert fc.download_counter == 1
+        assert fc.upload_counter == 0
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason='Uses POSIX fcntl for stale-lock simulation')
+def test_stale_lock_multi():
+    """A stale lock must not permanently block multi-file retrieval.
+
+    We hold the flock for the first file from a background thread, trigger the
+    multi-file download (which puts file[0] into wait_to_appear), then simulate
+    a crash by releasing only the flock (but not deleting the lock file) while
+    the wait loop is running.  The stale-lock detection code must steal the lock
+    and complete the download without timing out.
+
+    Race-condition guarantee: the background thread uses a threading.Event to
+    synchronise so that the flock is released only after the main thread's
+    retrieve call has entered the wait_to_appear loop.  Because only one process
+    can win the flock race, the main thread is guaranteed to be the sole
+    downloader of file[0] after stealing the stale lock.
+    """
+    import fcntl
+
+    with FileCache(delete_on_exit=True) as fc:
+        filename0 = EXPECTED_FILENAMES[0]
+        local_path0 = (fc.cache_dir /
+                       (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' + filename0))
+        lock_path0 = fc._lock_path(local_path0)
+        lock_path0.parent.mkdir(parents=True, exist_ok=True)
+
+        # Phase-control events
+        flock_held = threading.Event()   # signalled once the raw flock is held
+        flock_release = threading.Event()  # signalled when the "crash" should happen
+
+        def holder_thread() -> None:
+            """Hold the flock until told to "crash", then release without cleanup."""
+            fd = os.open(str(lock_path0), os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock_held.set()
+            flock_release.wait()
+            # Simulate crash: release flock, leave file on disk.
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+        t = threading.Thread(target=holder_thread, daemon=True)
+        t.start()
+        flock_held.wait()  # make sure the flock is held before we start retrieve
+
+        results: list[list[Path]] = []
+        exc_holder: list[Exception] = []
+
+        def do_retrieve() -> None:
+            try:
+                filenames = [f'{HTTP_TEST_ROOT}/{f}' for f in EXPECTED_FILENAMES]
+                ret = fc.retrieve(filenames, lock_timeout=15)
+                results.append(ret)  # type: ignore[arg-type]
+            except Exception as e:
+                exc_holder.append(e)
+
+        retrieve_thread = threading.Thread(target=do_retrieve, daemon=True)
+        retrieve_thread.start()
+
+        # Give the retrieve thread time to enter the wait_to_appear loop.
+        time.sleep(0.3)
+
+        # Signal the holder to "crash" -- releases flock, keeps the lock file.
+        flock_release.set()
+        t.join(timeout=5)
+        assert not t.is_alive(), 'holder thread did not finish'
+
+        retrieve_thread.join(timeout=20)
+        assert not retrieve_thread.is_alive(), 'retrieve thread timed out (stale lock not recovered)'
+
+        assert not exc_holder, f'retrieve raised: {exc_holder[0]}'
+        assert results, 'retrieve returned no result'
+        for r in results[0]:
+            assert isinstance(r, Path), f'Expected Path, got {r!r}'
+        assert fc.download_counter == len(EXPECTED_FILENAMES)
+        assert fc.upload_counter == 0
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason='Uses POSIX fcntl for stale-lock simulation')
+def test_stale_lock_multi_pfx():
+    """Same as test_stale_lock_multi but exercised through the FCPath interface."""
+    import fcntl
+
+    with FileCache(delete_on_exit=True) as fc:
+        pfx = fc.new_path(HTTP_TEST_ROOT, lock_timeout=15)
+        filename0 = EXPECTED_FILENAMES[0]
+        local_path0 = (fc.cache_dir /
+                       (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' + filename0))
+        lock_path0 = fc._lock_path(local_path0)
+        lock_path0.parent.mkdir(parents=True, exist_ok=True)
+
+        flock_held = threading.Event()
+        flock_release = threading.Event()
+
+        def holder_thread() -> None:
+            fd = os.open(str(lock_path0), os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock_held.set()
+            flock_release.wait()
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+        t = threading.Thread(target=holder_thread, daemon=True)
+        t.start()
+        flock_held.wait()
+
+        results: list[list[Path]] = []
+        exc_holder: list[Exception] = []
+
+        def do_retrieve() -> None:
+            try:
+                ret = pfx.retrieve(EXPECTED_FILENAMES)
+                results.append(ret)  # type: ignore[arg-type]
+            except Exception as e:
+                exc_holder.append(e)
+
+        retrieve_thread = threading.Thread(target=do_retrieve, daemon=True)
+        retrieve_thread.start()
+
+        time.sleep(0.3)
+        flock_release.set()
+        t.join(timeout=5)
+        assert not t.is_alive()
+
+        retrieve_thread.join(timeout=20)
+        assert not retrieve_thread.is_alive(), 'retrieve thread timed out (stale lock not recovered)'
+
+        assert not exc_holder, f'retrieve raised: {exc_holder[0]}'
+        assert results
+        for r in results[0]:
+            assert isinstance(r, Path)
+        assert fc.download_counter == len(EXPECTED_FILENAMES)
+        assert fc.upload_counter == 0
+
+
 def test_cleanup_locking_bad():
     logger = MyLogger()
     with FileCache(cache_name=None, logger=logger) as fc:
@@ -1330,15 +1504,13 @@ def test_cloud_upl_bad_2(prefix):
         filename = 'test_file.txt'
         local_path = fc.get_local_path(f'{new_path}/{filename}')
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
-        with pytest.raises(Exception) as e:
+        with pytest.raises(filecache.UploadFailed):
             fc.upload(f'{new_path}/{filename}', anonymous=True)
-        assert not isinstance(e.type, FileNotFoundError)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         ret = fc.upload(f'{new_path}/{filename}', anonymous=True,
                         exception_on_fail=False)
-        assert isinstance(ret, Exception)
-        assert not isinstance(e, FileNotFoundError)
+        assert isinstance(ret, filecache.UploadFailed)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
     assert not fc.cache_dir.exists()
@@ -1352,17 +1524,14 @@ def test_cloud_upl_pfx_bad_2(prefix):
         filename = 'test_file.txt'
         local_path = pfx.get_local_path(filename)
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
-        with pytest.raises(Exception) as e:
+        with pytest.raises(filecache.UploadFailed):
             pfx.upload(filename)
-        assert not isinstance(e.type, FileNotFoundError)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         assert pfx.download_counter == 0
         assert pfx.upload_counter == 0
         ret = pfx.upload(filename, exception_on_fail=False)
-        assert not isinstance(e, FileNotFoundError)
-        assert isinstance(ret, Exception)
-        assert not isinstance(e, FileNotFoundError)
+        assert isinstance(ret, filecache.UploadFailed)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         assert pfx.download_counter == 0
@@ -1873,8 +2042,7 @@ def test_cloud_upl_multi_bad_3(prefix):
         ret = fc.upload(paths, anonymous=True, exception_on_fail=False)
         assert isinstance(ret[0], FileNotFoundError)
         for r, lp in zip(ret[1:], local_paths[1:]):
-            assert isinstance(r, Exception)
-            assert not isinstance(r, FileNotFoundError)
+            assert isinstance(r, filecache.UploadFailed)
         assert not fc.exists(paths[0], anonymous=True)
         for path in paths[1:]:
             assert fc.exists(path, anonymous=True)
@@ -1895,8 +2063,7 @@ def test_cloud_upl_multi_pfx_bad_3(prefix):
         ret = pfx.upload(paths, exception_on_fail=False)
         assert isinstance(ret[0], FileNotFoundError)
         for r, lp in zip(ret[1:], local_paths[1:]):
-            assert isinstance(r, Exception)
-            assert not isinstance(r, FileNotFoundError)
+            assert isinstance(r, filecache.UploadFailed)
         assert not pfx.exists(paths[0])
         for path in paths[1:]:
             assert pfx.exists(path)
