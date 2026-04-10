@@ -28,7 +28,6 @@ from google.cloud import storage as gs_storage  # type: ignore
 import google.api_core.exceptions
 
 
-
 class FileCacheSource(ABC):
     """Superclass for all remote file source classes. Do not use directly.
 
