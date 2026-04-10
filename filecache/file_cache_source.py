@@ -73,7 +73,7 @@ class FileCacheSource(ABC):
         self._cache_subdir = ''
 
     def __repr__(self) -> str:
-        return (f'{type(self).__name__}({self._src_prefix!r}, '
+        return (f'{type(self).__name__}({self._scheme!r}, {self._remote!r}, '
                 f'anonymous={self._anonymous!r})')
 
     def __str__(self) -> str:

@@ -548,6 +548,10 @@ class FCPath:
             parts.append(f'lock_timeout={self._lock_timeout!r}')
         if self._nthreads is not None:
             parts.append(f'nthreads={self._nthreads!r}')
+        if self._url_to_url is not None:
+            parts.append(f'url_to_url={self._url_to_url!r}')
+        if self._url_to_path is not None:
+            parts.append(f'url_to_path={self._url_to_path!r}')
         return f'FCPath({", ".join(parts)})'
 
     def __eq__(self, other: object) -> bool:

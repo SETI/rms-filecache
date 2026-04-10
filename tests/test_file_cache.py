@@ -1152,8 +1152,16 @@ def test_stale_lock_multi():
         retrieve_thread = threading.Thread(target=do_retrieve, daemon=True)
         retrieve_thread.start()
 
-        # Give the retrieve thread time to enter the wait_to_appear loop.
-        time.sleep(0.3)
+        # Wait until all non-blocked files have downloaded and retrieve_thread is
+        # still alive — at that point it must be blocked in the wait_to_appear loop.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if (fc.download_counter == len(EXPECTED_FILENAMES) - 1 and
+                    retrieve_thread.is_alive()):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail('retrieve never reached the blocked/stale-lock state')
 
         # Signal the holder to "crash" -- releases flock, keeps the lock file.
         flock_release.set()
@@ -1213,7 +1221,17 @@ def test_stale_lock_multi_pfx():
         retrieve_thread = threading.Thread(target=do_retrieve, daemon=True)
         retrieve_thread.start()
 
-        time.sleep(0.3)
+        # Wait until all non-blocked files have downloaded and retrieve_thread is
+        # still alive — at that point it must be blocked in the wait_to_appear loop.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if (fc.download_counter == len(EXPECTED_FILENAMES) - 1 and
+                    retrieve_thread.is_alive()):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail('retrieve never reached the blocked/stale-lock state')
+
         flock_release.set()
         t.join(timeout=5)
         assert not t.is_alive()
@@ -3131,7 +3149,7 @@ def test_modification_time_caching_multi(time_sensitive, cache_metadata, mp_safe
 def test_filecache_repr_str():
     with FileCache(cache_name=None) as fc:
         r = repr(fc)
-        assert r.startswith('FileCache(')
+        assert r.startswith('FileCache(None,')
         assert 'anonymous=False' in r
         assert 'lock_timeout=60' in r
         assert 'nthreads=8' in r
@@ -3141,6 +3159,7 @@ def test_filecache_repr_str():
     with FileCache('repr-test', anonymous=True, lock_timeout=30, nthreads=4,
                    delete_on_exit=True) as fc:
         r = repr(fc)
+        assert r.startswith("FileCache('repr-test',")
         assert 'anonymous=True' in r
         assert 'lock_timeout=30' in r
         assert 'nthreads=4' in r
@@ -3173,25 +3192,25 @@ def test_filecachesource_repr_str():
 
     src_gs = FileCacheSourceGS('gs', 'rms-filecache-tests', anonymous=True)
     r = repr(src_gs)
-    assert r == "FileCacheSourceGS('gs://rms-filecache-tests', anonymous=True)"
+    assert r == "FileCacheSourceGS('gs', 'rms-filecache-tests', anonymous=True)"
     assert str(src_gs) == 'gs://rms-filecache-tests'
 
     src_s3 = FileCacheSourceS3('s3', 'rms-filecache-tests', anonymous=True)
     r = repr(src_s3)
-    assert r == "FileCacheSourceS3('s3://rms-filecache-tests', anonymous=True)"
+    assert r == "FileCacheSourceS3('s3', 'rms-filecache-tests', anonymous=True)"
     assert str(src_s3) == 's3://rms-filecache-tests'
 
     src_http = FileCacheSourceHTTP('https', 'storage.googleapis.com', anonymous=False)
     r = repr(src_http)
-    assert r == "FileCacheSourceHTTP('https://storage.googleapis.com', anonymous=False)"
+    assert r == "FileCacheSourceHTTP('https', 'storage.googleapis.com', anonymous=False)"
     assert str(src_http) == 'https://storage.googleapis.com'
 
     src_file = FileCacheSourceFile('file', '', anonymous=False)
     r = repr(src_file)
-    assert r == "FileCacheSourceFile('file://', anonymous=False)"
+    assert r == "FileCacheSourceFile('file', '', anonymous=False)"
     assert str(src_file) == 'file://'
 
     src_fake = FileCacheSourceFake('fake', 'fake-bucket', anonymous=False)
     r = repr(src_fake)
-    assert r == "FileCacheSourceFake('fake://fake-bucket', anonymous=False)"
+    assert r == "FileCacheSourceFake('fake', 'fake-bucket', anonymous=False)"
     assert str(src_fake) == 'fake://fake-bucket'

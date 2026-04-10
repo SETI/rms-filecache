@@ -264,6 +264,7 @@ class FileCache:
             raise TypeError(f'cache_name argument {cache_name} is of improper type')
 
         is_shared = (cache_name is not None)
+        self._cache_name = cache_name
 
         self._delete_on_exit = (delete_on_exit if delete_on_exit is not None
                                 else not is_shared)
@@ -419,7 +420,7 @@ class FileCache:
         return cast(Logger, self._logger)
 
     def __repr__(self) -> str:
-        return (f'FileCache({self._cache_dir.name!r}, '
+        return (f'FileCache({self._cache_name!r}, '
                 f'anonymous={self._anonymous!r}, '
                 f'lock_timeout={self._lock_timeout!r}, '
                 f'nthreads={self._nthreads!r})')
