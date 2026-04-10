@@ -1741,7 +1741,7 @@ class FileCache:
                 break
 
             wait_to_appear = new_wait_to_appear
-            if time.time() - start_time > lock_timeout:
+            if lock_timeout >= 0 and time.time() - start_time > lock_timeout:
                 exc = TimeoutError(
                     'Timeout while waiting for another process to finish downloading')
                 self._log_debug(

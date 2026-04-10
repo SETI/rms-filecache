@@ -1329,3 +1329,16 @@ def test_fcpath_repr_str():
         p3 = FCPath('gs://bucket/x', filecache=fc)
         r3 = repr(p3)
         assert 'filecache=' in r3
+
+    # url_to_url and url_to_path appear in repr when set
+    def _identity_url(scheme, remote, path):
+        return None
+
+    def _identity_path(scheme, remote, path, cache_dir, cache_subdir):
+        return None
+
+    p4 = FCPath('gs://bucket/y',
+                url_to_url=_identity_url, url_to_path=_identity_path)
+    r4 = repr(p4)
+    assert 'url_to_url=' in r4
+    assert 'url_to_path=' in r4

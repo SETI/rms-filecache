@@ -1136,7 +1136,7 @@ def test_stale_lock_multi():
 
         t = threading.Thread(target=holder_thread, daemon=True)
         t.start()
-        flock_held.wait()  # make sure the flock is held before we start retrieve
+        assert flock_held.wait(timeout=5), 'holder thread never acquired flock'
 
         results: list[list[Path]] = []
         exc_holder: list[Exception] = []
@@ -1206,7 +1206,7 @@ def test_stale_lock_multi_pfx():
 
         t = threading.Thread(target=holder_thread, daemon=True)
         t.start()
-        flock_held.wait()
+        assert flock_held.wait(timeout=5), 'holder thread never acquired flock'
 
         results: list[list[Path]] = []
         exc_holder: list[Exception] = []
