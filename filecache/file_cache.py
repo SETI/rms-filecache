@@ -38,7 +38,6 @@ from .file_cache_path import FCPath
 from .file_cache_types import (StrOrPathOrSeqType,
                                UrlToPathFuncOrSeqType,
                                UrlToUrlFuncOrSeqType)
-from .exceptions import UploadFailed
 
 
 # Global cache of all instantiated FileCacheSource since they may involve opening
@@ -418,6 +417,15 @@ class FileCache:
         if self._logger is None:
             return _GLOBAL_LOGGER
         return cast(Logger, self._logger)
+
+    def __repr__(self) -> str:
+        return (f'FileCache({self._cache_dir.name!r}, '
+                f'anonymous={self._anonymous!r}, '
+                f'lock_timeout={self._lock_timeout!r}, '
+                f'nthreads={self._nthreads!r})')
+
+    def __str__(self) -> str:
+        return str(self._cache_dir)
 
     def _log_debug(self, msg: str) -> None:
         logger = self.logger
@@ -1978,7 +1986,7 @@ class FileCache:
                 if files_not_exist:
                     exc_str = (f"File(s) do not exist: {', '.join(files_not_exist)}"
                                f' AND {exc_str}')
-                raise UploadFailed(exc_str)
+                raise FileNotFoundError(exc_str)
 
         return cast(list[Union[Path, Exception]], func_ret)
 

@@ -539,7 +539,16 @@ class FCPath:
                      for i, j in zip(indices[:-1], indices[1:]))
 
     def __repr__(self) -> str:
-        return f'FCPath({self._path!r})'
+        parts = [repr(self._path)]
+        if self._filecache is not None:
+            parts.append(f'filecache={self._filecache!r}')
+        if self._anonymous is not None:
+            parts.append(f'anonymous={self._anonymous!r}')
+        if self._lock_timeout is not None:
+            parts.append(f'lock_timeout={self._lock_timeout!r}')
+        if self._nthreads is not None:
+            parts.append(f'nthreads={self._nthreads!r}')
+        return f'FCPath({", ".join(parts)})'
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, FCPath):

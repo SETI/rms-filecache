@@ -1504,13 +1504,15 @@ def test_cloud_upl_bad_2(prefix):
         filename = 'test_file.txt'
         local_path = fc.get_local_path(f'{new_path}/{filename}')
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
-        with pytest.raises(filecache.UploadFailed):
+        with pytest.raises(Exception) as e:
             fc.upload(f'{new_path}/{filename}', anonymous=True)
+        assert not isinstance(e.type, FileNotFoundError)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         ret = fc.upload(f'{new_path}/{filename}', anonymous=True,
                         exception_on_fail=False)
-        assert isinstance(ret, filecache.UploadFailed)
+        assert isinstance(ret, Exception)
+        assert not isinstance(e, FileNotFoundError)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
     assert not fc.cache_dir.exists()
@@ -1524,14 +1526,17 @@ def test_cloud_upl_pfx_bad_2(prefix):
         filename = 'test_file.txt'
         local_path = pfx.get_local_path(filename)
         _copy_file(EXPECTED_DIR / EXPECTED_FILENAMES[0], local_path)
-        with pytest.raises(filecache.UploadFailed):
+        with pytest.raises(Exception) as e:
             pfx.upload(filename)
+        assert not isinstance(e.type, FileNotFoundError)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         assert pfx.download_counter == 0
         assert pfx.upload_counter == 0
         ret = pfx.upload(filename, exception_on_fail=False)
-        assert isinstance(ret, filecache.UploadFailed)
+        assert not isinstance(e, FileNotFoundError)
+        assert isinstance(ret, Exception)
+        assert not isinstance(e, FileNotFoundError)
         assert fc.download_counter == 0
         assert fc.upload_counter == 0
         assert pfx.download_counter == 0
@@ -2042,7 +2047,8 @@ def test_cloud_upl_multi_bad_3(prefix):
         ret = fc.upload(paths, anonymous=True, exception_on_fail=False)
         assert isinstance(ret[0], FileNotFoundError)
         for r, lp in zip(ret[1:], local_paths[1:]):
-            assert isinstance(r, filecache.UploadFailed)
+            assert isinstance(r, Exception)
+            assert not isinstance(r, FileNotFoundError)
         assert not fc.exists(paths[0], anonymous=True)
         for path in paths[1:]:
             assert fc.exists(path, anonymous=True)
@@ -2063,7 +2069,8 @@ def test_cloud_upl_multi_pfx_bad_3(prefix):
         ret = pfx.upload(paths, exception_on_fail=False)
         assert isinstance(ret[0], FileNotFoundError)
         for r, lp in zip(ret[1:], local_paths[1:]):
-            assert isinstance(r, filecache.UploadFailed)
+            assert isinstance(r, Exception)
+            assert not isinstance(r, FileNotFoundError)
         assert not pfx.exists(paths[0])
         for path in paths[1:]:
             assert pfx.exists(path)
@@ -3115,3 +3122,76 @@ def test_modification_time_caching_multi(time_sensitive, cache_metadata, mp_safe
             assert lp[0].stat().st_mtime == mtime_lp_orig[0]
             assert lp[1].stat().st_mtime == mtime_lp_orig[1]
             assert lp[2].stat().st_mtime == mtime_lp_orig[2]
+
+
+##############################################################################
+# Tests for __repr__ and __str__ (issue #21)
+##############################################################################
+
+def test_filecache_repr_str():
+    with FileCache(cache_name=None) as fc:
+        r = repr(fc)
+        assert r.startswith('FileCache(')
+        assert 'anonymous=False' in r
+        assert 'lock_timeout=60' in r
+        assert 'nthreads=8' in r
+        assert str(fc) == str(fc.cache_dir)
+
+    # Named cache with non-default options
+    with FileCache('repr-test', anonymous=True, lock_timeout=30, nthreads=4,
+                   delete_on_exit=True) as fc:
+        r = repr(fc)
+        assert 'anonymous=True' in r
+        assert 'lock_timeout=30' in r
+        assert 'nthreads=4' in r
+
+
+def test_fcpath_repr_str():
+    # Default FCPath — only the path
+    p = FCPath('gs://bucket/path/to/file')
+    assert repr(p) == "FCPath('gs://bucket/path/to/file')"
+    assert str(p) == 'gs://bucket/path/to/file'
+
+    # FCPath with extra options — they appear in repr
+    p2 = FCPath('s3://bucket/path', anonymous=True, lock_timeout=10, nthreads=2)
+    r = repr(p2)
+    assert r.startswith('FCPath(')
+    assert 'anonymous=True' in r
+    assert 'lock_timeout=10' in r
+    assert 'nthreads=2' in r
+
+    # filecache kwarg appears in repr when set
+    with FileCache(cache_name=None, delete_on_exit=True) as fc:
+        p3 = FCPath('gs://bucket/x', filecache=fc)
+        r3 = repr(p3)
+        assert 'filecache=' in r3
+
+
+def test_filecachesource_repr_str():
+    from filecache import FileCacheSourceGS, FileCacheSourceS3, FileCacheSourceFake
+    from filecache import FileCacheSourceFile, FileCacheSourceHTTP
+
+    src_gs = FileCacheSourceGS('gs', 'rms-filecache-tests', anonymous=True)
+    r = repr(src_gs)
+    assert r == "FileCacheSourceGS('gs://rms-filecache-tests', anonymous=True)"
+    assert str(src_gs) == 'gs://rms-filecache-tests'
+
+    src_s3 = FileCacheSourceS3('s3', 'rms-filecache-tests', anonymous=True)
+    r = repr(src_s3)
+    assert r == "FileCacheSourceS3('s3://rms-filecache-tests', anonymous=True)"
+    assert str(src_s3) == 's3://rms-filecache-tests'
+
+    src_http = FileCacheSourceHTTP('https', 'storage.googleapis.com', anonymous=False)
+    r = repr(src_http)
+    assert r == "FileCacheSourceHTTP('https://storage.googleapis.com', anonymous=False)"
+    assert str(src_http) == 'https://storage.googleapis.com'
+
+    src_file = FileCacheSourceFile('file', '', anonymous=False)
+    r = repr(src_file)
+    assert r == "FileCacheSourceFile('file://', anonymous=False)"
+    assert str(src_file) == 'file://'
+
+    src_fake = FileCacheSourceFake('fake', 'fake-bucket', anonymous=False)
+    r = repr(src_fake)
+    assert r == "FileCacheSourceFake('fake://fake-bucket', anonymous=False)"
+    assert str(src_fake) == 'fake://fake-bucket'

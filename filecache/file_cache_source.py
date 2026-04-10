@@ -27,7 +27,6 @@ import botocore
 from google.cloud import storage as gs_storage  # type: ignore
 import google.api_core.exceptions
 
-from .exceptions import UploadFailed
 
 
 class FileCacheSource(ABC):
@@ -73,6 +72,13 @@ class FileCacheSource(ABC):
 
         # The _cache_subdir attribute is only used by the FileCache class
         self._cache_subdir = ''
+
+    def __repr__(self) -> str:
+        return (f'{type(self).__name__}({self._src_prefix!r}, '
+                f'anonymous={self._anonymous!r})')
+
+    def __str__(self) -> str:
+        return self._src_prefix
 
     @classmethod
     @abstractmethod
@@ -1274,8 +1280,6 @@ class FileCacheSourceGS(FileCacheSource):
 
         Raises:
             FileNotFoundError: If the local file does not exist.
-            UploadFailed: If the upload to Google Storage fails (e.g. bad bucket name,
-                insufficient permissions, or network error).
         """
 
         local_path = Path(local_path)
@@ -1293,12 +1297,7 @@ class FileCacheSourceGS(FileCacheSource):
             # For some reason the Google API doesn't let you update this directly
             blob.metadata = blob_metadata
 
-        try:
-            blob.upload_from_filename(str(local_path))
-        except Exception as e:
-            raise UploadFailed(
-                f'Failed to upload file to Google Storage: '
-                f'{self._src_prefix_}{sub_path}') from e
+        blob.upload_from_filename(str(local_path))
 
         return local_path
 
@@ -1609,8 +1608,6 @@ class FileCacheSourceS3(FileCacheSource):
 
         Raises:
             FileNotFoundError: If the local file does not exist.
-            UploadFailed: If the upload to AWS S3 fails (e.g. bad bucket name,
-                insufficient permissions, or network error).
         """
 
         local_path = Path(local_path)
@@ -1624,16 +1621,11 @@ class FileCacheSourceS3(FileCacheSource):
             mtime_str = str(mtime_sec)
             extra_args['Metadata'] = {'mtime': mtime_str}
 
-        try:
-            if extra_args:
-                self._client.upload_file(str(local_path), self._bucket_name, sub_path,
-                                         ExtraArgs=extra_args)
-            else:
-                self._client.upload_file(str(local_path), self._bucket_name, sub_path)
-        except Exception as e:
-            raise UploadFailed(
-                f'Failed to upload file to AWS S3: '
-                f'{self._src_prefix_}{sub_path}') from e
+        if extra_args:
+            self._client.upload_file(str(local_path), self._bucket_name, sub_path,
+                                     ExtraArgs=extra_args)
+        else:
+            self._client.upload_file(str(local_path), self._bucket_name, sub_path)
 
         return local_path
 
