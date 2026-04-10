@@ -1700,22 +1700,42 @@ class FileCache:
                     new_wait_to_appear.append(
                         (idx, url, local_path, lock_path, source, sub_path))
 
-            # Download all files whose stale locks we have just acquired.
-            for idx, url, local_path, lock_path, stale_lock, source, sub_path in (
-                    stale_lock_items):
-                try:
-                    ret = source.retrieve(sub_path, local_path, preserve_mtime=False)
+            # Download all files whose stale locks we have just acquired, grouped by
+            # source so that retrieve_multi can fetch them in parallel.
+            stale_by_source: dict[str, list[tuple[
+                int, str, Path, Path, filelock.FileLock, FileCacheSource, str]]] = {}
+            for item in stale_lock_items:
+                pfx = item[5]._src_prefix_
+                if pfx not in stale_by_source:
+                    stale_by_source[pfx] = []
+                stale_by_source[pfx].append(item)
+
+            for items in stale_by_source.values():
+                s_idxes = [it[0] for it in items]
+                s_urls = [it[1] for it in items]
+                s_local_paths = [it[2] for it in items]
+                s_lock_paths = [it[3] for it in items]
+                s_locks = [it[4] for it in items]
+                s_source = items[0][5]
+                s_sub_paths = [it[6] for it in items]
+
+                rets = s_source.retrieve_multi(s_sub_paths, s_local_paths,
+                                               preserve_mtime=False, nthreads=nthreads)
+                for idx, url, ret in zip(s_idxes, s_urls, rets):
                     func_ret[idx] = ret
-                    self._download_counter += 1
-                    self._log_debug(f'  Re-downloaded after stale lock recovery: {url}')
-                except Exception as e:
-                    func_ret[idx] = e
-                    files_not_exist.append(url)
-                    self._log_debug(
-                        f'  Download failed after stale lock recovery: {url}: {e!r}')
-                finally:
-                    stale_lock.release()
-                    lock_path.unlink(missing_ok=True)
+                    if isinstance(ret, Exception):
+                        files_not_exist.append(url)
+                        self._log_debug(
+                            f'  Stale lock recovery download failed: '
+                            f'{url}: {ret!r}')
+                    else:
+                        self._download_counter += 1
+                        self._log_debug(
+                            f'  Re-downloaded after stale lock recovery: {url}')
+
+                for s_lock, s_lock_path in zip(s_locks, s_lock_paths):
+                    s_lock.release()
+                    s_lock_path.unlink(missing_ok=True)
 
             if not new_wait_to_appear:
                 break
