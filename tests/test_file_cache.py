@@ -3142,10 +3142,6 @@ def test_modification_time_caching_multi(time_sensitive, cache_metadata, mp_safe
             assert lp[2].stat().st_mtime == mtime_lp_orig[2]
 
 
-##############################################################################
-# Tests for __repr__ and __str__ (issue #21)
-##############################################################################
-
 def test_filecache_repr_str():
     with FileCache(cache_name=None) as fc:
         r = repr(fc)
