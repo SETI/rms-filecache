@@ -1308,3 +1308,37 @@ def test_splitpath():
                                                               FCPath('d'))
     assert FCPath('gs://bucket/a/c/b/b1/c/d/d1').splitpath('c') == \
         (FCPath('gs://bucket/a'), FCPath('b/b1'), FCPath('d/d1'))
+
+
+def test_fcpath_repr_str():
+    # Default FCPath — only the path
+    p = FCPath('gs://bucket/path/to/file')
+    assert repr(p) == "FCPath('gs://bucket/path/to/file')"
+    assert str(p) == 'gs://bucket/path/to/file'
+
+    # FCPath with extra options — they appear in repr
+    p2 = FCPath('s3://bucket/path', anonymous=True, lock_timeout=10, nthreads=2)
+    r = repr(p2)
+    assert r.startswith('FCPath(')
+    assert 'anonymous=True' in r
+    assert 'lock_timeout=10' in r
+    assert 'nthreads=2' in r
+
+    # filecache kwarg appears in repr when set
+    with FileCache(cache_name=None, delete_on_exit=True) as fc:
+        p3 = FCPath('gs://bucket/x', filecache=fc)
+        r3 = repr(p3)
+        assert 'filecache=' in r3
+
+    # url_to_url and url_to_path appear in repr when set
+    def _identity_url(scheme, remote, path):
+        return None
+
+    def _identity_path(scheme, remote, path, cache_dir, cache_subdir):
+        return None
+
+    p4 = FCPath('gs://bucket/y',
+                url_to_url=_identity_url, url_to_path=_identity_path)
+    r4 = repr(p4)
+    assert 'url_to_url=' in r4
+    assert 'url_to_path=' in r4

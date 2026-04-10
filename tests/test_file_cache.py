@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import platform
 import tempfile
+import threading
 import time
 import uuid
 
@@ -1053,6 +1054,197 @@ def test_locking_multi_pfx_2():
         assert pfx.upload_counter == 0
         assert pfx.download_counter == 3
     assert not fc.cache_dir.exists()
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason='Uses POSIX fcntl for stale-lock simulation')
+def test_stale_lock_single():
+    """A stale lock (file exists, no flock held) must not block a single-file retrieve.
+
+    We simulate a stale lock by acquiring the flock with raw fcntl, then releasing
+    only the flock (leaving the lock file on disk) before the retrieve.  On the
+    next call, filelock should acquire the lock immediately because no process
+    holds it.
+    """
+    import fcntl
+
+    with FileCache(delete_on_exit=True) as fc:
+        filename = EXPECTED_FILENAMES[0]
+        local_path = (fc.cache_dir /
+                      (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' + filename))
+        lock_path = fc._lock_path(local_path)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create and hold the lock via raw fcntl so we can release the flock without
+        # deleting the file (simulating a process that crashed).
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        # Release the flock but keep the file -- this is the "stale lock" state.
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+        # The lock file exists, but nobody holds the flock.  The retrieve must
+        # succeed rather than raising a TimeoutError.
+        path = fc.retrieve(f'{HTTP_TEST_ROOT}/{filename}', lock_timeout=0)
+        assert isinstance(path, Path)
+        assert path.is_file()
+        _compare_to_expected_path(path, filename)
+        assert fc.download_counter == 1
+        assert fc.upload_counter == 0
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason='Uses POSIX fcntl for stale-lock simulation')
+def test_stale_lock_multi():
+    """A stale lock must not permanently block multi-file retrieval.
+
+    We hold the flock for the first file from a background thread, trigger the
+    multi-file download (which puts file[0] into wait_to_appear), then simulate
+    a crash by releasing only the flock (but not deleting the lock file) while
+    the wait loop is running.  The stale-lock detection code must steal the lock
+    and complete the download without timing out.
+
+    Race-condition guarantee: the background thread uses a threading.Event to
+    synchronise so that the flock is released only after the main thread's
+    retrieve call has entered the wait_to_appear loop.  Because only one process
+    can win the flock race, the main thread is guaranteed to be the sole
+    downloader of file[0] after stealing the stale lock.
+    """
+    import fcntl
+
+    with FileCache(delete_on_exit=True) as fc:
+        filename0 = EXPECTED_FILENAMES[0]
+        local_path0 = (fc.cache_dir /
+                       (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' + filename0))
+        lock_path0 = fc._lock_path(local_path0)
+        lock_path0.parent.mkdir(parents=True, exist_ok=True)
+
+        # Phase-control events
+        flock_held = threading.Event()   # signalled once the raw flock is held
+        flock_release = threading.Event()  # signalled when the "crash" should happen
+
+        def holder_thread() -> None:
+            """Hold the flock until told to "crash", then release without cleanup."""
+            fd = os.open(str(lock_path0), os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock_held.set()
+            flock_release.wait()
+            # Simulate crash: release flock, leave file on disk.
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+        t = threading.Thread(target=holder_thread, daemon=True)
+        t.start()
+        assert flock_held.wait(timeout=5), 'holder thread never acquired flock'
+
+        results: list[list[Path]] = []
+        exc_holder: list[Exception] = []
+
+        def do_retrieve() -> None:
+            try:
+                filenames = [f'{HTTP_TEST_ROOT}/{f}' for f in EXPECTED_FILENAMES]
+                ret = fc.retrieve(filenames, lock_timeout=15)
+                results.append(ret)  # type: ignore[arg-type]
+            except Exception as e:
+                exc_holder.append(e)
+
+        retrieve_thread = threading.Thread(target=do_retrieve, daemon=True)
+        retrieve_thread.start()
+
+        # Wait until all non-blocked files have downloaded and retrieve_thread is
+        # still alive — at that point it must be blocked in the wait_to_appear loop.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if (fc.download_counter == len(EXPECTED_FILENAMES) - 1 and
+                    retrieve_thread.is_alive()):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail('retrieve never reached the blocked/stale-lock state')
+
+        # Signal the holder to "crash" -- releases flock, keeps the lock file.
+        flock_release.set()
+        t.join(timeout=5)
+        assert not t.is_alive(), 'holder thread did not finish'
+
+        retrieve_thread.join(timeout=20)
+        assert not retrieve_thread.is_alive(), 'retrieve thread timed out (stale lock not recovered)'
+
+        assert not exc_holder, f'retrieve raised: {exc_holder[0]}'
+        assert results, 'retrieve returned no result'
+        for r in results[0]:
+            assert isinstance(r, Path), f'Expected Path, got {r!r}'
+        assert fc.download_counter == len(EXPECTED_FILENAMES)
+        assert fc.upload_counter == 0
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason='Uses POSIX fcntl for stale-lock simulation')
+def test_stale_lock_multi_pfx():
+    """Same as test_stale_lock_multi but exercised through the FCPath interface."""
+    import fcntl
+
+    with FileCache(delete_on_exit=True) as fc:
+        pfx = fc.new_path(HTTP_TEST_ROOT, lock_timeout=15)
+        filename0 = EXPECTED_FILENAMES[0]
+        local_path0 = (fc.cache_dir /
+                       (HTTP_TEST_ROOT.replace('https://', 'http_') + '/' + filename0))
+        lock_path0 = fc._lock_path(local_path0)
+        lock_path0.parent.mkdir(parents=True, exist_ok=True)
+
+        flock_held = threading.Event()
+        flock_release = threading.Event()
+
+        def holder_thread() -> None:
+            fd = os.open(str(lock_path0), os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock_held.set()
+            flock_release.wait()
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+        t = threading.Thread(target=holder_thread, daemon=True)
+        t.start()
+        assert flock_held.wait(timeout=5), 'holder thread never acquired flock'
+
+        results: list[list[Path]] = []
+        exc_holder: list[Exception] = []
+
+        def do_retrieve() -> None:
+            try:
+                ret = pfx.retrieve(EXPECTED_FILENAMES)
+                results.append(ret)  # type: ignore[arg-type]
+            except Exception as e:
+                exc_holder.append(e)
+
+        retrieve_thread = threading.Thread(target=do_retrieve, daemon=True)
+        retrieve_thread.start()
+
+        # Wait until all non-blocked files have downloaded and retrieve_thread is
+        # still alive — at that point it must be blocked in the wait_to_appear loop.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if (fc.download_counter == len(EXPECTED_FILENAMES) - 1 and
+                    retrieve_thread.is_alive()):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail('retrieve never reached the blocked/stale-lock state')
+
+        flock_release.set()
+        t.join(timeout=5)
+        assert not t.is_alive()
+
+        retrieve_thread.join(timeout=20)
+        assert not retrieve_thread.is_alive(), 'retrieve thread timed out (stale lock not recovered)'
+
+        assert not exc_holder, f'retrieve raised: {exc_holder[0]}'
+        assert results
+        for r in results[0]:
+            assert isinstance(r, Path)
+        assert fc.download_counter == len(EXPECTED_FILENAMES)
+        assert fc.upload_counter == 0
 
 
 def test_cleanup_locking_bad():
@@ -2948,3 +3140,22 @@ def test_modification_time_caching_multi(time_sensitive, cache_metadata, mp_safe
             assert lp[0].stat().st_mtime == mtime_lp_orig[0]
             assert lp[1].stat().st_mtime == mtime_lp_orig[1]
             assert lp[2].stat().st_mtime == mtime_lp_orig[2]
+
+
+def test_filecache_repr_str():
+    with FileCache(cache_name=None) as fc:
+        r = repr(fc)
+        assert r.startswith('FileCache(None,')
+        assert 'anonymous=False' in r
+        assert 'lock_timeout=60' in r
+        assert 'nthreads=8' in r
+        assert str(fc) == str(fc.cache_dir)
+
+    # Named cache with non-default options
+    with FileCache('repr-test', anonymous=True, lock_timeout=30, nthreads=4,
+                   delete_on_exit=True) as fc:
+        r = repr(fc)
+        assert r.startswith("FileCache('repr-test',")
+        assert 'anonymous=True' in r
+        assert 'lock_timeout=30' in r
+        assert 'nthreads=4' in r

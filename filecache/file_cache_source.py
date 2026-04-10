@@ -72,6 +72,13 @@ class FileCacheSource(ABC):
         # The _cache_subdir attribute is only used by the FileCache class
         self._cache_subdir = ''
 
+    def __repr__(self) -> str:
+        return (f'{type(self).__name__}({self._scheme!r}, {self._remote!r}, '
+                f'anonymous={self._anonymous!r})')
+
+    def __str__(self) -> str:
+        return self._src_prefix
+
     @classmethod
     @abstractmethod
     def schemes(self) -> tuple[str, ...]:

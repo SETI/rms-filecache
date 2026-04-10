@@ -174,7 +174,6 @@ from .file_cache_source import (FileCacheSource,  # noqa: ignore E401
                                 FileCacheSourceGS,
                                 FileCacheSourceS3,
                                 FileCacheSourceFake)
-
 __all__ = ['get_global_logger',
            'register_filecachesource',
            'set_easy_logger',
