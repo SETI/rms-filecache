@@ -404,3 +404,32 @@ def test_fake_source_atomic_operations(tmp_path: Path):
             pathlib.Path.rename = original_rename
     finally:
         FileCacheSourceFake.delete_default_storage_dir()
+
+
+def test_filecachesource_repr_str():
+    src_gs = FileCacheSourceGS('gs', 'rms-filecache-tests', anonymous=True)
+    r = repr(src_gs)
+    assert r == "FileCacheSourceGS('gs', 'rms-filecache-tests', anonymous=True)"
+    assert str(src_gs) == 'gs://rms-filecache-tests'
+
+    src_s3 = FileCacheSourceS3('s3', 'rms-filecache-tests', anonymous=True)
+    r = repr(src_s3)
+    assert r == "FileCacheSourceS3('s3', 'rms-filecache-tests', anonymous=True)"
+    assert str(src_s3) == 's3://rms-filecache-tests'
+
+    src_http = FileCacheSourceHTTP('https', 'storage.googleapis.com',
+                                   anonymous=False)
+    r = repr(src_http)
+    assert r == ("FileCacheSourceHTTP('https', 'storage.googleapis.com', "
+                 "anonymous=False)")
+    assert str(src_http) == 'https://storage.googleapis.com'
+
+    src_file = FileCacheSourceFile('file', '', anonymous=False)
+    r = repr(src_file)
+    assert r == "FileCacheSourceFile('file', '', anonymous=False)"
+    assert str(src_file) == 'file://'
+
+    src_fake = FileCacheSourceFake('fake', 'fake-bucket', anonymous=False)
+    r = repr(src_fake)
+    assert r == "FileCacheSourceFake('fake', 'fake-bucket', anonymous=False)"
+    assert str(src_fake) == 'fake://fake-bucket'
