@@ -9,6 +9,7 @@ import datetime
 import os
 from pathlib import Path
 import platform
+import re
 import tempfile
 import threading
 import time
@@ -1245,6 +1246,48 @@ def test_stale_lock_multi_pfx():
             assert isinstance(r, Path)
         assert fc.download_counter == len(EXPECTED_FILENAMES)
         assert fc.upload_counter == 0
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason='A read-only directory mode does not stop file creation')
+@pytest.mark.skipif(hasattr(os, 'geteuid') and os.geteuid() == 0,
+                    reason='root can create files in a read-only directory')
+def test_locking_read_only_dir_single():
+    """A lock file that cannot be created raises its PermissionError (single file)."""
+    with FileCache(cache_name=None, mp_safe=True) as fc:
+        url = f'{HTTP_TEST_ROOT}/{EXPECTED_FILENAMES[0]}'
+        lock_path = fc._lock_path(fc.get_local_path(url))
+        lock_dir = lock_path.parent
+        lock_dir.chmod(0o555)
+        try:
+            with pytest.raises(PermissionError, match=re.escape(lock_path.name)):
+                fc.retrieve(url)
+        finally:
+            lock_dir.chmod(0o755)
+        assert fc.download_counter == 0
+    assert not fc.cache_dir.exists()
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason='A read-only directory mode does not stop file creation')
+@pytest.mark.skipif(hasattr(os, 'geteuid') and os.geteuid() == 0,
+                    reason='root can create files in a read-only directory')
+def test_locking_read_only_dir_multi():
+    """A lock file that cannot be created raises its PermissionError (multiple files)."""
+    with FileCache(cache_name=None, mp_safe=True) as fc:
+        urls = [f'{HTTP_TEST_ROOT}/{f}' for f in EXPECTED_FILENAMES]
+        # Create every parent directory now, so that only the lock can fail
+        local_paths = fc.get_local_path(urls)
+        lock_path = fc._lock_path(local_paths[0])
+        lock_dir = lock_path.parent
+        lock_dir.chmod(0o555)
+        try:
+            with pytest.raises(PermissionError, match=re.escape(lock_path.name)):
+                fc.retrieve(urls)
+        finally:
+            lock_dir.chmod(0o755)
+        assert fc.download_counter == 0
+    assert not fc.cache_dir.exists()
 
 
 def test_cleanup_locking_bad():

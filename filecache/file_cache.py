@@ -1330,7 +1330,7 @@ class FileCache:
             lock = filelock.FileLock(lock_path, timeout=lock_timeout)
             try:
                 lock.acquire()
-            except filelock._error.Timeout as e:
+            except filelock.Timeout as e:
                 if exception_on_fail:
                     raise
                 return e
@@ -1607,7 +1607,7 @@ class FileCache:
                 lock = filelock.FileLock(lock_path, timeout=0)
                 try:
                     lock.acquire()
-                except filelock._error.Timeout:
+                except filelock.Timeout:
                     self._log_debug(f'    Failed to lock: {sub_path}')
                     wait_to_appear.append((idx, f'{source_pfx}{sub_path}', local_path,
                                            lock_path, source, sub_path))
@@ -1695,7 +1695,7 @@ class FileCache:
                     stale_lock_items.append(
                         (idx, url, local_path, lock_path, stale_lock, source, sub_path))
                     self._log_debug(f'  Stale lock detected for {url}, will re-download')
-                except filelock._error.Timeout:
+                except filelock.Timeout:
                     # Lock is actively held -- another process is still downloading.
                     new_wait_to_appear.append(
                         (idx, url, local_path, lock_path, source, sub_path))
